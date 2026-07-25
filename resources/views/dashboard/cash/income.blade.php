@@ -1,4 +1,4 @@
-@extends('dashboard.layouts.app')
+@extends('layouts.dashboard')
 
 @section('content')
 
@@ -19,7 +19,7 @@
 </div>
 @endif
 
-<form method="POST" action="{{ route('cash.storeIncome') }}">
+<form method="POST" action="{{ route('dashboard.cash.income.store') }}">
 @csrf
 
 <div class="row">

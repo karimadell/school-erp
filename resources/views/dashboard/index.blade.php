@@ -139,7 +139,7 @@
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
@@ -149,15 +149,19 @@ document.addEventListener('DOMContentLoaded', function () {
     const teachersStatusChart = @json($teachersStatusChart ?? []);
     const topTeacherSubjects = @json($topTeacherSubjects ?? []);
 
-    function makeChart(id, type, labels, data) {
+    function makeChart(id, type, labels, data, label) {
         const el = document.getElementById(id);
         if (!el) return;
+
+        labels = Array.isArray(labels) ? labels : [];
+        data = Array.isArray(data) ? data : [];
 
         new Chart(el, {
             type: type,
             data: {
                 labels: labels,
                 datasets: [{
+                    label: label || '',
                     data: data,
                     borderWidth: 2
                 }]
@@ -165,10 +169,10 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    makeChart('invoiceChart','line',Object.keys(invoiceDaily),Object.values(invoiceDaily));
-    makeChart('teachersSpecializationChart','bar',Object.keys(teachersBySpecialization),Object.values(teachersBySpecialization));
-    makeChart('teachersStatusChart','doughnut',Object.keys(teachersStatusChart),Object.values(teachersStatusChart));
-    makeChart('topTeacherSubjectsChart','bar',Object.keys(topTeacherSubjects),Object.values(topTeacherSubjects));
+    makeChart('invoiceChart','line',Object.keys(invoiceDaily),Object.values(invoiceDaily), @json(__('dashboard.invoices_daily')));
+    makeChart('teachersSpecializationChart','bar',Object.keys(teachersBySpecialization),Object.values(teachersBySpecialization), @json(__('dashboard.teachers_by_specialization')));
+    makeChart('teachersStatusChart','doughnut',Object.keys(teachersStatusChart),Object.values(teachersStatusChart), @json(__('dashboard.teachers_status')));
+    makeChart('topTeacherSubjectsChart','bar',Object.keys(topTeacherSubjects),Object.values(topTeacherSubjects), @json(__('dashboard.top_teacher_subjects')));
 
 });
 </script>

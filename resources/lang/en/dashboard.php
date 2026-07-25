@@ -24,7 +24,11 @@ return [
     'students' => 'Students',
     'teachers' => 'Teachers',
     'classes' => 'Classes',
+    'subjects' => 'Subjects',
     'cash_transactions' => 'Cash Transactions',
+
+    'active_teachers' => 'Active Teachers',
+    'inactive_teachers' => 'Inactive Teachers',
 
     /*
     |--------------------------------------------------------------------------
@@ -35,6 +39,10 @@ return [
     'invoices_daily' => 'Daily Invoices',
     'cash_flow' => 'Cash Flow',
     'cash_flow_chart' => 'Cash Flow Chart',
+
+    'teachers_by_specialization' => 'Teachers by Specialization',
+    'teachers_status' => 'Teachers Status',
+    'top_teacher_subjects' => 'Top Teacher Subjects',
 
     /*
     |--------------------------------------------------------------------------

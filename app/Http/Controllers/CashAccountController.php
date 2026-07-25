@@ -6,6 +6,7 @@ use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\CashTransfer;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class CashAccountController extends Controller
 {
@@ -13,7 +14,7 @@ class CashAccountController extends Controller
     {
         // $this->middleware('permission:cash.view')->only(['index', 'ledger', 'accountLedger']);
         $this->middleware('permission:cash.create')->only(['create','store']);
-        $this->middleware('permission:cash.edit')->only(['update']);
+        $this->middleware('permission:cash.edit')->only(['edit','update']);
         $this->middleware('permission:cash.delete')->only(['destroy']);
     }
 
@@ -41,6 +42,12 @@ class CashAccountController extends Controller
             'type' => 'required|in:main,sub',
             'parent_id' => 'nullable|exists:cash_accounts,id',
             'balance' => 'nullable|numeric'
+        ], [
+            'name.required' => __('cash_accounts.validation.name_required'),
+            'type.required' => __('cash_accounts.validation.type_required'),
+            'type.in' => __('cash_accounts.validation.type_required'),
+            'parent_id.exists' => __('cash_accounts.validation.parent_invalid'),
+            'balance.numeric' => __('cash_accounts.validation.balance_numeric'),
         ]);
 
         $account = CashAccount::create([
@@ -50,7 +57,19 @@ class CashAccountController extends Controller
             'balance' => $data['balance'] ?? 0
         ]);
 
-        return redirect()->back()->with('success','Cash account created');
+        return redirect()->back()->with('success', __('cash_accounts.created_success'));
+    }
+
+    // صفحة تعديل خزنة
+    public function edit($id)
+    {
+        $account = CashAccount::findOrFail($id);
+
+        $mainAccounts = CashAccount::where('type', 'main')
+            ->whereNotIn('id', array_merge([$account->id], $account->descendantIds()))
+            ->get();
+
+        return view('dashboard.cash.accounts.edit', compact('account', 'mainAccounts'));
     }
 
     // تحديث خزنة
@@ -60,11 +79,24 @@ class CashAccountController extends Controller
 
         $data = $request->validate([
             'name' => 'required|string|max:255',
+            'type' => 'required|in:main,sub',
+            'parent_id' => [
+                'sometimes',
+                'nullable',
+                'exists:cash_accounts,id',
+                Rule::notIn(array_merge([$id], $account->descendantIds())),
+            ],
+        ], [
+            'name.required' => __('cash_accounts.validation.name_required'),
+            'type.required' => __('cash_accounts.validation.type_required'),
+            'type.in' => __('cash_accounts.validation.type_required'),
+            'parent_id.exists' => __('cash_accounts.validation.parent_invalid'),
+            'parent_id.not_in' => __('cash_accounts.validation.parent_circular'),
         ]);
 
         $account->update($data);
 
-        return redirect()->back()->with('success','Cash account updated');
+        return redirect()->back()->with('success', __('cash_accounts.updated_success'));
     }
 
     // حذف خزنة

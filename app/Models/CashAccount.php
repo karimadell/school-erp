@@ -26,6 +26,7 @@ class CashAccount extends Model
     protected $fillable = [
         'name',
         'type',
+        'parent_id',
         'balance',
     ];
 
@@ -55,5 +56,45 @@ class CashAccount extends Model
     public function transactions()
     {
         return $this->hasMany(CashTransaction::class);
+    }
+
+    // الحساب الرئيسي (Parent)
+    public function parent()
+    {
+        return $this->belongsTo(CashAccount::class, 'parent_id');
+    }
+
+    // الحسابات الفرعية (Children)
+    public function children()
+    {
+        return $this->hasMany(CashAccount::class, 'parent_id');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Hierarchy Helpers
+    |--------------------------------------------------------------------------
+    */
+
+    // كل الحسابات التابعة (بشكل متكرر) لمنع التسلسل الدائري
+    public function descendantIds(): array
+    {
+        $ids = [];
+        $stack = [$this->id];
+
+        while ($stack) {
+            $parentId = array_pop($stack);
+
+            $childIds = static::where('parent_id', $parentId)->pluck('id')->all();
+
+            foreach ($childIds as $childId) {
+                if (! in_array($childId, $ids, true)) {
+                    $ids[] = $childId;
+                    $stack[] = $childId;
+                }
+            }
+        }
+
+        return $ids;
     }
 }

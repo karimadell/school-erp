@@ -16,11 +16,11 @@ class CashAccountTest extends TestCase
     {
         $user = User::factory()->create();
 
-        foreach (['cash.create', 'cash.edit', 'cash.delete'] as $permission) {
-            Permission::findOrCreate($permission, 'web');
-        }
-
-        $user->givePermissionTo(['cash.create', 'cash.edit', 'cash.delete']);
+        // Matches the permission actually seeded in
+        // RolesAndPermissionsSeeder.php and checked by
+        // CashAccountController's middleware.
+        Permission::findOrCreate('manage cash', 'web');
+        $user->givePermissionTo('manage cash');
 
         return $user;
     }
@@ -124,6 +124,58 @@ class CashAccountTest extends TestCase
             ->get(route('dashboard.cash.accounts.edit', $account));
 
         $response->assertForbidden();
+    }
+
+    public function test_authorized_user_can_create_an_account(): void
+    {
+        $user = $this->authorizedUser();
+
+        $response = $this->actingAs($user)
+            ->post(route('dashboard.cash.accounts.store'), [
+                'name' => 'New Safe',
+                'type' => 'main',
+            ]);
+
+        $response->assertSessionHasNoErrors();
+        $this->assertDatabaseHas('cash_accounts', ['name' => 'New Safe']);
+    }
+
+    public function test_unauthorized_user_cannot_create_an_account(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)
+            ->post(route('dashboard.cash.accounts.store'), [
+                'name' => 'Blocked Safe',
+                'type' => 'main',
+            ]);
+
+        $response->assertForbidden();
+        $this->assertDatabaseMissing('cash_accounts', ['name' => 'Blocked Safe']);
+    }
+
+    public function test_authorized_user_can_delete_an_account(): void
+    {
+        $user = $this->authorizedUser();
+        $account = CashAccount::create(['name' => 'Deletable', 'type' => 'main', 'balance' => 0]);
+
+        $response = $this->actingAs($user)
+            ->delete(route('dashboard.cash.accounts.destroy', $account));
+
+        $response->assertRedirect();
+        $this->assertDatabaseMissing('cash_accounts', ['id' => $account->id]);
+    }
+
+    public function test_unauthorized_user_cannot_delete_an_account(): void
+    {
+        $user = User::factory()->create();
+        $account = CashAccount::create(['name' => 'Protected', 'type' => 'main', 'balance' => 0]);
+
+        $response = $this->actingAs($user)
+            ->delete(route('dashboard.cash.accounts.destroy', $account));
+
+        $response->assertForbidden();
+        $this->assertDatabaseHas('cash_accounts', ['id' => $account->id]);
     }
 
     public function test_invalid_parent_id_is_rejected(): void

@@ -19,8 +19,12 @@ class StageSeeder extends Seeder
 
         foreach ($stages as $stage) {
 
+            // The stages table's column is 'name', not 'title' — this
+            // previously threw "column not found: title" and halted the
+            // whole db:seed pipeline before StageSeeder even finished,
+            // since DatabaseSeeder runs this before GradeSeeder.
             Stage::firstOrCreate([
-                'title' => $stage
+                'name' => $stage
             ]);
         }
     }

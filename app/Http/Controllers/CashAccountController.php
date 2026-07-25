@@ -13,9 +13,12 @@ class CashAccountController extends Controller
     public function __construct()
     {
         // $this->middleware('permission:cash.view')->only(['index', 'ledger', 'accountLedger']);
-        $this->middleware('permission:cash.create')->only(['create','store']);
-        $this->middleware('permission:cash.edit')->only(['edit','update']);
-        $this->middleware('permission:cash.delete')->only(['destroy']);
+        // Permission names must match what's actually seeded in
+        // RolesAndPermissionsSeeder.php ('manage cash', assigned to
+        // admin/accountant) — the previous dot-notation names
+        // (cash.create/cash.edit/cash.delete) were never seeded, so this
+        // middleware blocked every user, including admins.
+        $this->middleware('permission:manage cash')->only(['create','store','edit','update','destroy']);
     }
 
     // عرض الخزن

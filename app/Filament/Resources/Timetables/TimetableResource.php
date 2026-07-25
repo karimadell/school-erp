@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Filament\Resources;
+namespace App\Filament\Resources\Timetables;
 
 use App\Models\Timetable;
 use Filament\Forms;
@@ -8,7 +8,7 @@ use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Resources\Resource;
-use App\Filament\Resources\TimetableResource\Pages;
+use App\Filament\Resources\Timetables\Pages;
 
 class TimetableResource extends Resource
 {

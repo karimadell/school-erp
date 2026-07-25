@@ -1,15 +1,17 @@
 <?php
 
-namespace App\Filament\Resources\Students;
+namespace App\Filament\Resources\StudentGrades;
 
-use App\Filament\Resources\Students\Pages\CreateStudent;
-use App\Filament\Resources\Students\Pages\EditStudent;
-use App\Filament\Resources\Students\Pages\ListStudents;
+use App\Filament\Resources\StudentGrades\Pages\CreateStudentGrade;
+use App\Filament\Resources\StudentGrades\Pages\EditStudentGrade;
+use App\Filament\Resources\StudentGrades\Pages\ListStudentGrades;
+use App\Filament\Resources\StudentGrades\Pages\ViewStudentGrade;
 
-use App\Filament\Resources\Students\Schemas\StudentForm;
-use App\Filament\Resources\Students\Tables\StudentsTable;
+use App\Filament\Resources\StudentGrades\Schemas\StudentGradeForm;
+use App\Filament\Resources\StudentGrades\Schemas\StudentGradeInfolist;
+use App\Filament\Resources\StudentGrades\Tables\StudentGradesTable;
 
-use App\Models\Student;
+use App\Models\StudentGrade;
 
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
@@ -18,58 +20,49 @@ use Filament\Tables\Table;
 use BackedEnum;
 use UnitEnum;
 
-class StudentResource extends Resource
+class StudentGradeResource extends Resource
 {
-    protected static ?string $model = Student::class;
+    protected static ?string $model = StudentGrade::class;
 
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-academic-cap';
 
-    protected static ?string $navigationLabel = 'Студенты';
+    protected static ?string $navigationLabel = 'Оценки';
+
+    protected static ?string $modelLabel = 'Оценка';
+
+    protected static ?string $pluralModelLabel = 'Оценки';
 
     protected static string|UnitEnum|null $navigationGroup = 'Академия';
 
     public static function form(Schema $schema): Schema
     {
-        return StudentForm::configure($schema);
+        return StudentGradeForm::configure($schema);
+    }
+
+    public static function infolist(Schema $schema): Schema
+    {
+        return StudentGradeInfolist::configure($schema);
     }
 
     public static function table(Table $table): Table
     {
-        return StudentsTable::configure($table);
+        return StudentGradesTable::configure($table);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            //
+        ];
     }
 
     public static function getPages(): array
     {
         return [
-            'index' => ListStudents::route('/'),
-            'create' => CreateStudent::route('/create'),
-            'edit' => EditStudent::route('/{record}/edit'),
+            'index' => ListStudentGrades::route('/'),
+            'create' => CreateStudentGrade::route('/create'),
+            'view' => ViewStudentGrade::route('/{record}'),
+            'edit' => EditStudentGrade::route('/{record}/edit'),
         ];
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Permissions
-    |--------------------------------------------------------------------------
-    */
-
-    public static function canViewAny(): bool
-    {
-        return auth()->user()?->can('students.view') ?? false;
-    }
-
-    public static function canCreate(): bool
-    {
-        return auth()->user()?->can('students.create') ?? false;
-    }
-
-    public static function canEdit($record): bool
-    {
-        return auth()->user()?->can('students.edit') ?? false;
-    }
-
-    public static function canDelete($record): bool
-    {
-        return auth()->user()?->can('students.delete') ?? false;
     }
 }

@@ -8,7 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::hasTable('audit_logs')) {
+        // MySQL's MODIFY syntax is not supported by SQLite. SQLite is dynamically
+        // typed and already stores created_at/updated_at as nullable columns from
+        // the original migration, so no equivalent statement is needed there.
+        if (Schema::hasTable('audit_logs') && DB::connection()->getDriverName() === 'mysql') {
             DB::statement("ALTER TABLE audit_logs MODIFY created_at DATETIME NULL");
             DB::statement("ALTER TABLE audit_logs MODIFY updated_at DATETIME NULL");
         }
@@ -16,7 +19,7 @@ return new class extends Migration
 
     public function down(): void
     {
-        if (Schema::hasTable('audit_logs')) {
+        if (Schema::hasTable('audit_logs') && DB::connection()->getDriverName() === 'mysql') {
             DB::statement("ALTER TABLE audit_logs MODIFY created_at DATE NULL");
             DB::statement("ALTER TABLE audit_logs MODIFY updated_at DATE NULL");
         }

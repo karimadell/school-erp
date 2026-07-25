@@ -37,24 +37,34 @@ return new class extends Migration
             ->whereNull('type')
             ->update(['type' => 'daily']);
 
-        DB::statement("
-            UPDATE attendances
-            SET attendance_key = CONCAT(
-                COALESCE(type, 'daily'),
-                '-',
-                enrollment_id,
-                '-',
-                DATE_FORMAT(date, '%Y-%m-%d'),
-                IF(period_id IS NULL, '', CONCAT('-', period_id))
-            )
-            WHERE attendance_key IS NULL
-        ");
+        // Backfill attendance_key with database-neutral PHP logic so every driver
+        // produces the same "{type}-{enrollment_id}-{date}[-{period_id}]" format
+        // used by AttendanceController::store(). MySQL's CONCAT/IF/DATE_FORMAT
+        // are not available on SQLite, and the date column is already stored as
+        // a plain Y-m-d string on both drivers, so no formatting step is needed.
+        DB::table('attendances')
+            ->whereNull('attendance_key')
+            ->orderBy('id')
+            ->chunkById(500, function ($rows) {
+                foreach ($rows as $row) {
+                    $type = $row->type ?: 'daily';
+                    $key = "{$type}-{$row->enrollment_id}-{$row->date}";
+
+                    if (! is_null($row->period_id)) {
+                        $key .= "-{$row->period_id}";
+                    }
+
+                    DB::table('attendances')
+                        ->where('id', $row->id)
+                        ->update(['attendance_key' => $key]);
+                }
+            });
 
         // ✅ الحل هنا: نتأكد إن الـ index مش موجود قبل ما نضيفه
-        $indexExists = collect(DB::select("
-            SHOW INDEX FROM attendances 
-            WHERE Key_name = 'attendances_attendance_key_unique'
-        "))->isNotEmpty();
+        // Schema::getIndexes() is driver-agnostic (information_schema on MySQL,
+        // PRAGMA on SQLite), replacing the MySQL-only SHOW INDEX statement.
+        $indexExists = collect(Schema::getIndexes('attendances'))
+            ->contains('name', 'attendances_attendance_key_unique');
 
         if (!$indexExists) {
             Schema::table('attendances', function (Blueprint $table) {
@@ -66,10 +76,8 @@ return new class extends Migration
     public function down(): void
     {
         // نحذف index لو موجود
-        $indexExists = collect(DB::select("
-            SHOW INDEX FROM attendances 
-            WHERE Key_name = 'attendances_attendance_key_unique'
-        "))->isNotEmpty();
+        $indexExists = collect(Schema::getIndexes('attendances'))
+            ->contains('name', 'attendances_attendance_key_unique');
 
         if ($indexExists) {
             Schema::table('attendances', function (Blueprint $table) {

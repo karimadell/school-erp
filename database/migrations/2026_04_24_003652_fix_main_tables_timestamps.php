@@ -8,6 +8,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // MySQL's MODIFY syntax is not supported by SQLite. SQLite is dynamically
+        // typed and these columns are already nullable from their original table
+        // migrations, so no equivalent statement is needed there.
+        if (DB::connection()->getDriverName() !== 'mysql') {
+            return;
+        }
+
         $tables = [
             'users',
             'audit_logs',

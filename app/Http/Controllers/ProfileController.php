@@ -26,11 +26,10 @@ class ProfileController extends Controller
      */
     public function update(ProfileUpdateRequest $request): RedirectResponse
     {
+        // Note: the users table has no email_verified_at column and the app
+        // doesn't implement email verification, so changing the email here
+        // doesn't reset any verification state.
         $request->user()->fill($request->validated());
-
-        if ($request->user()->isDirty('email')) {
-            $request->user()->email_verified_at = null;
-        }
 
         $request->user()->save();
 

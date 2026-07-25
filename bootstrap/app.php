@@ -15,6 +15,12 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
 
+        // Trust the platform's own edge proxy (e.g. Railway) so Laravel
+        // correctly detects HTTPS/client IP from X-Forwarded-* headers.
+        // The proxy is the first hop in front of the container, not an
+        // arbitrary untrusted client, so trusting it here is safe.
+        $middleware->trustProxies(at: '*');
+
         // WEB (language middleware)
         $middleware->web(append: [
             \App\Http\Middleware\SetLocale::class,

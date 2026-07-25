@@ -33,6 +33,8 @@ use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\AuditLogController;
 
+use App\Http\Controllers\ProfileController;
+
 Route::get('/', function () {
     return redirect('/dashboard');
 });
@@ -55,6 +57,31 @@ Route::middleware(['auth'])->group(function () {
 
     Route::post('salaries/import', [SalaryController::class, 'import'])
         ->name('dashboard.salaries.import');
+});
+
+// Name alias for the dashboard.index route defined below (same URI, same
+// controller action — no duplicated logic). Several stock Breeze auth
+// controllers (registration, email verification, password confirmation)
+// call route('dashboard'), so that name must resolve.
+//
+// This cannot be a second Route::get('/dashboard', ...)->name('dashboard'):
+// Laravel's RouteCollection keeps only one Route per exact method-set + URI,
+// so a second GET registration on the same URI silently evicts the earlier
+// one from the name lookup table, leaving whichever name was registered
+// first unresolvable (this previously left route('dashboard') broken).
+// Registering the alias under a verb browsers never send for navigation
+// (OPTIONS, which — unlike GET — Laravel does not auto-pair with HEAD) gives
+// it a distinct method-set key, so both names coexist without collision,
+// while real GET/HEAD traffic to /dashboard is still handled exclusively by
+// dashboard.index below.
+Route::match(['OPTIONS'], '/dashboard', [DashboardController::class, 'index'])
+    ->middleware('auth')
+    ->name('dashboard');
+
+Route::middleware('auth')->group(function () {
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
 Route::middleware(['auth'])
@@ -265,6 +292,24 @@ Route::middleware(['auth'])
 
                 Route::get('accounts', [CashAccountController::class, 'index'])
                     ->name('accounts');
+
+                Route::get('accounts/create', [CashAccountController::class, 'create'])
+                    ->name('accounts.create');
+
+                Route::post('accounts/store', [CashAccountController::class, 'store'])
+                    ->name('accounts.store');
+
+                Route::get('accounts/{account}/edit', [CashAccountController::class, 'edit'])
+                    ->name('accounts.edit');
+
+                Route::put('accounts/{account}', [CashAccountController::class, 'update'])
+                    ->name('accounts.update');
+
+                Route::delete('accounts/{account}', [CashAccountController::class, 'destroy'])
+                    ->name('accounts.destroy');
+
+                Route::get('ledger', [CashAccountController::class, 'ledger'])
+                    ->name('ledger');
 
                 Route::get('transactions', [CashTransactionController::class, 'index'])
                     ->name('transactions');

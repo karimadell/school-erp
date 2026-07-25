@@ -28,18 +28,6 @@
 </a>
 </li>
 
-<li>
-<a href="{{ route('dashboard.classrooms.index') }}">
-🚪 {{ __('app.class_rooms') }}
-</a>
-</li>
-
-<li>
-<a href="{{ route('dashboard.academic-years.index') }}">
-📅 {{ __('app.academic_years') }}
-</a>
-</li>
-
 <li class="menu-section">{{ __('app.students') }}</li>
 
 <li>
@@ -141,7 +129,7 @@
 </li>
 
 <li>
-<a href="{{ route('dashboard.admin.audit-logs.index') }}">
+<a href="{{ route('dashboard.admin.audit.logs.index') }}">
 📜 {{ __('app.audit_logs') }}
 </a>
 </li>

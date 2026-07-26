@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
+use App\Models\Student;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -74,8 +75,42 @@ class StudentTest extends TestCase
         $this->assertDatabaseCount('students', 0);
     }
 
-    // NOTE: an authorized-store test and a delete-permission test that
-    // require a successful Student save are added separately once the
-    // pre-existing students.name NOT NULL bug (discovered while writing
-    // this test, unrelated to permission middleware) is fixed.
+    public function test_authorized_user_can_store_a_student(): void
+    {
+        // Regression test: students.name was NOT NULL in the database but
+        // StudentController never populated it (only the RU name fields),
+        // so every student insert threw a NOT NULL constraint violation,
+        // unrelated to permissions.
+        $user = $this->authorizedUser();
+        $class = $this->makeClass();
+
+        $response = $this->actingAs($user)->post(route('dashboard.students.store'), [
+            'class_id' => $class->id,
+            'last_name_ru' => 'Ivanov',
+            'first_name_ru' => 'Ivan',
+        ]);
+
+        $response->assertRedirect(route('dashboard.students.index'));
+        $this->assertDatabaseHas('students', ['first_name_ru' => 'Ivan', 'last_name_ru' => 'Ivanov']);
+    }
+
+    public function test_unauthorized_user_cannot_delete_a_student(): void
+    {
+        $user = $this->authorizedUser();
+        $class = $this->makeClass();
+
+        $student = Student::create([
+            'class_id' => $class->id,
+            'last_name_ru' => 'Petrov',
+            'first_name_ru' => 'Petr',
+        ]);
+
+        // Revoke permission to confirm destroy is actually gated.
+        $user->revokePermissionTo('manage students');
+
+        $response = $this->actingAs($user)->delete(route('dashboard.students.destroy', $student));
+
+        $response->assertForbidden();
+        $this->assertDatabaseHas('students', ['id' => $student->id]);
+    }
 }

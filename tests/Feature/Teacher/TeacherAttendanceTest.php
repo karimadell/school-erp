@@ -166,4 +166,24 @@ class TeacherAttendanceTest extends TestCase
             ]);
         }
     }
+
+    /**
+     * Regression test: saveAttendance() persisted whatever status value
+     * the client sent, with no validation against the supported set.
+     */
+    public function test_invalid_status_is_rejected(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+
+        Livewire::actingAs($user)
+            ->test(TeacherAttendance::class)
+            ->set('classId', $enrollment->class_id)
+            ->call('loadStudents')
+            ->set("attendance.{$enrollment->id}", 'not-a-real-status')
+            ->call('saveAttendance')
+            ->assertHasErrors(["attendance.{$enrollment->id}" => 'in']);
+
+        $this->assertDatabaseMissing('attendances', ['enrollment_id' => $enrollment->id]);
+    }
 }

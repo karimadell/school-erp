@@ -41,6 +41,10 @@ class TeacherAttendance extends Page
 
     public function saveAttendance()
     {
+        $this->validate([
+            'attendance.*' => 'required|in:present,absent,late,excused',
+        ]);
+
         $date = Carbon::today()->toDateString();
 
         foreach ($this->attendance as $enrollmentId => $status) {

@@ -51,6 +51,10 @@ class AttendanceController extends Controller
             'date' => 'required|date',
             'type' => 'required|in:daily,period',
             'attendance' => 'required|array',
+            // Covers both submission shapes: daily's attendance[id][status]
+            // and period's attendance[id][periodId], where the leaf value
+            // is always a status string either way.
+            'attendance.*.*' => 'required|in:present,absent,late,excused',
         ]);
 
         $type = $request->type;

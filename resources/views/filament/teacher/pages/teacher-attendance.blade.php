@@ -5,7 +5,7 @@
 <div class="bg-white p-4 rounded shadow">
 
 <h2 class="text-lg font-bold mb-4">
-Выберите класс
+{{ __('attendance.select_class') }}
 </h2>
 
 <select wire:model="classId" class="border p-2 rounded">
@@ -26,7 +26,7 @@
 wire:click="loadStudents"
 class="ml-2 bg-primary-600 text-white px-4 py-2 rounded"
 >
-Загрузить
+{{ __('attendance.load') }}
 </button>
 
 </div>
@@ -36,7 +36,7 @@ class="ml-2 bg-primary-600 text-white px-4 py-2 rounded"
 <div class="bg-white p-6 rounded shadow">
 
 <h2 class="text-lg font-bold mb-4">
-Посещаемость
+{{ __('attendance.title') }}
 </h2>
 
 <table class="w-full border">
@@ -47,9 +47,9 @@ class="ml-2 bg-primary-600 text-white px-4 py-2 rounded"
 
 <th class="p-2 border">ID</th>
 
-<th class="p-2 border">Студент</th>
+<th class="p-2 border">{{ __('attendance.student') }}</th>
 
-<th class="p-2 border">Статус</th>
+<th class="p-2 border">{{ __('attendance.status') }}</th>
 
 </tr>
 
@@ -73,13 +73,13 @@ class="ml-2 bg-primary-600 text-white px-4 py-2 rounded"
 
 <select wire:model="attendance.{{ $enrollment->id }}" class="border p-1 rounded">
 
-<option value="present">Присутствует</option>
+<option value="present">{{ __('attendance.present') }}</option>
 
-<option value="absent">Отсутствует</option>
+<option value="absent">{{ __('attendance.absent') }}</option>
 
-<option value="late">Опоздал</option>
+<option value="late">{{ __('attendance.late') }}</option>
 
-<option value="excused">Освобождён</option>
+<option value="excused">{{ __('attendance.excused') }}</option>
 
 </select>
 
@@ -98,7 +98,7 @@ wire:click="saveAttendance"
 class="mt-4 bg-green-600 text-white px-6 py-2 rounded"
 >
 
-Сохранить
+{{ __('attendance.save') }}
 
 </button>
 

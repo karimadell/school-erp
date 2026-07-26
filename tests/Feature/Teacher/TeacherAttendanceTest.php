@@ -186,4 +186,47 @@ class TeacherAttendanceTest extends TestCase
 
         $this->assertDatabaseMissing('attendances', ['enrollment_id' => $enrollment->id]);
     }
+
+    /**
+     * Regression test: teacher-attendance.blade.php was 100% hardcoded
+     * Russian text with zero __() calls, so it always rendered Russian
+     * regardless of the active locale.
+     */
+    public function test_page_renders_without_hardcoded_russian_text_in_all_locales(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+
+        foreach (['ru', 'en', 'ar'] as $locale) {
+            app()->setLocale($locale);
+
+            $component = Livewire::actingAs($user)
+                ->test(TeacherAttendance::class)
+                ->set('classId', $enrollment->class_id)
+                ->call('loadStudents');
+
+            // Not a plain 'attendance.' check: wire:model="attendance.{id}"
+            // legitimately contains that substring for this component's own
+            // $attendance property, so check for specific untranslated key
+            // leaks instead.
+            $component->assertDontSee('attendance.select_class', false);
+            $component->assertDontSee('attendance.load', false);
+            $component->assertDontSee('attendance.title', false);
+            $component->assertDontSee('attendance.student', false);
+            $component->assertDontSee('attendance.status', false);
+            $component->assertDontSee('attendance.present', false);
+            $component->assertDontSee('attendance.save', false);
+
+            if ($locale !== 'ru') {
+                $component->assertDontSee('Выберите класс');
+                $component->assertDontSee('Загрузить');
+                $component->assertDontSee('Посещаемость');
+                $component->assertDontSee('Присутствует');
+                $component->assertDontSee('Отсутствует');
+                $component->assertDontSee('Опоздал');
+                $component->assertDontSee('Освобождён');
+                $component->assertDontSee('Сохранить');
+            }
+        }
+    }
 }

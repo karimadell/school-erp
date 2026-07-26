@@ -45,6 +45,22 @@ class AttendanceTest extends TestCase
         $this->actingAs($user)->get(route('dashboard.attendance.index'))->assertOk();
     }
 
+    /**
+     * Regression test: no navigation link to any of the three report/
+     * dashboard routes existed anywhere in the UI before this fix.
+     */
+    public function test_dashboard_nav_links_to_attendance_reports_and_dashboard(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->get(route('dashboard.attendance.index'));
+
+        $response->assertOk();
+        $response->assertSee(route('dashboard.attendance.reports.class'), false);
+        $response->assertSee(route('dashboard.attendance.reports.student'), false);
+        $response->assertSee(route('dashboard.attendance.dashboard'), false);
+    }
+
     public function test_take_page_renders_with_class_students_and_periods(): void
     {
         $user = User::factory()->create();

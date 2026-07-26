@@ -4,6 +4,7 @@ namespace Tests\Feature\Admin;
 
 use App\Filament\Resources\Attendances\Pages\CreateAttendance;
 use App\Filament\Resources\Attendances\Pages\EditAttendance;
+use App\Filament\Resources\Attendances\Pages\ListAttendances;
 use App\Models\Attendance;
 use App\Models\Enrollment;
 use App\Models\Grade;
@@ -123,5 +124,54 @@ class AttendanceResourceTest extends TestCase
             ->assertHasNoFormErrors();
 
         $this->assertSame('absent', $attendance->fresh()->status);
+    }
+
+    /**
+     * Regression test: AttendanceResource's navigation label, model
+     * labels, and every form/table/infolist field label were hardcoded
+     * English strings — this is the first localized Filament resource in
+     * this codebase; nothing else in app/Filament/Resources previously
+     * used __() at all.
+     */
+    public function test_resource_pages_render_without_untranslated_labels_in_all_locales(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+
+        Attendance::create([
+            'enrollment_id' => $enrollment->id,
+            'date' => '2026-01-15',
+            'type' => 'daily',
+            'status' => 'present',
+            'attendance_key' => Attendance::buildAttendanceKey('daily', $enrollment->id, '2026-01-15'),
+        ]);
+
+        foreach (['ru', 'en', 'ar'] as $locale) {
+            app()->setLocale($locale);
+
+            Livewire::actingAs($user)
+                ->test(ListAttendances::class)
+                ->assertSuccessful()
+                ->assertDontSee('attendance.', false);
+
+            $create = Livewire::actingAs($user)
+                ->test(CreateAttendance::class)
+                ->assertSuccessful();
+
+            $create->assertDontSee('attendance.', false);
+            $create->assertSee(__('attendance.present'));
+            $create->assertSee(__('attendance.daily'));
+
+            // The old code hardcoded English option labels regardless of
+            // locale ('Daily', 'Present', etc.) with zero __() calls, so a
+            // plain 'attendance.' leak check above can't catch that — it
+            // never leaked a raw key, it just always rendered English.
+            // Confirm the hardcoded English text is actually gone once the
+            // locale genuinely translates to something else.
+            if ($locale !== 'en') {
+                $create->assertDontSee('Present');
+                $create->assertDontSee('Daily');
+            }
+        }
     }
 }

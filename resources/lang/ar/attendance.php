@@ -46,4 +46,9 @@ return [
     'no_data' => 'لا توجد بيانات',
 
     'note' => 'ملاحظة',
+
+    'title_plural' => 'سجلات الحضور',
+    'enrollment' => 'القيد',
+    'load' => 'تحميل',
+    'dashboard' => 'لوحة الحضور',
 ];

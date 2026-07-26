@@ -15,22 +15,36 @@ class AttendanceForm
         return $schema
             ->components([
                 TextInput::make('enrollment_id')
+                    ->label(__('attendance.enrollment'))
                     ->required()
                     ->numeric(),
                 DatePicker::make('date')
+                    ->label(__('attendance.date'))
                     ->required(),
                 Select::make('type')
-                    ->options(['daily' => 'Daily', 'period' => 'Period'])
+                    ->label(__('attendance.type'))
+                    ->options([
+                        'daily' => __('attendance.daily'),
+                        'period' => __('attendance.period'),
+                    ])
                     ->default('daily')
                     ->required(),
                 TextInput::make('period_id')
+                    ->label(__('attendance.period'))
                     ->numeric()
                     ->nullable(),
                 Select::make('status')
-                    ->options(['present' => 'Present', 'absent' => 'Absent', 'late' => 'Late', 'excused' => 'Excused'])
+                    ->label(__('attendance.status'))
+                    ->options([
+                        'present' => __('attendance.present'),
+                        'absent' => __('attendance.absent'),
+                        'late' => __('attendance.late'),
+                        'excused' => __('attendance.excused'),
+                    ])
                     ->default('present')
                     ->required(),
                 Textarea::make('note')
+                    ->label(__('attendance.note'))
                     ->columnSpanFull(),
             ]);
     }

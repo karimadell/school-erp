@@ -46,4 +46,9 @@ return [
     'no_data' => 'No data available',
 
     'note' => 'Note',
+
+    'title_plural' => 'Attendances',
+    'enrollment' => 'Enrollment',
+    'load' => 'Load',
+    'dashboard' => 'Attendance Dashboard',
 ];

@@ -37,6 +37,7 @@ class SubjectController extends Controller
         ]);
 
         $data['is_active'] = $request->boolean('is_active');
+        $data['name_ar'] = $data['name_ru'];
 
         if (empty($data['code'])) {
             $data['code'] = $this->generateCode($data['name_ru']);
@@ -64,6 +65,7 @@ class SubjectController extends Controller
         ]);
 
         $data['is_active'] = $request->boolean('is_active');
+        $data['name_ar'] = $data['name_ru'];
 
         if (empty($data['code'])) {
             $data['code'] = $this->generateCode($data['name_ru'], $subject->id);

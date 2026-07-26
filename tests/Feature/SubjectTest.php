@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Subject;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -51,8 +52,39 @@ class SubjectTest extends TestCase
         $this->assertDatabaseCount('subjects', 0);
     }
 
-    // NOTE: authorized-store / delete-permission tests that require a
-    // successful Subject save are added separately once the pre-existing
-    // Subject::name_ar NOT NULL / fillable bug (discovered while writing
-    // this test, unrelated to permission middleware) is fixed.
+    public function test_authorized_user_can_store_a_subject(): void
+    {
+        // Regression test: subjects.name_ar is NOT NULL in the database
+        // but was missing from Subject::$fillable, and the controller
+        // never populated it — SubjectController::store() always threw a
+        // NOT NULL constraint violation, unrelated to permissions.
+        $user = $this->authorizedUser();
+
+        $response = $this->actingAs($user)->post(route('dashboard.subjects.store'), [
+            'name_ru' => 'Mathematics',
+        ]);
+
+        $response->assertRedirect(route('dashboard.subjects.index'));
+        $this->assertDatabaseHas('subjects', ['name_ru' => 'Mathematics', 'name_ar' => 'Mathematics']);
+    }
+
+    public function test_unauthorized_user_cannot_delete_a_subject(): void
+    {
+        $user = $this->authorizedUser();
+
+        $subject = Subject::create([
+            'code' => 'MATH',
+            'name_ar' => 'الرياضيات',
+            'name_ru' => 'Mathematics',
+            'is_active' => true,
+        ]);
+
+        // Revoke permission to confirm destroy is actually gated.
+        $user->revokePermissionTo('manage subjects');
+
+        $response = $this->actingAs($user)->delete(route('dashboard.subjects.destroy', $subject));
+
+        $response->assertForbidden();
+        $this->assertDatabaseHas('subjects', ['id' => $subject->id]);
+    }
 }

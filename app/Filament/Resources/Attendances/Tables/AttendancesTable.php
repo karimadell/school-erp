@@ -21,6 +21,11 @@ class AttendancesTable
                 TextColumn::make('date')
                     ->date()
                     ->sortable(),
+                TextColumn::make('type')
+                    ->badge(),
+                TextColumn::make('period_id')
+                    ->numeric()
+                    ->placeholder('-'),
                 TextColumn::make('status')
                     ->badge(),
                 TextColumn::make('created_at')

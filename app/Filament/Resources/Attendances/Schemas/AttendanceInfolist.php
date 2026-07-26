@@ -15,6 +15,11 @@ class AttendanceInfolist
                     ->numeric(),
                 TextEntry::make('date')
                     ->date(),
+                TextEntry::make('type')
+                    ->badge(),
+                TextEntry::make('period_id')
+                    ->numeric()
+                    ->placeholder('-'),
                 TextEntry::make('status')
                     ->badge(),
                 TextEntry::make('note')

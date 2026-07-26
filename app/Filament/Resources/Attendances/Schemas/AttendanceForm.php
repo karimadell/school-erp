@@ -19,6 +19,13 @@ class AttendanceForm
                     ->numeric(),
                 DatePicker::make('date')
                     ->required(),
+                Select::make('type')
+                    ->options(['daily' => 'Daily', 'period' => 'Period'])
+                    ->default('daily')
+                    ->required(),
+                TextInput::make('period_id')
+                    ->numeric()
+                    ->nullable(),
                 Select::make('status')
                     ->options(['present' => 'Present', 'absent' => 'Absent', 'late' => 'Late', 'excused' => 'Excused'])
                     ->default('present')

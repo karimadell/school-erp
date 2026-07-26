@@ -9,12 +9,6 @@ class Grade extends Model
     protected $fillable = [
         'name',
         'stage_id',
-        'order',
-        'is_active',
-    ];
-
-    protected $casts = [
-        'is_active' => 'boolean',
     ];
 
     /*

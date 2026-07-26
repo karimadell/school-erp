@@ -16,6 +16,13 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class TeacherController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:manage teachers')->only([
+            'create', 'store', 'edit', 'update', 'destroy', 'storeDocument', 'deleteDocument',
+        ]);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | INDEX

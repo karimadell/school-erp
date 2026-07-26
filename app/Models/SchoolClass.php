@@ -10,6 +10,7 @@ class SchoolClass extends Model
 
     protected $fillable = [
         'code',
+        'name_ar',
         'name_ru',
         'grade_id',
         'capacity',

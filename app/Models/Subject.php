@@ -8,6 +8,7 @@ class Subject extends Model
 {
     protected $fillable = [
         'code',
+        'name_ar',
         'name_ru',
         'description',
         'is_active',

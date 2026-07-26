@@ -57,27 +57,29 @@ class="ml-2 bg-primary-600 text-white px-4 py-2 rounded"
 
 <tbody>
 
-@foreach($students as $student)
+@foreach($students as $enrollment)
 
 <tr>
 
 <td class="border p-2">
-{{ $student->id }}
+{{ $enrollment->student_id }}
 </td>
 
 <td class="border p-2">
-{{ $student->full_name }}
+{{ $enrollment->student->full_name }}
 </td>
 
 <td class="border p-2">
 
-<select wire:model="attendance.{{ $student->id }}" class="border p-1 rounded">
+<select wire:model="attendance.{{ $enrollment->id }}" class="border p-1 rounded">
 
 <option value="present">Присутствует</option>
 
 <option value="absent">Отсутствует</option>
 
 <option value="late">Опоздал</option>
+
+<option value="excused">Освобождён</option>
 
 </select>
 

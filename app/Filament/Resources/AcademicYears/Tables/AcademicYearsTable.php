@@ -23,7 +23,7 @@ class AcademicYearsTable
                 TextColumn::make('end_date')
                     ->date()
                     ->sortable(),
-                IconColumn::make('is_current')
+                IconColumn::make('is_active')
                     ->boolean(),
                 TextColumn::make('created_at')
                     ->dateTime()

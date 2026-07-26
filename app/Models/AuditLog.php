@@ -6,7 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 
 class AuditLog extends Model
 {
-    public $timestamps = false;
+    // The audit_logs table has created_at/updated_at columns and every
+    // AuditLog::create() call site relies on Eloquent to populate them
+    // automatically (none set created_at explicitly) — timestamps must
+    // stay enabled (Eloquent's default) or every row is created with a
+    // NULL created_at, which crashes the audit log view's ->format() call.
 
     protected $fillable = [
         'user_id',

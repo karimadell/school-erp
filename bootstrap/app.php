@@ -40,6 +40,12 @@ return Application::configure(basePath: dirname(__DIR__))
 
             // ✅ permission middleware (your custom one)
             'permission' => \App\Http\Middleware\CheckPermission::class,
+
+            // Spatie's role-check middleware, used by routes/web.php's
+            // admin group (role:admin) — was previously unregistered,
+            // causing every request there to throw a "Target class [role]
+            // does not exist" error.
+            'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

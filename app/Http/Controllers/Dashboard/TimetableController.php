@@ -26,7 +26,9 @@ class TimetableController extends Controller
 
     public function show(SchoolClass $class)
     {
-        $days = Day::orderBy('order')->get();
+        // The days table has no 'order' column (only id/name); order by id
+        // to match how create()/pdf() already load days on this controller.
+        $days = Day::orderBy('id')->get();
         $periods = Period::orderBy('number')->get();
 
         $timetable = Timetable::with(['subject','teacher'])

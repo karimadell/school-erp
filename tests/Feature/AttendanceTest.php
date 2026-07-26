@@ -153,4 +153,57 @@ class AttendanceTest extends TestCase
 
         $response->assertOk();
     }
+
+    /**
+     * Regression test: attendance.php was missing 14 keys in ar/en (12 in
+     * ru) that the attendance views already referenced, and ar/en had no
+     * timetable.php at all despite take.blade.php calling
+     * __('timetable.lesson') — both rendered as literal untranslated key
+     * strings before this fix.
+     */
+    public function test_attendance_pages_render_without_translation_key_leaks_in_all_locales(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+        Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+
+        Attendance::create([
+            'enrollment_id' => $enrollment->id,
+            'date' => '2026-01-15',
+            'type' => 'daily',
+            'status' => 'present',
+            'attendance_key' => Attendance::buildAttendanceKey('daily', $enrollment->id, '2026-01-15'),
+        ]);
+
+        foreach (['ru', 'en', 'ar'] as $locale) {
+            app()->setLocale($locale);
+
+            $index = $this->actingAs($user)->get(route('dashboard.attendance.index'));
+            $index->assertOk();
+            $index->assertDontSee('attendance.', false);
+
+            $take = $this->actingAs($user)->get(route('dashboard.attendance.create', [
+                'class_id' => $enrollment->class_id,
+                'date' => '2026-01-15',
+                'type' => 'daily',
+            ]));
+            $take->assertOk();
+            $take->assertDontSee('attendance.', false);
+            $take->assertDontSee('timetable.', false);
+
+            $classReport = $this->actingAs($user)->get(route('dashboard.attendance.reports.class', [
+                'class_id' => $enrollment->class_id,
+            ]));
+            $classReport->assertOk();
+            $classReport->assertDontSee('attendance.', false);
+
+            $studentReport = $this->actingAs($user)->get(route('dashboard.attendance.reports.student'));
+            $studentReport->assertOk();
+            $studentReport->assertDontSee('attendance.', false);
+
+            $dashboard = $this->actingAs($user)->get(route('dashboard.attendance.dashboard'));
+            $dashboard->assertOk();
+            $dashboard->assertDontSee('attendance.', false);
+        }
+    }
 }

@@ -14,6 +14,8 @@ class RolesAndPermissionsSeeder extends Seeder
         $permissions = [
 
             'manage students',
+            'manage teachers',
+            'manage subjects',
             'manage enrollments',
             'manage invoices',
             'manage cash',

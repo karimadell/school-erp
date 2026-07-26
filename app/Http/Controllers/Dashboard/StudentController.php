@@ -10,6 +10,11 @@ use Illuminate\Support\Facades\Storage;
 
 class StudentController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:manage students')->only(['create', 'store', 'edit', 'update', 'destroy']);
+    }
+
     public function index(Request $request)
     {
         $students = Student::with('class')

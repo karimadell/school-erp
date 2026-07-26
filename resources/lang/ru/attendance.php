@@ -30,4 +30,24 @@ return [
     'student_report' => 'Отчёт по ученику',
     'back' => 'Назад',
     'no_students' => 'Нет учеников в этом классе',
+
+    'select_class' => 'Выберите класс',
+    'select_period' => 'Выберите урок',
+    'lesson' => 'Урок',
+    'all_types' => 'Все типы',
+
+    'filter' => 'Фильтр',
+    'records' => 'Записи',
+    'students' => 'Ученики',
+    'summary' => 'Сводка',
+    'total' => 'Итого',
+    'average_attendance' => 'Средняя посещаемость',
+    'no_data' => 'Нет данных',
+
+    'note' => 'Примечание',
+
+    'title_plural' => 'Посещаемость (записи)',
+    'enrollment' => 'Зачисление',
+    'load' => 'Загрузить',
+    'dashboard' => 'Панель посещаемости',
 ];

@@ -16,7 +16,7 @@
         </div>
 
         <a href="{{ route('dashboard.attendance.index') }}" class="btn btn-secondary">
-            ← {{ __('attendance.back') ?? 'Назад' }}
+            ← {{ __('attendance.back') }}
         </a>
     </div>
 
@@ -96,7 +96,7 @@
                                 <tr>
                                     <td colspan="{{ $type === 'daily' ? 3 : 2 + $periods->count() }}"
                                         class="text-center py-5 text-muted">
-                                        {{ __('attendance.no_students') ?? 'Нет учеников в этом классе' }}
+                                        {{ __('attendance.no_students') }}
                                     </td>
                                 </tr>
                             @endforelse

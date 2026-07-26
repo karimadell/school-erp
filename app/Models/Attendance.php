@@ -29,4 +29,17 @@ class Attendance extends Model
     {
         return $this->belongsTo(Period::class);
     }
+
+    /**
+     * Matches the key format AttendanceController::store() already
+     * generates ("daily-{enrollment}-{date}" / "period-{enrollment}-{date}-{period}"),
+     * so the same enrollment/date/(period) combination resolves to the
+     * same row regardless of which surface wrote it.
+     */
+    public static function buildAttendanceKey(string $type, int $enrollmentId, string $date, ?int $periodId = null): string
+    {
+        return $type === 'period'
+            ? "period-{$enrollmentId}-{$date}-{$periodId}"
+            : "daily-{$enrollmentId}-{$date}";
+    }
 }

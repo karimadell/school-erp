@@ -140,6 +140,27 @@
                 </a>
             </li>
 
+            <li class="nav-item">
+                <a class="nav-link text-white {{ request()->routeIs('dashboard.attendance.reports.class') ? 'active' : '' }}"
+                   href="{{ route('dashboard.attendance.reports.class') }}">
+                    📊 {{ __('attendance.class_report') }}
+                </a>
+            </li>
+
+            <li class="nav-item">
+                <a class="nav-link text-white {{ request()->routeIs('dashboard.attendance.reports.student') ? 'active' : '' }}"
+                   href="{{ route('dashboard.attendance.reports.student') }}">
+                    📊 {{ __('attendance.student_report') }}
+                </a>
+            </li>
+
+            <li class="nav-item">
+                <a class="nav-link text-white {{ request()->routeIs('dashboard.attendance.dashboard') ? 'active' : '' }}"
+                   href="{{ route('dashboard.attendance.dashboard') }}">
+                    📈 {{ __('attendance.dashboard') }}
+                </a>
+            </li>
+
             {{-- Grades --}}
             <li class="text-uppercase text-secondary small mt-3 mb-1">
                 {{ __('student_grades.title') }}

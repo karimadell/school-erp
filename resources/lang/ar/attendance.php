@@ -28,4 +28,27 @@ return [
     'reports' => 'التقارير',
     'class_report' => 'تقرير الفصل',
     'student_report' => 'تقرير الطالب',
+
+    'back' => 'رجوع',
+    'no_students' => 'لا يوجد طلاب في هذا الفصل',
+
+    'select_class' => 'اختر الفصل',
+    'select_period' => 'اختر الحصة',
+    'lesson' => 'الحصة',
+    'all_types' => 'جميع الأنواع',
+
+    'filter' => 'تصفية',
+    'records' => 'السجلات',
+    'students' => 'الطلاب',
+    'summary' => 'الملخص',
+    'total' => 'الإجمالي',
+    'average_attendance' => 'متوسط الحضور',
+    'no_data' => 'لا توجد بيانات',
+
+    'note' => 'ملاحظة',
+
+    'title_plural' => 'سجلات الحضور',
+    'enrollment' => 'القيد',
+    'load' => 'تحميل',
+    'dashboard' => 'لوحة الحضور',
 ];

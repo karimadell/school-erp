@@ -3,7 +3,8 @@
 namespace App\Filament\Teacher\Pages;
 
 use Filament\Pages\Page;
-use App\Models\Student;
+use Filament\Notifications\Notification;
+use App\Models\Enrollment;
 use App\Models\Attendance;
 use Carbon\Carbon;
 use UnitEnum;
@@ -27,28 +28,41 @@ class TeacherAttendance extends Page
 
     public function loadStudents()
     {
-        $this->students = Student::where('class_id', $this->classId)->get();
+        // Attendance is keyed via Enrollment (enrollment_id), not Student
+        // directly — matches AttendanceController::take()'s query.
+        $this->students = Enrollment::with('student')
+            ->where('class_id', $this->classId)
+            ->get();
 
-        foreach ($this->students as $student) {
-            $this->attendance[$student->id] = 'present';
+        foreach ($this->students as $enrollment) {
+            $this->attendance[$enrollment->id] = 'present';
         }
     }
 
     public function saveAttendance()
     {
-        foreach ($this->attendance as $studentId => $status) {
+        $this->validate([
+            'attendance.*' => 'required|in:present,absent,late,excused',
+        ]);
+
+        $date = Carbon::today()->toDateString();
+
+        foreach ($this->attendance as $enrollmentId => $status) {
 
             Attendance::updateOrCreate(
+                ['attendance_key' => Attendance::buildAttendanceKey('daily', (int) $enrollmentId, $date)],
                 [
-                    'student_id' => $studentId,
-                    'date' => Carbon::today(),
-                ],
-                [
-                    'status' => $status
+                    'enrollment_id' => $enrollmentId,
+                    'date' => $date,
+                    'type' => 'daily',
+                    'status' => $status,
                 ]
             );
         }
 
-        $this->notify('success','Attendance saved');
+        Notification::make()
+            ->title('Attendance saved')
+            ->success()
+            ->send();
     }
 }

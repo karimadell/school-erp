@@ -16,12 +16,24 @@ class AttendancesTable
         return $table
             ->columns([
                 TextColumn::make('enrollment_id')
+                    ->label(__('attendance.enrollment'))
                     ->numeric()
                     ->sortable(),
                 TextColumn::make('date')
+                    ->label(__('attendance.date'))
                     ->date()
                     ->sortable(),
+                TextColumn::make('type')
+                    ->label(__('attendance.type'))
+                    ->formatStateUsing(fn (string $state): string => __('attendance.' . $state))
+                    ->badge(),
+                TextColumn::make('period_id')
+                    ->label(__('attendance.period'))
+                    ->numeric()
+                    ->placeholder('-'),
                 TextColumn::make('status')
+                    ->label(__('attendance.status'))
+                    ->formatStateUsing(fn (string $state): string => __('attendance.' . $state))
                     ->badge(),
                 TextColumn::make('created_at')
                     ->dateTime()

@@ -28,4 +28,27 @@ return [
     'reports' => 'Reports',
     'class_report' => 'Class Report',
     'student_report' => 'Student Report',
+
+    'back' => 'Back',
+    'no_students' => 'No students in this class',
+
+    'select_class' => 'Select Class',
+    'select_period' => 'Select Period',
+    'lesson' => 'Lesson',
+    'all_types' => 'All Types',
+
+    'filter' => 'Filter',
+    'records' => 'Records',
+    'students' => 'Students',
+    'summary' => 'Summary',
+    'total' => 'Total',
+    'average_attendance' => 'Average Attendance',
+    'no_data' => 'No data available',
+
+    'note' => 'Note',
+
+    'title_plural' => 'Attendances',
+    'enrollment' => 'Enrollment',
+    'load' => 'Load',
+    'dashboard' => 'Attendance Dashboard',
 ];

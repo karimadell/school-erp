@@ -8,6 +8,10 @@ use Illuminate\Http\Request;
 
 class StageController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:manage stages')->only(['create', 'store', 'edit', 'update', 'destroy']);
+    }
 
     public function index()
     {

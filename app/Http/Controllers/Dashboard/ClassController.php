@@ -9,6 +9,11 @@ use App\Models\Grade;
 
 class ClassController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:manage classes')->only(['create', 'store', 'edit', 'update', 'destroy']);
+    }
+
     /**
      * Display a listing of the resource.
      */

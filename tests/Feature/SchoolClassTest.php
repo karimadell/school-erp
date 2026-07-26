@@ -7,6 +7,7 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 class SchoolClassTest extends TestCase
@@ -18,6 +19,17 @@ class SchoolClassTest extends TestCase
         $stage = Stage::create(['name' => 'Primary', 'order' => 1, 'is_active' => true]);
 
         return Grade::create(['name' => 'Grade 1', 'stage_id' => $stage->id]);
+    }
+
+    protected function authorizedUser(): User
+    {
+        $user = User::factory()->create();
+
+        // Matches the permission seeded in RolesAndPermissionsSeeder.php.
+        Permission::findOrCreate('manage classes', 'web');
+        $user->givePermissionTo('manage classes');
+
+        return $user;
     }
 
     public function test_name_ar_is_mass_assignable(): void
@@ -40,9 +52,65 @@ class SchoolClassTest extends TestCase
         $this->assertSame('فصل A', $class->fresh()->name_ar);
     }
 
-    public function test_class_can_be_created_via_controller(): void
+    public function test_any_authenticated_user_can_view_the_index(): void
     {
         $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->get(route('dashboard.classes.index'));
+
+        $response->assertOk();
+    }
+
+    public function test_unauthorized_user_cannot_open_create_page(): void
+    {
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->get(route('dashboard.classes.create'));
+
+        $response->assertForbidden();
+    }
+
+    public function test_unauthorized_user_cannot_store_a_class(): void
+    {
+        $user = User::factory()->create();
+        $grade = $this->makeGrade();
+
+        $response = $this->actingAs($user)->post(route('dashboard.classes.store'), [
+            'grade_id' => $grade->id,
+            'code' => 'B',
+            'name_ru' => 'Класс B',
+        ]);
+
+        $response->assertForbidden();
+        $this->assertDatabaseCount('classes', 0);
+    }
+
+    public function test_unauthorized_user_cannot_delete_a_class(): void
+    {
+        $user = $this->authorizedUser();
+        $grade = $this->makeGrade();
+
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'D',
+            'name_ar' => 'فصل D',
+            'name_ru' => 'Класс D',
+            'capacity' => 25,
+            'is_active' => true,
+        ]);
+
+        // Revoke permission to confirm destroy is actually gated.
+        $user->revokePermissionTo('manage classes');
+
+        $response = $this->actingAs($user)->delete(route('dashboard.classes.destroy', $class));
+
+        $response->assertForbidden();
+        $this->assertDatabaseHas('classes', ['id' => $class->id]);
+    }
+
+    public function test_class_can_be_created_via_controller(): void
+    {
+        $user = $this->authorizedUser();
         $grade = $this->makeGrade();
 
         $response = $this->actingAs($user)->post(route('dashboard.classes.store'), [
@@ -61,7 +129,7 @@ class SchoolClassTest extends TestCase
 
     public function test_class_name_ar_can_be_updated_via_controller(): void
     {
-        $user = User::factory()->create();
+        $user = $this->authorizedUser();
         $grade = $this->makeGrade();
 
         $class = SchoolClass::create([

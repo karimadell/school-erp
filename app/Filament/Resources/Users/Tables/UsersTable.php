@@ -23,6 +23,13 @@ class UsersTable
                     ->label('Роль')
                     ->badge(),
 
+                Tables\Columns\TextColumn::make('permissions.name')
+                    ->label('Доп. разрешения')
+                    ->badge()
+                    ->color('warning')
+                    ->placeholder('—')
+                    ->toggleable(),
+
                 Tables\Columns\TextColumn::make('created_at')
                     ->label('Создан')
                     ->dateTime(),

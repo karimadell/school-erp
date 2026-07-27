@@ -5,7 +5,7 @@ namespace App\Filament\Pages;
 use App\Models\Student;
 use App\Models\Subject;
 use BackedEnum;
-use Barryvdh\DomPDF\Facade\Pdf;
+use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use UnitEnum;
 
@@ -64,14 +64,15 @@ class ReportCard extends Page
             return null;
         }
 
-        $pdf = Pdf::loadView('pdf.report-card', [
-            'student' => $this->student,
-            'subjects' => $this->subjects,
-        ]);
+        // Not implemented yet — blocked on Section 4's grading policy (see
+        // docs/OPEN_POLICY_DECISIONS.md). The PDF view this used to render
+        // called Student::quarterGrade(), a method that doesn't exist, and
+        // crashed on every click.
+        Notification::make()
+            ->title(__('report_cards.not_available_yet'))
+            ->warning()
+            ->send();
 
-        return response()->streamDownload(
-            fn () => print($pdf->output()),
-            'report_card_' . $this->student->id . '.pdf'
-        );
+        return null;
     }
 }

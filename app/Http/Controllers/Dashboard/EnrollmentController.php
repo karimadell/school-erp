@@ -59,7 +59,7 @@ class EnrollmentController extends Controller
     public function store(Request $request, Student $student): RedirectResponse
     {
         $data = $request->validate([
-            'academic_year_id' => ['nullable', 'exists:academic_years,id'],
+            'academic_year_id' => ['required', 'exists:academic_years,id'],
             'academic_year' => ['nullable', 'string', 'max:50'],
 
             'stage_id' => ['required', 'exists:stages,id'],
@@ -72,18 +72,15 @@ class EnrollmentController extends Controller
         ]);
 
         DB::transaction(function () use ($data, $student) {
-            if ($data['status'] === 'active') {
-                Enrollment::where('student_id', $student->id)
-                    ->where('is_active', true)
-                    ->update([
-                        'is_active' => false,
-                        'status' => 'transferred',
-                    ]);
-            }
-
+            // A new enrollment never deactivates another academic year's
+            // enrollment. is_active describes only this record's own year —
+            // it is not a global "current enrollment" flag across years.
+            // The student's current placement is derived separately, from
+            // whichever enrollment is linked to the currently active
+            // AcademicYear (see Student::currentEnrollment()).
             Enrollment::create([
                 'student_id' => $student->id,
-                'academic_year_id' => $data['academic_year_id'] ?? null,
+                'academic_year_id' => $data['academic_year_id'],
                 'academic_year' => $data['academic_year'] ?? null,
 
                 'stage_id' => $data['stage_id'],
@@ -98,7 +95,11 @@ class EnrollmentController extends Controller
                 'is_active' => $data['status'] === 'active',
             ]);
 
-            if ($data['status'] === 'active') {
+            $isActiveYear = AcademicYear::where('id', $data['academic_year_id'])
+                ->where('is_active', true)
+                ->exists();
+
+            if ($data['status'] === 'active' && $isActiveYear) {
                 $student->update([
                     'class_id' => $data['class_id'],
                 ]);
@@ -158,7 +159,7 @@ class EnrollmentController extends Controller
         $enrollment = Enrollment::findOrFail($id);
 
         $data = $request->validate([
-            'academic_year_id' => ['nullable', 'exists:academic_years,id'],
+            'academic_year_id' => ['required', 'exists:academic_years,id'],
             'academic_year' => ['nullable', 'string', 'max:50'],
 
             'stage_id' => ['required', 'exists:stages,id'],
@@ -171,18 +172,10 @@ class EnrollmentController extends Controller
         ]);
 
         DB::transaction(function () use ($data, $enrollment) {
-            if ($data['status'] === 'active') {
-                Enrollment::where('student_id', $enrollment->student_id)
-                    ->where('id', '!=', $enrollment->id)
-                    ->where('is_active', true)
-                    ->update([
-                        'is_active' => false,
-                        'status' => 'transferred',
-                    ]);
-            }
-
+            // Updating this enrollment never deactivates another academic
+            // year's enrollment — see the equivalent note in store().
             $enrollment->update([
-                'academic_year_id' => $data['academic_year_id'] ?? null,
+                'academic_year_id' => $data['academic_year_id'],
                 'academic_year' => $data['academic_year'] ?? null,
 
                 'stage_id' => $data['stage_id'],
@@ -197,7 +190,11 @@ class EnrollmentController extends Controller
                 'is_active' => $data['status'] === 'active',
             ]);
 
-            if ($data['status'] === 'active') {
+            $isActiveYear = AcademicYear::where('id', $data['academic_year_id'])
+                ->where('is_active', true)
+                ->exists();
+
+            if ($data['status'] === 'active' && $isActiveYear) {
                 $enrollment->student?->update([
                     'class_id' => $data['class_id'],
                 ]);

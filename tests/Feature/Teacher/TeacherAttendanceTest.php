@@ -3,6 +3,7 @@
 namespace Tests\Feature\Teacher;
 
 use App\Filament\Teacher\Pages\TeacherAttendance;
+use App\Models\AcademicYear;
 use App\Models\Attendance;
 use App\Models\Enrollment;
 use App\Models\Grade;
@@ -29,9 +30,13 @@ class TeacherAttendanceTest extends TestCase
             'name_ru' => 'Класс A',
         ]);
         $student = Student::create(['name' => $studentName]);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
 
         return Enrollment::create([
             'student_id' => $student->id,
+            'academic_year_id' => $year->id,
             'stage_id' => $stage->id,
             'grade_id' => $grade->id,
             'class_id' => $class->id,
@@ -78,13 +83,16 @@ class TeacherAttendanceTest extends TestCase
 
         $studentA = Student::create(['name' => 'Student A']);
         $studentB = Student::create(['name' => 'Student B']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
 
         $enrollmentA = Enrollment::create([
-            'student_id' => $studentA->id, 'stage_id' => $stage->id,
+            'student_id' => $studentA->id, 'academic_year_id' => $year->id, 'stage_id' => $stage->id,
             'grade_id' => $grade->id, 'class_id' => $class->id, 'status' => 'active',
         ]);
         $enrollmentB = Enrollment::create([
-            'student_id' => $studentB->id, 'stage_id' => $stage->id,
+            'student_id' => $studentB->id, 'academic_year_id' => $year->id, 'stage_id' => $stage->id,
             'grade_id' => $grade->id, 'class_id' => $class->id, 'status' => 'active',
         ]);
 

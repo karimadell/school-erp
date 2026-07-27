@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AcademicYear;
 use App\Models\Attendance;
 use App\Models\Enrollment;
 use App\Models\Grade;
@@ -28,9 +29,13 @@ class AttendanceTest extends TestCase
             'name_ru' => 'Класс A',
         ]);
         $student = Student::forceCreate(['name' => $studentName]);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
 
         return Enrollment::create([
             'student_id' => $student->id,
+            'academic_year_id' => $year->id,
             'stage_id' => $stage->id,
             'grade_id' => $grade->id,
             'class_id' => $class->id,

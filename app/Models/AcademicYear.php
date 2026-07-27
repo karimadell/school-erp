@@ -25,6 +25,11 @@ class AcademicYear extends Model
         return $this->hasMany(Enrollment::class);
     }
 
+    public function quarters()
+    {
+        return $this->hasMany(Quarter::class);
+    }
+
     /**
      * At most one AcademicYear may be active at a time (zero is allowed).
      * Activating this year must atomically deactivate every other active

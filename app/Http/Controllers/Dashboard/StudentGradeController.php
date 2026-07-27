@@ -11,6 +11,7 @@ use App\Models\SchoolClass;
 use App\Exports\StudentGradesReportExport;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
 use Maatwebsite\Excel\Facades\Excel;
 
 class StudentGradeController extends Controller
@@ -215,7 +216,23 @@ class StudentGradeController extends Controller
             $rules['quarter_id'] = 'nullable|exists:quarters,id';
         }
 
-        $request->validate($rules);
+        $validator = Validator::make($request->all(), $rules);
+
+        $validator->after(function ($validator) use ($request) {
+            foreach ($request->input('grades', []) as $studentId => $data) {
+                $score = $data['score'] ?? null;
+                $note = $data['note'] ?? null;
+
+                if (($score === null || $score === '') && !($note === null || $note === '')) {
+                    $validator->errors()->add(
+                        "grades.{$studentId}.score",
+                        __('student_grades.score_required_with_note')
+                    );
+                }
+            }
+        });
+
+        $validator->validate();
 
         $validStudentIds = Student::where('class_id', $request->class_id)
             ->pluck('id')
@@ -229,7 +246,10 @@ class StudentGradeController extends Controller
             $score = $data['score'] ?? null;
             $note = $data['note'] ?? null;
 
-            if (($score === null || $score === '') && ($note === null || $note === '')) {
+            // Reaching here with a blank score means note was also blank — the
+            // note+no-score combination is already rejected above, before any
+            // writes happen.
+            if ($score === null || $score === '') {
                 continue;
             }
 
@@ -246,7 +266,7 @@ class StudentGradeController extends Controller
             StudentGrade::updateOrCreate(
                 $attributes,
                 [
-                    'score' => $score === null || $score === '' ? 0 : $score,
+                    'score' => $score,
                     'note' => $note,
                 ]
             );

@@ -30,6 +30,7 @@ return [
     'required_filters' => 'Пожалуйста, выберите все фильтры',
     'select_class_first' => 'Сначала выберите класс',
     'no_students_in_class' => 'В этом классе нет студентов',
+    'score_required_with_note' => 'Введите оценку или удалите комментарий.',
 
     'print_report' => 'Печать отчета',
     'generate_report' => 'Сформировать отчет',

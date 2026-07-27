@@ -30,6 +30,7 @@ return [
     'required_filters' => 'Please select all filters',
     'select_class_first' => 'Select class first',
     'no_students_in_class' => 'No students in this class',
+    'score_required_with_note' => 'Enter a score, or remove the note.',
 
     'print_report' => 'Print Report',
     'generate_report' => 'Generate Report',

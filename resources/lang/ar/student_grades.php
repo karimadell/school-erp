@@ -30,6 +30,7 @@ return [
     'required_filters' => 'يرجى اختيار كل الفلاتر',
     'select_class_first' => 'اختر الفصل أولاً',
     'no_students_in_class' => 'لا يوجد طلاب في هذا الفصل',
+    'score_required_with_note' => 'أدخل الدرجة أو احذف الملاحظة.',
 
     'print_report' => 'طباعة التقرير',
     'generate_report' => 'إنشاء التقرير',

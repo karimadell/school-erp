@@ -31,6 +31,8 @@ return [
     'select_class_first' => 'Select class first',
     'no_students_in_class' => 'No students in this class',
     'score_required_with_note' => 'Enter a score, or remove the note.',
+    'quarter_not_in_active_year' => 'The selected quarter does not belong to the active academic year.',
+    'no_active_academic_year' => 'No academic year is currently active. Please activate an academic year first.',
 
     'print_report' => 'Print Report',
     'generate_report' => 'Generate Report',

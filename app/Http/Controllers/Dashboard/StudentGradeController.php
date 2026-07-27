@@ -9,6 +9,7 @@ use App\Models\Subject;
 use App\Models\Exam;
 use App\Models\SchoolClass;
 use App\Exports\StudentGradesReportExport;
+use App\Rules\QuarterBelongsToActiveYear;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -53,7 +54,7 @@ class StudentGradeController extends Controller
         ];
 
         if (class_exists(\App\Models\Quarter::class)) {
-            $rules['quarter_id'] = 'nullable|exists:quarters,id';
+            $rules['quarter_id'] = ['nullable', 'exists:quarters,id', new QuarterBelongsToActiveYear()];
         }
 
         $request->validate($rules);
@@ -107,7 +108,7 @@ class StudentGradeController extends Controller
         ];
 
         if (class_exists(\App\Models\Quarter::class)) {
-            $rules['quarter_id'] = 'nullable|exists:quarters,id';
+            $rules['quarter_id'] = ['nullable', 'exists:quarters,id', new QuarterBelongsToActiveYear()];
         }
 
         $request->validate($rules);
@@ -164,7 +165,7 @@ class StudentGradeController extends Controller
         ];
 
         if (class_exists(\App\Models\Quarter::class)) {
-            $rules['quarter_id'] = 'nullable|exists:quarters,id';
+            $rules['quarter_id'] = ['nullable', 'exists:quarters,id', new QuarterBelongsToActiveYear()];
         }
 
         $request->validate($rules);
@@ -213,7 +214,7 @@ class StudentGradeController extends Controller
         ];
 
         if (class_exists(\App\Models\Quarter::class)) {
-            $rules['quarter_id'] = 'nullable|exists:quarters,id';
+            $rules['quarter_id'] = ['nullable', 'exists:quarters,id', new QuarterBelongsToActiveYear()];
         }
 
         $validator = Validator::make($request->all(), $rules);
@@ -345,7 +346,7 @@ class StudentGradeController extends Controller
             'class_id' => 'required|exists:classes,id',
             'subject_id' => 'nullable|exists:subjects,id',
             'exam_id' => 'nullable|exists:exams,id',
-            'quarter_id' => 'nullable',
+            'quarter_id' => ['nullable', 'exists:quarters,id', new QuarterBelongsToActiveYear()],
             'columns' => 'required|array',
         ]);
 

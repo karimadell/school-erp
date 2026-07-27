@@ -134,4 +134,93 @@ class AcademicYearTest extends TestCase
             ->assertSuccessful()
             ->assertSee('2026 / 2027');
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | B3: at most one active AcademicYear at a time (zero is allowed).
+    |--------------------------------------------------------------------------
+    */
+
+    protected function makeYear(string $name, bool $active): AcademicYear
+    {
+        return AcademicYear::create([
+            'name' => $name,
+            'start_date' => '2026-09-01',
+            'end_date' => '2027-05-31',
+            'is_active' => $active,
+        ]);
+    }
+
+    public function test_zero_active_academic_years_is_valid(): void
+    {
+        $this->makeYear('2026 / 2027', false);
+        $this->makeYear('2027 / 2028', false);
+
+        $this->assertSame(0, AcademicYear::where('is_active', true)->count());
+    }
+
+    public function test_activating_one_academic_year_works(): void
+    {
+        $year = $this->makeYear('2026 / 2027', true);
+
+        $this->assertTrue($year->fresh()->is_active);
+        $this->assertSame(1, AcademicYear::where('is_active', true)->count());
+    }
+
+    public function test_activating_another_year_deactivates_the_previous_one(): void
+    {
+        $first = $this->makeYear('2026 / 2027', true);
+        $second = $this->makeYear('2027 / 2028', true);
+
+        $this->assertFalse($first->fresh()->is_active);
+        $this->assertTrue($second->fresh()->is_active);
+        $this->assertSame(1, AcademicYear::where('is_active', true)->count());
+    }
+
+    public function test_updating_the_already_active_year_does_not_break(): void
+    {
+        $year = $this->makeYear('2026 / 2027', true);
+
+        $year->update(['is_active' => true]);
+
+        $this->assertTrue($year->fresh()->is_active);
+        $this->assertSame(1, AcademicYear::where('is_active', true)->count());
+    }
+
+    public function test_unrelated_fields_continue_to_update_on_an_inactive_year(): void
+    {
+        $active = $this->makeYear('2026 / 2027', true);
+        $inactive = $this->makeYear('2027 / 2028', false);
+
+        $inactive->update(['end_date' => '2028-06-15']);
+
+        $this->assertTrue($active->fresh()->is_active);
+        $this->assertSame('2028-06-15', $inactive->fresh()->end_date->toDateString());
+    }
+
+    public function test_activation_is_atomic_if_the_save_fails(): void
+    {
+        $active = $this->makeYear('2026 / 2027', true);
+
+        $failing = new AcademicYear([
+            'name' => null, // NOT NULL column — forces the underlying save to fail
+            'start_date' => '2027-09-01',
+            'end_date' => '2028-05-31',
+            'is_active' => true,
+        ]);
+
+        try {
+            $failing->save();
+            $this->fail('Expected saving an invalid AcademicYear to throw.');
+        } catch (\Throwable $e) {
+            // Expected — the point of this test is what happens to the
+            // *other* row, not the exact exception type/message.
+        }
+
+        $this->assertTrue(
+            $active->fresh()->is_active,
+            'The previously active year must remain active when the new activation fails — the deactivation must have rolled back with it.'
+        );
+        $this->assertSame(1, AcademicYear::where('is_active', true)->count());
+    }
 }

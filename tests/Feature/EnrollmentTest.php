@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\AcademicYear;
 use App\Models\Enrollment;
+use App\Models\EnrollmentMode;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
@@ -25,17 +26,18 @@ class EnrollmentTest extends TestCase
         return SchoolClass::forceCreate(['code' => 'A', 'name_ar' => 'A', 'grade_id' => $grade->id]);
     }
 
-    protected function enroll(Student $student, AcademicYear $year, SchoolClass $class, string $status = 'active')
+    protected function enroll(Student $student, AcademicYear $year, SchoolClass $class, string $status = 'active', ?int $enrollmentModeId = null)
     {
         $user = User::factory()->create();
 
-        return $this->actingAs($user)->post(route('dashboard.enrollments.store', $student), [
+        return $this->actingAs($user)->post(route('dashboard.enrollments.store', $student), array_filter([
             'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $enrollmentModeId,
             'stage_id' => $class->grade_id ? $class->grade->stage_id : Stage::first()->id,
             'grade_id' => $class->grade_id,
             'class_id' => $class->id,
             'status' => $status,
-        ]);
+        ], fn ($value) => $value !== null));
     }
 
     /**
@@ -199,5 +201,90 @@ class EnrollmentTest extends TestCase
         $this->assertTrue($enrollmentTwo->fresh()->is_active);
         $this->assertSame('active', $enrollmentTwo->fresh()->status);
         $this->assertDatabaseCount('enrollments', 3);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Batch 4: enrollment modes (regular, distance_learning)
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_a_regular_enrollment_persists_its_mode(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $regular = EnrollmentMode::create(['code' => EnrollmentMode::REGULAR, 'name_ru' => 'Очное обучение']);
+
+        $this->enroll($student, $year, $class, 'active', $regular->id)->assertSessionDoesntHaveErrors();
+
+        $this->assertDatabaseHas('enrollments', [
+            'student_id' => $student->id,
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $regular->id,
+        ]);
+    }
+
+    public function test_a_distance_learning_enrollment_persists_its_mode(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $distance = EnrollmentMode::create(['code' => EnrollmentMode::DISTANCE_LEARNING, 'name_ru' => 'Дистанционное обучение']);
+
+        $this->enroll($student, $year, $class, 'active', $distance->id)->assertSessionDoesntHaveErrors();
+
+        $this->assertDatabaseHas('enrollments', [
+            'student_id' => $student->id,
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $distance->id,
+        ]);
+    }
+
+    public function test_enrollment_mode_is_optional(): void
+    {
+        // Additive: existing callers that never set a mode are unaffected.
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $year, $class)->assertSessionDoesntHaveErrors();
+
+        $this->assertDatabaseHas('enrollments', [
+            'student_id' => $student->id,
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => null,
+        ]);
+    }
+
+    public function test_enrollment_mode_from_a_past_year_is_unaffected_by_a_new_years_different_mode(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $lastYear = AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
+        $thisYear = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $regular = EnrollmentMode::create(['code' => EnrollmentMode::REGULAR, 'name_ru' => 'Очное обучение']);
+        $distance = EnrollmentMode::create(['code' => EnrollmentMode::DISTANCE_LEARNING, 'name_ru' => 'Дистанционное обучение']);
+
+        $this->enroll($student, $lastYear, $class, 'active', $regular->id);
+        $lastYearEnrollment = Enrollment::where('academic_year_id', $lastYear->id)->firstOrFail();
+
+        $this->enroll($student, $thisYear, $class, 'active', $distance->id);
+
+        $this->assertSame($regular->id, $lastYearEnrollment->fresh()->enrollment_mode_id);
+        $this->assertSame(
+            $distance->id,
+            Enrollment::where('academic_year_id', $thisYear->id)->firstOrFail()->enrollment_mode_id
+        );
     }
 }

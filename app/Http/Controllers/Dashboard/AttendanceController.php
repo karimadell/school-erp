@@ -31,6 +31,7 @@ class AttendanceController extends Controller
 
         $students = Enrollment::with('student')
             ->where('class_id', $class->id)
+            ->whereHas('academicYear', fn ($query) => $query->where('is_active', true))
             ->get();
 
         $periods = Period::orderBy('number')->get();

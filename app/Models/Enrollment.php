@@ -9,6 +9,7 @@ class Enrollment extends Model
     protected $fillable = [
         'student_id',
         'academic_year_id',
+        'enrollment_mode_id',
         'stage_id',
         'grade_id',
         'class_id',
@@ -34,6 +35,11 @@ class Enrollment extends Model
     public function academicYear()
     {
         return $this->belongsTo(AcademicYear::class);
+    }
+
+    public function enrollmentMode()
+    {
+        return $this->belongsTo(EnrollmentMode::class);
     }
 
     public function stage()

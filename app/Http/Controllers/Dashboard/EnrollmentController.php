@@ -61,6 +61,7 @@ class EnrollmentController extends Controller
         $data = $request->validate([
             'academic_year_id' => ['required', 'exists:academic_years,id'],
             'academic_year' => ['nullable', 'string', 'max:50'],
+            'enrollment_mode_id' => ['nullable', 'exists:enrollment_modes,id'],
 
             'stage_id' => ['required', 'exists:stages,id'],
             'grade_id' => ['required', 'exists:grades,id'],
@@ -82,6 +83,7 @@ class EnrollmentController extends Controller
                 'student_id' => $student->id,
                 'academic_year_id' => $data['academic_year_id'],
                 'academic_year' => $data['academic_year'] ?? null,
+                'enrollment_mode_id' => $data['enrollment_mode_id'] ?? null,
 
                 'stage_id' => $data['stage_id'],
                 'grade_id' => $data['grade_id'],
@@ -161,6 +163,7 @@ class EnrollmentController extends Controller
         $data = $request->validate([
             'academic_year_id' => ['required', 'exists:academic_years,id'],
             'academic_year' => ['nullable', 'string', 'max:50'],
+            'enrollment_mode_id' => ['nullable', 'exists:enrollment_modes,id'],
 
             'stage_id' => ['required', 'exists:stages,id'],
             'grade_id' => ['required', 'exists:grades,id'],
@@ -177,6 +180,7 @@ class EnrollmentController extends Controller
             $enrollment->update([
                 'academic_year_id' => $data['academic_year_id'],
                 'academic_year' => $data['academic_year'] ?? null,
+                'enrollment_mode_id' => $data['enrollment_mode_id'] ?? null,
 
                 'stage_id' => $data['stage_id'],
                 'grade_id' => $data['grade_id'],

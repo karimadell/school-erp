@@ -24,6 +24,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage cash',
             'view cash reports',
             'manage users',
+            'override service prices',
         ];
 
         foreach ($permissions as $permission) {
@@ -38,6 +39,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage invoices',
             'manage cash',
             'view cash reports',
+            'override service prices',
         ]);
 
         $reception = Role::firstOrCreate(['name' => 'reception']);

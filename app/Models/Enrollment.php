@@ -67,6 +67,16 @@ class Enrollment extends Model
         return $this->hasMany(Invoice::class);
     }
 
+    public function serviceSubscriptions()
+    {
+        return $this->hasMany(StudentServiceSubscription::class);
+    }
+
+    public function mealSubscriptions()
+    {
+        return $this->hasMany(MealSubscription::class);
+    }
+
     public function scopeActive($query)
     {
         return $query->where('is_active', true);

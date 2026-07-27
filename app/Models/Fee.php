@@ -43,6 +43,7 @@ class Fee extends Model
         'description',
         'is_active',
         'billing_period',
+        'exempt_from_balance_block',
     ];
 
     protected $casts = [
@@ -50,6 +51,7 @@ class Fee extends Model
         'base_price' => 'decimal:2',
         'effective_from' => 'date',
         'is_active' => 'boolean',
+        'exempt_from_balance_block' => 'boolean',
     ];
 
     public function invoices()
@@ -67,6 +69,27 @@ class Fee extends Model
     public function grade()
     {
         return $this->belongsTo(Grade::class);
+    }
+
+    public function subscriptions()
+    {
+        return $this->hasMany(StudentServiceSubscription::class);
+    }
+
+    /**
+     * If this Fee is a uniform bundle, the items that make it up.
+     */
+    public function bundleComponents()
+    {
+        return $this->hasMany(UniformBundleComponent::class, 'bundle_fee_id');
+    }
+
+    /**
+     * If this Fee is an individual uniform item, the bundles it belongs to.
+     */
+    public function partOfBundles()
+    {
+        return $this->hasMany(UniformBundleComponent::class, 'item_fee_id');
     }
 
     public function scopeActive($query)

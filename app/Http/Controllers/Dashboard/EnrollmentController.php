@@ -16,6 +16,14 @@ use Illuminate\Support\Facades\DB;
 
 class EnrollmentController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:view enrollments')->only(['index', 'history']);
+        $this->middleware('permission:create enrollments')->only(['create', 'store']);
+        $this->middleware('permission:update enrollments')->only(['edit', 'update']);
+        $this->middleware('permission:delete enrollments')->only(['destroy']);
+    }
+
     public function index(): View
     {
         $enrollments = Enrollment::with([

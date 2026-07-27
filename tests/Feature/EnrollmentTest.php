@@ -12,6 +12,7 @@ use App\Models\Student;
 use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 class EnrollmentTest extends TestCase
@@ -26,9 +27,26 @@ class EnrollmentTest extends TestCase
         return SchoolClass::forceCreate(['code' => 'A', 'name_ar' => 'A', 'grade_id' => $grade->id]);
     }
 
-    protected function enroll(Student $student, AcademicYear $year, SchoolClass $class, string $status = 'active', ?int $enrollmentModeId = null)
+    /**
+     * Batch 6: EnrollmentController::store()/update() now require
+     * 'create enrollments'/'update enrollments'. This fixture grants
+     * everything so tests focused on business logic (not authorization
+     * itself) aren't blocked by the permission layer.
+     */
+    protected function authorizedUser(): User
     {
         $user = User::factory()->create();
+        foreach (['view enrollments', 'create enrollments', 'update enrollments', 'delete enrollments'] as $permission) {
+            Permission::findOrCreate($permission, 'web');
+        }
+        $user->givePermissionTo(['view enrollments', 'create enrollments', 'update enrollments', 'delete enrollments']);
+
+        return $user;
+    }
+
+    protected function enroll(Student $student, AcademicYear $year, SchoolClass $class, string $status = 'active', ?int $enrollmentModeId = null)
+    {
+        $user = $this->authorizedUser();
 
         return $this->actingAs($user)->post(route('dashboard.enrollments.store', $student), array_filter([
             'academic_year_id' => $year->id,
@@ -49,7 +67,7 @@ class EnrollmentTest extends TestCase
      */
     public function test_enrolling_without_an_academic_year_now_fails_validation(): void
     {
-        $user = User::factory()->create();
+        $user = $this->authorizedUser();
         $class = $this->makeClass();
         $student = Student::forceCreate(['name' => 'Test Student']);
 

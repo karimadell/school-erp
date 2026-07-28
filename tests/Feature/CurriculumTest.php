@@ -264,4 +264,135 @@ class CurriculumTest extends TestCase
             'type' => 'mandatory',
         ]);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Phase 2: copy-forward between academic years. Approved decisions:
+    | target is always the active year (never user-selectable), source is
+    | unconstrained, whole-year only, skip-if-exists (never overwrite),
+    | reuses 'manage curriculum' (no new permission), no audit logging.
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_copying_duplicates_the_source_years_curricula_into_the_active_year(): void
+    {
+        $user = $this->userWithRole('admin');
+        $sourceYear = AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
+        $activeYear = $this->makeYear();
+        $grade = $this->makeGrade();
+        $subject = $this->makeSubject();
+
+        Curriculum::create([
+            'academic_year_id' => $sourceYear->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
+            'weekly_hours' => 4, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+
+        Livewire::actingAs($user)
+            ->test(ListCurricula::class)
+            ->callAction('copyFromPreviousYear', ['source_academic_year_id' => $sourceYear->id])
+            ->assertNotified(__('curriculum.copy_success', ['created' => 1, 'skipped' => 0]));
+
+        $this->assertDatabaseHas('curricula', [
+            'academic_year_id' => $activeYear->id,
+            'grade_id' => $grade->id,
+            'subject_id' => $subject->id,
+            'weekly_hours' => 4,
+            'type' => 'mandatory',
+        ]);
+    }
+
+    public function test_copying_is_idempotent_and_skips_rows_that_already_exist_in_the_active_year(): void
+    {
+        $user = $this->userWithRole('admin');
+        $sourceYear = AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
+        $activeYear = $this->makeYear();
+        $grade = $this->makeGrade();
+        $subject = $this->makeSubject();
+
+        Curriculum::create([
+            'academic_year_id' => $sourceYear->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
+            'weekly_hours' => 4, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+
+        $component = Livewire::actingAs($user)->test(ListCurricula::class);
+        $component->callAction('copyFromPreviousYear', ['source_academic_year_id' => $sourceYear->id]);
+
+        // Running it again must not duplicate or error — everything is
+        // already there, so nothing is created, one row is skipped.
+        $component->callAction('copyFromPreviousYear', ['source_academic_year_id' => $sourceYear->id])
+            ->assertNotified(__('curriculum.copy_success', ['created' => 0, 'skipped' => 1]));
+
+        $this->assertDatabaseCount('curricula', 2); // 1 source + 1 target, never duplicated
+    }
+
+    public function test_copying_never_overwrites_an_existing_target_row_even_if_values_differ(): void
+    {
+        $user = $this->userWithRole('admin');
+        $sourceYear = AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
+        $activeYear = $this->makeYear();
+        $grade = $this->makeGrade();
+        $subject = $this->makeSubject();
+
+        Curriculum::create([
+            'academic_year_id' => $sourceYear->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
+            'weekly_hours' => 4, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+        // Target already has its own row for this grade/subject, with
+        // different values — this must survive the copy untouched.
+        $existingTarget = Curriculum::create([
+            'academic_year_id' => $activeYear->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
+            'weekly_hours' => 2, 'type' => Curriculum::TYPE_ELECTIVE,
+        ]);
+
+        Livewire::actingAs($user)
+            ->test(ListCurricula::class)
+            ->callAction('copyFromPreviousYear', ['source_academic_year_id' => $sourceYear->id]);
+
+        $this->assertSame(2, $existingTarget->fresh()->weekly_hours);
+        $this->assertSame('elective', $existingTarget->fresh()->type);
+    }
+
+    public function test_copying_from_an_empty_source_year_is_rejected_with_a_clear_message(): void
+    {
+        $user = $this->userWithRole('admin');
+        $sourceYear = AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
+        $this->makeYear();
+
+        Livewire::actingAs($user)
+            ->test(ListCurricula::class)
+            ->callAction('copyFromPreviousYear', ['source_academic_year_id' => $sourceYear->id])
+            ->assertNotified(__('curriculum.copy_source_empty'));
+
+        $this->assertDatabaseCount('curricula', 0);
+    }
+
+    public function test_the_copy_action_is_hidden_when_no_active_year_exists(): void
+    {
+        $user = $this->userWithRole('admin');
+        AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
+
+        Livewire::actingAs($user)
+            ->test(ListCurricula::class)
+            ->assertActionHidden('copyFromPreviousYear');
+    }
+
+    public function test_admin_can_see_the_copy_action_when_an_active_year_exists(): void
+    {
+        $user = $this->userWithRole('admin');
+        $this->makeYear();
+
+        Livewire::actingAs($user)
+            ->test(ListCurricula::class)
+            ->assertActionVisible('copyFromPreviousYear');
+    }
 }

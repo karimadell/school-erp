@@ -17,11 +17,17 @@ class TeacherAttendance extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-check-circle';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Преподаватель';
-
-    protected static ?string $navigationLabel = 'Посещаемость';
-
     protected string $view = 'filament.teacher.pages.teacher-attendance';
+
+    public static function getNavigationGroup(): string|UnitEnum|null
+    {
+        return __('teacher_portal.nav_group');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('teacher_portal.nav_attendance');
+    }
 
     public $classId;
 
@@ -65,7 +71,7 @@ class TeacherAttendance extends Page
 
         if (! $teacher || ! $this->classId || ! $teacher->isAssignedToClass((int) $this->classId)) {
             Notification::make()
-                ->title('Вы не назначены на этот класс')
+                ->title(__('teacher_portal.not_assigned_to_class'))
                 ->danger()
                 ->send();
 
@@ -134,7 +140,7 @@ class TeacherAttendance extends Page
         }
 
         Notification::make()
-            ->title('Attendance saved')
+            ->title(__('attendance.saved_success'))
             ->success()
             ->send();
     }

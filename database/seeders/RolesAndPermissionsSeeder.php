@@ -31,6 +31,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage grades',
             'manage classes',
             'manage academic years',
+            'manage journal entries',
 
             // Finance
             'view invoices', 'manage invoices',
@@ -98,11 +99,12 @@ class RolesAndPermissionsSeeder extends Seeder
 
         // 5. Teacher — Teacher Portal only. No admin-panel permissions of
         // any kind; record-level scoping to assigned classes/students is
-        // enforced separately (Batch 8, not yet built).
+        // enforced via TeacherAssignment (Batch 8).
         Role::firstOrCreate(['name' => 'teacher']);
 
         // 6. Principal / Academic Manager — full academic permissions,
-        // read-only finance, explicitly no fee price editing.
+        // read-only finance, explicitly no fee price editing. Includes
+        // journal oversight (Batch 9).
         $principal = Role::firstOrCreate(['name' => 'principal']);
         $principal->syncPermissions([
             'manage subjects',
@@ -110,6 +112,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage grades',
             'manage classes',
             'manage academic years',
+            'manage journal entries',
             'view invoices',
             'view student balances',
             'view cash reports',

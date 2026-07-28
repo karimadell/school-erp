@@ -12,6 +12,7 @@ class Exam extends Model
         'name',
         'subject_id',
         'class_id',
+        'quarter_id',
         'exam_date',
         'max_score'
 
@@ -25,6 +26,11 @@ class Exam extends Model
     public function class()
     {
         return $this->belongsTo(SchoolClass::class,'class_id');
+    }
+
+    public function quarter()
+    {
+        return $this->belongsTo(Quarter::class);
     }
 
     public function grades()

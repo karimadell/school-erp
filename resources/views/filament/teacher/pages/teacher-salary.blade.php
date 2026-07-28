@@ -3,8 +3,14 @@
 <div class="bg-white p-6 rounded shadow">
 
 <h2 class="text-xl font-bold mb-4">
-Моя зарплата
+{{ __('teacher_salary.heading') }}
 </h2>
+
+@if(count($salaries) === 0)
+
+<p>{{ __('teacher_salary.no_records') }}</p>
+
+@else
 
 <table class="w-full border">
 
@@ -12,11 +18,11 @@
 
 <tr class="bg-gray-100">
 
-<th class="border p-2">Месяц</th>
-<th class="border p-2">Базовая зарплата</th>
-<th class="border p-2">Бонус</th>
-<th class="border p-2">Вычеты</th>
-<th class="border p-2">Итого</th>
+<th class="border p-2">{{ __('teacher_salary.month') }}</th>
+<th class="border p-2">{{ __('teacher_salary.base_salary') }}</th>
+<th class="border p-2">{{ __('teacher_salary.bonus') }}</th>
+<th class="border p-2">{{ __('teacher_salary.deductions') }}</th>
+<th class="border p-2">{{ __('teacher_salary.net_salary') }}</th>
 
 </tr>
 
@@ -55,6 +61,8 @@
 </tbody>
 
 </table>
+
+@endif
 
 </div>
 

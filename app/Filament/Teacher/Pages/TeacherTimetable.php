@@ -13,11 +13,17 @@ class TeacherTimetable extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-calendar';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Преподаватель';
-
-    protected static ?string $navigationLabel = 'Расписание';
-
     protected string $view = 'filament.teacher.pages.teacher-timetable';
+
+    public static function getNavigationGroup(): string|UnitEnum|null
+    {
+        return __('teacher_portal.nav_group');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('teacher_portal.nav_timetable');
+    }
 
     public $lessons = [];
 

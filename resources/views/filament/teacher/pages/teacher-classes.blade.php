@@ -2,6 +2,14 @@
 
 <div class="space-y-6">
 
+    @if(count($classes) === 0)
+
+        <div class="p-6 bg-white rounded-xl shadow">
+            {{ __('teacher_classes.no_classes') }}
+        </div>
+
+    @endif
+
     @foreach($classes as $subject)
 
         <div class="p-6 bg-white rounded-xl shadow">
@@ -17,11 +25,11 @@
                     <div class="p-4 border rounded">
 
                         <div class="font-semibold">
-                            Класс: {{ $class->name }}
+                            {{ __('teacher_classes.class_label') }}: {{ $class->name }}
                         </div>
 
                         <div class="text-sm text-gray-500">
-                            Студенты: {{ $class->students()->count() }}
+                            {{ __('teacher_classes.students_count') }}: {{ $class->students()->count() }}
                         </div>
 
                     </div>

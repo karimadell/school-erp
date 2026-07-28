@@ -12,11 +12,17 @@ class TeacherClasses extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-academic-cap';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Преподаватель';
-
-    protected static ?string $navigationLabel = 'Мои классы';
-
     protected string $view = 'filament.teacher.pages.teacher-classes';
+
+    public static function getNavigationGroup(): string|UnitEnum|null
+    {
+        return __('teacher_portal.nav_group');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('teacher_portal.nav_classes');
+    }
 
     public $classes = [];
 

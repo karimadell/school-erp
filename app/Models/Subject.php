@@ -33,6 +33,11 @@ class Subject extends Model
         return $this->hasMany(Timetable::class, 'subject_id');
     }
 
+    public function curricula()
+    {
+        return $this->hasMany(Curriculum::class);
+    }
+
     public function getNameAttribute()
     {
         return $this->name_ru;

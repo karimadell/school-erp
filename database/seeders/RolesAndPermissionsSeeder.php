@@ -39,6 +39,12 @@ class RolesAndPermissionsSeeder extends Seeder
             // it is granted to 'admin' only, explicitly, further down.
             'unlock historical academic year',
 
+            // Item 8 (Batch 10 / C1): Curriculum admin. Admin-only per
+            // approved decision — not extended to school-admin or
+            // principal for this initial implementation, even though both
+            // hold every other academic-management permission.
+            'manage curriculum',
+
             // Finance
             'view invoices', 'manage invoices',
             'manage fees',
@@ -78,6 +84,8 @@ class RolesAndPermissionsSeeder extends Seeder
             // — not extended to school-admin, even though school-admin
             // otherwise mirrors admin's full operational permission set.
             'unlock historical academic year',
+            // Item 8: same reasoning — Curriculum admin is admin-only.
+            'manage curriculum',
         ])));
 
         // 3. Accountant — full access to fees/fee prices/invoices/expenses/

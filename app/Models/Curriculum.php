@@ -45,4 +45,13 @@ class Curriculum extends Model
     {
         return $this->belongsTo(Subject::class);
     }
+
+    /**
+     * Batch 11 / C2: students who have individually elected this
+     * Curriculum row (elective / optional-enrichment only).
+     */
+    public function studentSubjectEnrollments()
+    {
+        return $this->hasMany(StudentSubjectEnrollment::class);
+    }
 }

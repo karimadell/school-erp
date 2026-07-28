@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Curricula;
 use App\Filament\Resources\Curricula\Pages\CreateCurriculum;
 use App\Filament\Resources\Curricula\Pages\EditCurriculum;
 use App\Filament\Resources\Curricula\Pages\ListCurricula;
+use App\Filament\Resources\Curricula\RelationManagers\StudentSubjectEnrollmentsRelationManager;
 use App\Filament\Resources\Curricula\Schemas\CurriculumForm;
 use App\Filament\Resources\Curricula\Tables\CurriculaTable;
 use App\Models\Curriculum;
@@ -43,6 +44,13 @@ class CurriculumResource extends Resource
     public static function table(Table $table): Table
     {
         return CurriculaTable::configure($table);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            StudentSubjectEnrollmentsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

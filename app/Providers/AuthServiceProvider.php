@@ -12,6 +12,7 @@ use App\Models\Invoice;
 use App\Models\LessonJournalEntry;
 use App\Models\StudentFile;
 use App\Models\StudentServiceSubscription;
+use App\Models\StudentSubjectEnrollment;
 use App\Models\TeacherAssignment;
 use App\Models\User;
 use App\Policies\AcademicYearPolicy;
@@ -26,6 +27,7 @@ use App\Policies\PermissionPolicy;
 use App\Policies\RolePolicy;
 use App\Policies\StudentFilePolicy;
 use App\Policies\StudentServiceSubscriptionPolicy;
+use App\Policies\StudentSubjectEnrollmentPolicy;
 use App\Policies\TeacherAssignmentPolicy;
 use App\Policies\UserPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
@@ -45,6 +47,9 @@ class AuthServiceProvider extends ServiceProvider
 
         // Batch 11 / C4
         ClassTeacher::class => ClassTeacherPolicy::class,
+
+        // Batch 11 / C2
+        StudentSubjectEnrollment::class => StudentSubjectEnrollmentPolicy::class,
 
         // Batch 6
         Fee::class => FeePolicy::class,

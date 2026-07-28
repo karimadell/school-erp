@@ -18,6 +18,7 @@ use App\Models\StudentGrade;
 use App\Models\LessonJournalEntry;
 use App\Models\Quarter;
 use App\Models\AcademicYearUnlock;
+use App\Models\StudentSubjectEnrollment;
 
 // Observer
 use App\Observers\AuditObserver;
@@ -25,6 +26,7 @@ use App\Observers\AcademicYearLockObserver;
 use App\Observers\ExamSnapshotObserver;
 use App\Observers\CurriculumValidationObserver;
 use App\Observers\TeacherAssignmentCurriculumObserver;
+use App\Observers\StudentSubjectEnrollmentValidationObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -79,6 +81,12 @@ class AppServiceProvider extends ServiceProvider
         Quarter::observe(AcademicYearLockObserver::class);
         StudentServiceSubscription::observe(AcademicYearLockObserver::class);
 
+        // Batch 11 / C2: registered before the validation observer below,
+        // same ordering rationale as everywhere else — an unresolvable/
+        // locked academic year must be reported before this record is
+        // ever checked against Curriculum/Enrollment.
+        StudentSubjectEnrollment::observe(AcademicYearLockObserver::class);
+
         // Batch 11 / C3: registered after AcademicYearLockObserver for
         // both models — if the academic year can't be resolved at all,
         // that rejection must surface first; this only ever runs once
@@ -96,5 +104,10 @@ class AppServiceProvider extends ServiceProvider
         // CurriculumValidationObserver, since a TeacherAssignment is an
         // authorization grant, not a graded data row.
         TeacherAssignment::observe(TeacherAssignmentCurriculumObserver::class);
+
+        // Batch 11 / C2: registered after AcademicYearLockObserver above
+        // — validates the election itself (mandatory-type rejection,
+        // student's enrolled grade must match the Curriculum's grade).
+        StudentSubjectEnrollment::observe(StudentSubjectEnrollmentValidationObserver::class);
     }
 }

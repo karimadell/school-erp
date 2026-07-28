@@ -10,8 +10,9 @@ use Tests\TestCase;
 /**
  * B1 (docs/IMPLEMENTATION_READINESS_ROADMAP.md): Quarter gains
  * academic_year_id, connecting terms to a specific academic year
- * (Section 2: "terms configurable per academic year"). Additive,
- * nullable — no existing consumer is required to change.
+ * (Section 2: "terms configurable per academic year"). Originally added
+ * nullable as a stopgap; Item 3 makes it required — see the tests below
+ * for the coverage that flipped as a result.
  */
 class QuarterTest extends TestCase
 {
@@ -68,30 +69,33 @@ class QuarterTest extends TestCase
         $this->assertTrue($year->quarters->contains($q2));
     }
 
-    public function test_quarter_can_still_be_created_without_an_academic_year(): void
+    public function test_quarter_can_no_longer_be_created_without_an_academic_year(): void
     {
-        // Nullable — no regression for any existing caller that doesn't
-        // supply academic_year_id (e.g. StudentGradesUniqueIndexTest's
-        // fixtures, or any pre-B1 data).
-        $quarter = Quarter::create(['name' => 'Q1', 'order' => 1]);
+        // Item 3: academic_year_id became required. Reverses the guarantee
+        // the old test_quarter_can_still_be_created_without_an_academic_year
+        // asserted — that test's premise no longer holds.
+        $this->expectException(\Illuminate\Database\QueryException::class);
 
-        $this->assertDatabaseHas('quarters', [
-            'id' => $quarter->id,
-            'academic_year_id' => null,
-        ]);
+        Quarter::create(['name' => 'Q1', 'order' => 1]);
     }
 
-    public function test_deleting_an_academic_year_nulls_its_quarters_instead_of_deleting_them(): void
+    public function test_deleting_an_academic_year_with_quarters_is_restricted(): void
     {
+        // Item 3: the FK's delete action changed from set-null to restrict
+        // — a NOT NULL column can no longer be nulled out by a parent
+        // delete, so deleting a year that still has quarters is now
+        // blocked instead of silently orphaning them.
         $year = $this->makeYear();
-
         $quarter = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Q1', 'order' => 1]);
 
-        $year->delete();
+        try {
+            $year->delete();
+            $this->fail('Expected a QueryException when deleting a year with quarters still attached.');
+        } catch (\Illuminate\Database\QueryException $e) {
+            // expected
+        }
 
-        $this->assertDatabaseHas('quarters', [
-            'id' => $quarter->id,
-            'academic_year_id' => null,
-        ]);
+        $this->assertDatabaseHas('quarters', ['id' => $quarter->id, 'academic_year_id' => $year->id]);
+        $this->assertDatabaseHas('academic_years', ['id' => $year->id]);
     }
 }

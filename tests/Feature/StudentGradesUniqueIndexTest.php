@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AcademicYear;
 use App\Models\Exam;
 use App\Models\Grade;
 use App\Models\Quarter;
@@ -26,6 +27,13 @@ use Tests\TestCase;
 class StudentGradesUniqueIndexTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function makeYear(): AcademicYear
+    {
+        return AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+    }
 
     protected function makeExamFixture(): Exam
     {
@@ -92,7 +100,8 @@ class StudentGradesUniqueIndexTest extends TestCase
         // No regression on the case the old index already handled correctly.
         $exam = $this->makeExamFixture();
         $student = Student::create(['name' => 'Test Student']);
-        $quarter = Quarter::create(['name' => 'Q1', 'order' => 1]);
+        $year = $this->makeYear();
+        $quarter = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Q1', 'order' => 1]);
 
         DB::table('student_grades')->insert([
             'student_id' => $student->id,
@@ -117,8 +126,9 @@ class StudentGradesUniqueIndexTest extends TestCase
     {
         $exam = $this->makeExamFixture();
         $student = Student::create(['name' => 'Test Student']);
-        $quarter1 = Quarter::create(['name' => 'Q1', 'order' => 1]);
-        $quarter2 = Quarter::create(['name' => 'Q2', 'order' => 2]);
+        $year = $this->makeYear();
+        $quarter1 = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Q1', 'order' => 1]);
+        $quarter2 = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Q2', 'order' => 2]);
 
         DB::table('student_grades')->insert([
             'student_id' => $student->id,

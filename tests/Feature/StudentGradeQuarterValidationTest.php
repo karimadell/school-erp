@@ -84,21 +84,11 @@ class StudentGradeQuarterValidationTest extends TestCase
         $this->assertDatabaseCount('student_grades', 0);
     }
 
-    public function test_a_quarter_with_null_academic_year_fails(): void
-    {
-        $exam = $this->makeExamFixture();
-        $student = Student::create(['name' => 'Test Student']);
-
-        AcademicYear::create([
-            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
-        ]);
-        $unscopedQuarter = Quarter::create(['name' => 'Q1', 'order' => 1]);
-
-        $response = $this->postGrade($exam, $student, $unscopedQuarter->id);
-
-        $response->assertSessionHasErrors(['quarter_id' => __('student_grades.quarter_not_in_active_year')]);
-        $this->assertDatabaseCount('student_grades', 0);
-    }
+    // A quarter with a null academic_year_id can no longer be constructed
+    // at all as of Item 3 (docs/IMPLEMENTATION_READINESS_ROADMAP.md, B1 —
+    // quarters.academic_year_id is now required), so the test that used to
+    // cover that branch of QuarterBelongsToActiveYear was removed rather
+    // than rewritten — its premise no longer exists.
 
     public function test_no_active_academic_year_fails_with_a_distinct_message(): void
     {

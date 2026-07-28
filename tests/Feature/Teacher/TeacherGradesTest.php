@@ -4,6 +4,7 @@ namespace Tests\Feature\Teacher;
 
 use App\Filament\Teacher\Pages\TeacherGrades;
 use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Exam;
 use App\Models\Grade;
 use App\Models\Quarter;
@@ -69,6 +70,18 @@ class TeacherGradesTest extends TestCase
         $quarterId ??= Quarter::create([
             'academic_year_id' => $year->id, 'name' => 'Auto Q', 'order' => 1,
         ])->id;
+
+        // Batch 11 / C3: Exam creation now also requires a matching
+        // Curriculum row (year + grade + subject) — unrelated to this
+        // file's own concern (teacher-portal authorization).
+        Curriculum::firstOrCreate(
+            [
+                'academic_year_id' => $year->id,
+                'grade_id' => SchoolClass::find($classId)->grade_id,
+                'subject_id' => $subjectId,
+            ],
+            ['weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY]
+        );
 
         return Exam::create([
             'name' => 'Quiz ' . uniqid(),
@@ -176,6 +189,13 @@ class TeacherGradesTest extends TestCase
         [$class] = $this->makeClassWithStudent($year);
         $user = User::factory()->create();
         $this->linkTeacher($user, $class->id, $subject->id, $year->id);
+        // Batch 11 / C3: the inline-created Exam also requires a matching
+        // Curriculum row — unrelated to this test's own concern (teacher
+        // can create an exam for their assigned class/subject).
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         Livewire::actingAs($user)
             ->test(TeacherGrades::class)

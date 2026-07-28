@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Exam;
 use App\Models\Grade;
 use App\Models\Quarter;
@@ -42,6 +43,14 @@ class StudentGradeBulkStoreTest extends TestCase
             'name' => 'Fixture Year', 'start_date' => '2000-09-01', 'end_date' => '2001-05-31', 'is_active' => true,
         ]);
         $quarter = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Fixture Q', 'order' => 1]);
+
+        // Batch 11 / C3: Exam creation now also requires a matching
+        // Curriculum row (year + grade + subject) — unrelated to this
+        // file's own concern (blank-score/note handling).
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         return Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,

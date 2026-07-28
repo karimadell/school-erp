@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AcademicYear;
 use App\Models\AcademicYearUnlock;
 use App\Models\Attendance;
+use App\Models\Curriculum;
 use App\Models\Enrollment;
 use App\Models\Exam;
 use App\Models\Fee;
@@ -254,6 +255,10 @@ class AcademicYearLockObserverTest extends TestCase
         $quarter = $this->makeQuarter($year);
         $class = $this->makeClass();
         $subject = $this->makeSubject();
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
@@ -294,8 +299,13 @@ class AcademicYearLockObserverTest extends TestCase
     {
         $year = $this->makeYear(true);
         $quarter = $this->makeQuarter($year);
+        $class = $this->makeClass();
         $subject = $this->makeSubject();
-        $student = Student::forceCreate(['name' => 'S']);
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+        $student = Student::forceCreate(['name' => 'S', 'class_id' => $class->id]);
 
         $grade = StudentGrade::create([
             'student_id' => $student->id,

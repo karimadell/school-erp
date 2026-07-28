@@ -23,6 +23,7 @@ use App\Models\AcademicYearUnlock;
 use App\Observers\AuditObserver;
 use App\Observers\AcademicYearLockObserver;
 use App\Observers\ExamSnapshotObserver;
+use App\Observers\CurriculumValidationObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -76,5 +77,14 @@ class AppServiceProvider extends ServiceProvider
         LessonJournalEntry::observe(AcademicYearLockObserver::class);
         Quarter::observe(AcademicYearLockObserver::class);
         StudentServiceSubscription::observe(AcademicYearLockObserver::class);
+
+        // Batch 11 / C3: registered after AcademicYearLockObserver for
+        // both models — if the academic year can't be resolved at all,
+        // that rejection must surface first; this only ever runs once
+        // the year is already successfully resolved (active or
+        // explicitly unlocked), adding one further, independent check
+        // ("is this subject actually in the curriculum").
+        Exam::observe(CurriculumValidationObserver::class);
+        StudentGrade::observe(CurriculumValidationObserver::class);
     }
 }

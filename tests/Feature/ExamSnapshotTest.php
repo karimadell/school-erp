@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Exam;
 use App\Models\Grade;
 use App\Models\Quarter;
@@ -51,6 +52,19 @@ class ExamSnapshotTest extends TestCase
         return Quarter::create(['academic_year_id' => $year->id, 'name' => 'Q-' . uniqid(), 'order' => 1]);
     }
 
+    /**
+     * Batch 11 / C3: Exam creation now also requires a matching Curriculum
+     * row (year + grade + subject) — unrelated to this file's own concern
+     * (snapshot immutability), so fixtures here just need one to exist.
+     */
+    protected function makeCurriculum(AcademicYear $year, int $gradeId, int $subjectId): Curriculum
+    {
+        return Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $gradeId, 'subject_id' => $subjectId,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Snapshot captured correctly at creation
@@ -63,6 +77,7 @@ class ExamSnapshotTest extends TestCase
         $quarter = $this->makeQuarter($year);
         $class = $this->makeClass();
         $subject = $this->makeSubject();
+        $this->makeCurriculum($year, $class->grade_id, $subject->id);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
@@ -101,6 +116,7 @@ class ExamSnapshotTest extends TestCase
         $class = $this->makeClass();
         $subject = $this->makeSubject();
         $originalGradeId = $class->grade_id;
+        $this->makeCurriculum($year, $originalGradeId, $subject->id);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
@@ -121,6 +137,7 @@ class ExamSnapshotTest extends TestCase
         $class = $this->makeClass();
         $subject = $this->makeSubject();
         $originalStageId = $class->grade->stage_id;
+        $this->makeCurriculum($year, $class->grade_id, $subject->id);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
@@ -145,6 +162,7 @@ class ExamSnapshotTest extends TestCase
         $quarter = $this->makeQuarter($year);
         $class = $this->makeClass();
         $subject = $this->makeSubject();
+        $this->makeCurriculum($year, $class->grade_id, $subject->id);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
@@ -195,6 +213,7 @@ class ExamSnapshotTest extends TestCase
         $otherYear = $this->makeYear(true);
         $class = $this->makeClass();
         $subject = $this->makeSubject();
+        $this->makeCurriculum($otherYear, $class->grade_id, $subject->id);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id,
@@ -210,6 +229,7 @@ class ExamSnapshotTest extends TestCase
         $quarter = $this->makeQuarter($year);
         $class = $this->makeClass();
         $subject = $this->makeSubject();
+        $this->makeCurriculum($year, $class->grade_id, $subject->id);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
@@ -236,6 +256,7 @@ class ExamSnapshotTest extends TestCase
         ]);
         $class = $this->makeClass();
         $subject = $this->makeSubject();
+        $this->makeCurriculum($year, $class->grade_id, $subject->id);
 
         $exam = Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,

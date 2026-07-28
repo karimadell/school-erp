@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Exam;
 use App\Models\Grade;
 use App\Models\Quarter;
@@ -43,6 +44,14 @@ class StudentGradeQuarterValidationTest extends TestCase
         ]);
         $fixtureQuarter = Quarter::create(['academic_year_id' => $fixtureYear->id, 'name' => 'Fixture Q', 'order' => 1]);
 
+        // Batch 11 / C3: Exam creation now also requires a matching
+        // Curriculum row (year + grade + subject) — unrelated to this
+        // file's own concern (submitted quarter_id validation).
+        Curriculum::create([
+            'academic_year_id' => $fixtureYear->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+
         return Exam::create([
             'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $fixtureQuarter->id,
         ]);
@@ -69,6 +78,14 @@ class StudentGradeQuarterValidationTest extends TestCase
             'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
         $quarter = Quarter::create(['academic_year_id' => $activeYear->id, 'name' => 'Q1', 'order' => 1]);
+        // The grade's own quarter_id (submitted below) takes precedence
+        // over the exam's for resolveAcademicYear() — so the curriculum
+        // check needs a row for THIS year/grade/subject, not the fixture
+        // exam's own year.
+        Curriculum::create([
+            'academic_year_id' => $activeYear->id, 'grade_id' => $exam->grade_id, 'subject_id' => $exam->subject_id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         $response = $this->postGrade($exam, $student, $quarter->id);
 

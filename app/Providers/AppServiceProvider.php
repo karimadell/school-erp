@@ -22,6 +22,7 @@ use App\Models\AcademicYearUnlock;
 // Observer
 use App\Observers\AuditObserver;
 use App\Observers\AcademicYearLockObserver;
+use App\Observers\ExamSnapshotObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -62,6 +63,13 @@ class AppServiceProvider extends ServiceProvider
         // link, direct or transitive).
         Enrollment::observe(AcademicYearLockObserver::class);
         Attendance::observe(AcademicYearLockObserver::class);
+
+        // Item 6 (B6): must be registered before AcademicYearLockObserver
+        // for Exam — populates the academic_year_id/grade_id/stage_id
+        // snapshot first, so the lock check below sees it already in
+        // place and exercises the preferred snapshot path in
+        // Exam::resolveAcademicYear(), not the legacy quarter fallback.
+        Exam::observe(ExamSnapshotObserver::class);
         Exam::observe(AcademicYearLockObserver::class);
         StudentGrade::observe(AcademicYearLockObserver::class);
         TeacherAssignment::observe(AcademicYearLockObserver::class);

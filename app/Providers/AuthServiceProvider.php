@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Models\AcademicYear;
+use App\Models\ClassTeacher;
 use App\Models\Curriculum;
 use App\Models\Expense;
 use App\Models\Fee;
@@ -14,6 +15,7 @@ use App\Models\StudentServiceSubscription;
 use App\Models\TeacherAssignment;
 use App\Models\User;
 use App\Policies\AcademicYearPolicy;
+use App\Policies\ClassTeacherPolicy;
 use App\Policies\CurriculumPolicy;
 use App\Policies\ExpensePolicy;
 use App\Policies\FeePolicy;
@@ -40,6 +42,9 @@ class AuthServiceProvider extends ServiceProvider
 
         // Item 8 (Batch 10 / C1)
         Curriculum::class => CurriculumPolicy::class,
+
+        // Batch 11 / C4
+        ClassTeacher::class => ClassTeacherPolicy::class,
 
         // Batch 6
         Fee::class => FeePolicy::class,

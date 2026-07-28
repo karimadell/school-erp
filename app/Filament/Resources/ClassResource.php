@@ -9,6 +9,7 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Resources\Resource;
 use App\Filament\Resources\ClassResource\Pages;
+use App\Filament\Resources\ClassResource\RelationManagers\ClassTeachersRelationManager;
 
 class ClassResource extends Resource
 {
@@ -59,6 +60,13 @@ class ClassResource extends Resource
                     ->boolean(),
 
             ]);
+    }
+
+    public static function getRelations(): array
+    {
+        return [
+            ClassTeachersRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

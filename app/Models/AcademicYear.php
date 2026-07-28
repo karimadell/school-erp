@@ -35,6 +35,11 @@ class AcademicYear extends Model
         return $this->hasMany(Curriculum::class);
     }
 
+    public function classTeachers()
+    {
+        return $this->hasMany(ClassTeacher::class);
+    }
+
     public function unlocks()
     {
         return $this->hasMany(AcademicYearUnlock::class);

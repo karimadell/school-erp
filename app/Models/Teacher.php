@@ -109,6 +109,18 @@ class Teacher extends Model
         return $this->hasMany(SchoolClass::class, 'teacher_id');
     }
 
+    /**
+     * Batch 11 / C4: classes this teacher is the homeroom (class) teacher
+     * for, distinct from assignments()/currentAssignments() (subject
+     * teaching) and from the dead classes() relation above (references a
+     * teacher_id column that doesn't exist on `classes` — left unchanged
+     * per decision, out of scope here).
+     */
+    public function classTeacherAssignments()
+    {
+        return $this->hasMany(ClassTeacher::class);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Helpers

@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
+use App\Contracts\ResolvesAcademicYear;
 use Illuminate\Database\Eloquent\Model;
 
-class Enrollment extends Model
+class Enrollment extends Model implements ResolvesAcademicYear
 {
     protected $fillable = [
         'student_id',
@@ -35,6 +36,17 @@ class Enrollment extends Model
     public function academicYear()
     {
         return $this->belongsTo(AcademicYear::class);
+    }
+
+    /**
+     * A fresh lookup, not the cached academicYear relation — the relation
+     * can go stale within a single request/test if the AcademicYear row
+     * is updated (e.g. deactivated) after it was first accessed on this
+     * same model instance.
+     */
+    public function resolveAcademicYear(): ?AcademicYear
+    {
+        return AcademicYear::find($this->academic_year_id);
     }
 
     public function enrollmentMode()

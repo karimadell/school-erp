@@ -14,6 +14,7 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\User;
+use App\Support\AcademicYearLock;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -354,7 +355,7 @@ class TeacherAttendanceTest extends TestCase
         $pastYear = AcademicYear::create([
             'name' => '2024 / 2025', 'start_date' => '2024-09-01', 'end_date' => '2025-05-31', 'is_active' => false,
         ]);
-        $this->linkTeacher($user, $enrollment, $pastYear->id);
+        AcademicYearLock::withoutLock(fn () => $this->linkTeacher($user, $enrollment, $pastYear->id));
 
         $component = Livewire::actingAs($user)
             ->test(TeacherAttendance::class)

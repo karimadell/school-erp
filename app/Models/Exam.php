@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
+use App\Contracts\ResolvesAcademicYear;
 use Illuminate\Database\Eloquent\Model;
 
-class Exam extends Model
+class Exam extends Model implements ResolvesAcademicYear
 {
 
     protected $fillable = [
@@ -36,6 +37,19 @@ class Exam extends Model
     public function grades()
     {
         return $this->hasMany(StudentGrade::class);
+    }
+
+    /**
+     * Item 2, approved policy: an Exam with no quarter_id has no
+     * determinable academic year and fails closed — this is not treated
+     * as "unscoped/exempt" even though quarter_id remains nullable at the
+     * schema level (Section 4 of OPEN_POLICY_DECISIONS.md leaves open
+     * whether an exam must belong to a quarter; this lock does not answer
+     * that question, it just refuses to guess).
+     */
+    public function resolveAcademicYear(): ?AcademicYear
+    {
+        return Quarter::find($this->quarter_id)?->resolveAcademicYear();
     }
 
 }

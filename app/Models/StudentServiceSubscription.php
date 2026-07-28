@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
+use App\Contracts\ResolvesAcademicYear;
 use Illuminate\Database\Eloquent\Model;
 
-class StudentServiceSubscription extends Model
+class StudentServiceSubscription extends Model implements ResolvesAcademicYear
 {
     public const STATUS_ACTIVE = 'active';
     public const STATUS_SUSPENDED = 'suspended';
@@ -33,6 +34,11 @@ class StudentServiceSubscription extends Model
     public function enrollment()
     {
         return $this->belongsTo(Enrollment::class);
+    }
+
+    public function resolveAcademicYear(): ?AcademicYear
+    {
+        return Enrollment::find($this->enrollment_id)?->resolveAcademicYear();
     }
 
     public function fee()

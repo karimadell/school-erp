@@ -11,6 +11,7 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\User;
+use App\Support\AcademicYearLock;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -123,12 +124,12 @@ class TeacherClassesTest extends TestCase
             'user_id' => $user->id, 'first_name' => 'Anna', 'last_name' => 'Ivanova', 'is_active' => true,
         ]);
 
-        TeacherAssignment::create([
+        AcademicYearLock::withoutLock(fn () => TeacherAssignment::create([
             'teacher_id' => $teacher->id,
             'class_id' => $class->id,
             'subject_id' => $subject->id,
             'academic_year_id' => $pastYear->id,
-        ]);
+        ]));
 
         $component = Livewire::actingAs($user)->test(TeacherClasses::class);
 

@@ -30,6 +30,21 @@ class AcademicYear extends Model
         return $this->hasMany(Quarter::class);
     }
 
+    public function unlocks()
+    {
+        return $this->hasMany(AcademicYearUnlock::class);
+    }
+
+    /**
+     * Item 2: a year is temporarily unlocked if it has any unlock record
+     * whose expiry hasn't passed. Expired unlocks are never deleted (kept
+     * for audit history) — they're simply excluded here, not removed.
+     */
+    public function isUnlocked(): bool
+    {
+        return $this->unlocks()->where('expires_at', '>', now())->exists();
+    }
+
     /**
      * At most one AcademicYear may be active at a time (zero is allowed).
      * Activating this year must atomically deactivate every other active

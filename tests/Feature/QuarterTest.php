@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AcademicYear;
 use App\Models\Quarter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 /**
@@ -20,11 +21,16 @@ class QuarterTest extends TestCase
 
     protected function makeYear(string $name = '2026 / 2027'): AcademicYear
     {
+        // Item 2: active, not historical — none of these tests are about
+        // the academic-year lock, they're about the Quarter<->AcademicYear
+        // relationship and the NOT NULL/restrict-delete behavior from
+        // Item 3. Using an active year keeps this file's fixtures out of
+        // the lock's way entirely, rather than wrapping every call site.
         return AcademicYear::create([
             'name' => $name,
             'start_date' => '2026-09-01',
             'end_date' => '2027-05-31',
-            'is_active' => false,
+            'is_active' => true,
         ]);
     }
 
@@ -74,7 +80,14 @@ class QuarterTest extends TestCase
         // Item 3: academic_year_id became required. Reverses the guarantee
         // the old test_quarter_can_still_be_created_without_an_academic_year
         // asserted — that test's premise no longer holds.
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        //
+        // Item 2's AcademicYearLockObserver now intercepts this before it
+        // ever reaches the database: resolveAcademicYear() returns null
+        // (no academic_year_id at all), which fails closed with a
+        // ValidationException — an earlier, friendlier rejection than the
+        // underlying QueryException the NOT NULL constraint would still
+        // produce if this observer weren't registered.
+        $this->expectException(ValidationException::class);
 
         Quarter::create(['name' => 'Q1', 'order' => 1]);
     }

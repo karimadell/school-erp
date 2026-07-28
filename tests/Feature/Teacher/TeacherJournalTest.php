@@ -12,6 +12,7 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\User;
+use App\Support\AcademicYearLock;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -183,7 +184,7 @@ class TeacherJournalTest extends TestCase
         $subject = $this->makeSubject();
         $class = $this->makeClass();
         $user = User::factory()->create();
-        $this->linkTeacher($user, $class->id, $subject->id, $pastYear->id);
+        AcademicYearLock::withoutLock(fn () => $this->linkTeacher($user, $class->id, $subject->id, $pastYear->id));
 
         $component = Livewire::actingAs($user)
             ->test(TeacherJournal::class)

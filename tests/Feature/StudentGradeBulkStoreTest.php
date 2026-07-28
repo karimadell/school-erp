@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\AcademicYear;
 use App\Models\Exam;
 use App\Models\Grade;
+use App\Models\Quarter;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
@@ -32,7 +34,18 @@ class StudentGradeBulkStoreTest extends TestCase
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'A', 'name_ar' => 'الفصل أ']);
         $subject = Subject::create(['code' => 'MATH', 'name_ar' => 'رياضيات']);
 
-        return Exam::create(['name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id]);
+        // Item 2: Exam creation now fails closed without a resolvable
+        // quarter — this file's own tests are about A3's blank-score/note
+        // handling, unrelated to the academic-year lock, so the exam needs
+        // a real, active-year quarter just to be creatable at all.
+        $year = AcademicYear::create([
+            'name' => 'Fixture Year', 'start_date' => '2000-09-01', 'end_date' => '2001-05-31', 'is_active' => true,
+        ]);
+        $quarter = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Fixture Q', 'order' => 1]);
+
+        return Exam::create([
+            'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
+        ]);
     }
 
     protected function postBulkStore(Exam $exam, array $grades)

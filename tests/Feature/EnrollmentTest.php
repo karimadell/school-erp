@@ -10,6 +10,7 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\User;
+use App\Support\AcademicYearLock;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -100,7 +101,7 @@ class EnrollmentTest extends TestCase
             'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
 
-        $this->enroll($student, $lastYear, $class)->assertSessionDoesntHaveErrors();
+        AcademicYearLock::withoutLock(fn () => $this->enroll($student, $lastYear, $class))->assertSessionDoesntHaveErrors();
         $previousEnrollment = Enrollment::where('academic_year_id', $lastYear->id)->firstOrFail();
         $this->assertTrue($previousEnrollment->is_active);
 
@@ -124,7 +125,7 @@ class EnrollmentTest extends TestCase
             'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
 
-        $this->enroll($student, $lastYear, $class);
+        AcademicYearLock::withoutLock(fn () => $this->enroll($student, $lastYear, $class));
         $this->enroll($student, $thisYear, $class);
 
         $this->assertDatabaseHas('enrollments', [
@@ -148,7 +149,7 @@ class EnrollmentTest extends TestCase
             'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
 
-        $this->enroll($student, $lastYear, $class);
+        AcademicYearLock::withoutLock(fn () => $this->enroll($student, $lastYear, $class));
         $this->enroll($student, $thisYear, $class);
 
         $current = $student->fresh()->currentEnrollment;
@@ -205,10 +206,10 @@ class EnrollmentTest extends TestCase
             'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
 
-        $this->enroll($student, $yearOne, $class);
+        AcademicYearLock::withoutLock(fn () => $this->enroll($student, $yearOne, $class));
         $enrollmentOne = Enrollment::where('academic_year_id', $yearOne->id)->firstOrFail();
 
-        $this->enroll($student, $yearTwo, $class);
+        AcademicYearLock::withoutLock(fn () => $this->enroll($student, $yearTwo, $class));
         $enrollmentTwo = Enrollment::where('academic_year_id', $yearTwo->id)->firstOrFail();
 
         $this->enroll($student, $yearThree, $class);
@@ -259,7 +260,7 @@ class EnrollmentTest extends TestCase
             'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
 
-        $this->enroll($student, $yearOne, $class);
+        AcademicYearLock::withoutLock(fn () => $this->enroll($student, $yearOne, $class));
         $this->enroll($student, $yearTwo, $class);
         $enrollmentTwo = Enrollment::where('academic_year_id', $yearTwo->id)->firstOrFail();
 
@@ -373,7 +374,7 @@ class EnrollmentTest extends TestCase
         $regular = EnrollmentMode::create(['code' => EnrollmentMode::REGULAR, 'name_ru' => 'Очное обучение']);
         $distance = EnrollmentMode::create(['code' => EnrollmentMode::DISTANCE_LEARNING, 'name_ru' => 'Дистанционное обучение']);
 
-        $this->enroll($student, $lastYear, $class, 'active', $regular->id);
+        AcademicYearLock::withoutLock(fn () => $this->enroll($student, $lastYear, $class, 'active', $regular->id));
         $lastYearEnrollment = Enrollment::where('academic_year_id', $lastYear->id)->firstOrFail();
 
         $this->enroll($student, $thisYear, $class, 'active', $distance->id);

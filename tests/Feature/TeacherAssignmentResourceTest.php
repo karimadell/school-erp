@@ -12,6 +12,7 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\User;
+use App\Support\AcademicYearLock;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
@@ -117,10 +118,10 @@ class TeacherAssignmentResourceTest extends TestCase
         $subject = Subject::create(['code' => 'SUBJ', 'name_ar' => 'a', 'name_ru' => 'a']);
         $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B', 'is_active' => true]);
 
-        TeacherAssignment::create([
+        AcademicYearLock::withoutLock(fn () => TeacherAssignment::create([
             'teacher_id' => $teacher->id, 'class_id' => $class->id,
             'subject_id' => $subject->id, 'academic_year_id' => $yearOne->id,
-        ]);
+        ]));
 
         $second = TeacherAssignment::create([
             'teacher_id' => $teacher->id, 'class_id' => $class->id,

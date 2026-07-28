@@ -33,6 +33,12 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage academic years',
             'manage journal entries',
 
+            // Item 2 (Batch 10): kept separate from 'manage academic years'
+            // and out of the general $permissions list on purpose — this
+            // is not synced to school-admin/principal via array_diff below,
+            // it is granted to 'admin' only, explicitly, further down.
+            'unlock historical academic year',
+
             // Finance
             'view invoices', 'manage invoices',
             'manage fees',
@@ -68,6 +74,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage users',
             'manage roles',
             'manage permissions',
+            // Item 2: unlock is admin-only for the initial implementation
+            // — not extended to school-admin, even though school-admin
+            // otherwise mirrors admin's full operational permission set.
+            'unlock historical academic year',
         ])));
 
         // 3. Accountant — full access to fees/fee prices/invoices/expenses/

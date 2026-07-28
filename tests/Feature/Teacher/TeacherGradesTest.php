@@ -14,6 +14,7 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\User;
+use App\Support\AcademicYearLock;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -57,8 +58,18 @@ class TeacherGradesTest extends TestCase
         return Subject::create(['code' => 'SUBJ-' . uniqid(), 'name_ar' => 'مادة', 'name_ru' => 'Предмет']);
     }
 
-    protected function makeExam(int $classId, int $subjectId, ?int $quarterId = null): Exam
+    /**
+     * Item 2: Exam creation now fails closed without a resolvable quarter,
+     * so every caller needs one. If $quarterId isn't given explicitly,
+     * one is auto-created under $year — this file's tests are about
+     * teacher-portal authorization, not the academic-year lock itself.
+     */
+    protected function makeExam(int $classId, int $subjectId, AcademicYear $year, ?int $quarterId = null): Exam
     {
+        $quarterId ??= Quarter::create([
+            'academic_year_id' => $year->id, 'name' => 'Auto Q', 'order' => 1,
+        ])->id;
+
         return Exam::create([
             'name' => 'Quiz ' . uniqid(),
             'class_id' => $classId,
@@ -98,7 +109,7 @@ class TeacherGradesTest extends TestCase
         $year = $this->makeYear();
         $subject = $this->makeSubject();
         [$class, $student] = $this->makeClassWithStudent($year);
-        $exam = $this->makeExam($class->id, $subject->id);
+        $exam = $this->makeExam($class->id, $subject->id, $year);
         $user = User::factory()->create();
         $this->linkTeacher($user, $class->id, $subject->id, $year->id);
 
@@ -130,7 +141,7 @@ class TeacherGradesTest extends TestCase
         $quarter = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Q1', 'order' => 1]);
         $subject = $this->makeSubject();
         [$class, $student] = $this->makeClassWithStudent($year);
-        $exam = $this->makeExam($class->id, $subject->id, $quarter->id);
+        $exam = $this->makeExam($class->id, $subject->id, $year, $quarter->id);
         $user = User::factory()->create();
         $this->linkTeacher($user, $class->id, $subject->id, $year->id);
 
@@ -160,6 +171,7 @@ class TeacherGradesTest extends TestCase
     public function test_an_assigned_teacher_can_create_a_new_exam_for_their_class_and_subject(): void
     {
         $year = $this->makeYear();
+        $quarter = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Q1', 'order' => 1]);
         $subject = $this->makeSubject();
         [$class] = $this->makeClassWithStudent($year);
         $user = User::factory()->create();
@@ -171,6 +183,7 @@ class TeacherGradesTest extends TestCase
             ->set('subjectId', $subject->id)
             ->set('newExamName', 'Midterm')
             ->set('newExamMaxScore', 50)
+            ->set('newExamQuarterId', $quarter->id)
             ->call('createExam')
             ->assertHasNoErrors();
 
@@ -210,7 +223,9 @@ class TeacherGradesTest extends TestCase
     {
         $activeYear = $this->makeYear(true);
         $pastYear = $this->makeYear(false);
-        $pastQuarter = Quarter::create(['academic_year_id' => $pastYear->id, 'name' => 'Q1', 'order' => 1]);
+        $pastQuarter = AcademicYearLock::withoutLock(
+            fn () => Quarter::create(['academic_year_id' => $pastYear->id, 'name' => 'Q1', 'order' => 1])
+        );
         $subject = $this->makeSubject();
         [$class] = $this->makeClassWithStudent($activeYear);
         $user = User::factory()->create();
@@ -239,7 +254,7 @@ class TeacherGradesTest extends TestCase
         $year = $this->makeYear();
         $subject = $this->makeSubject();
         [$class, $student] = $this->makeClassWithStudent($year);
-        $exam = $this->makeExam($class->id, $subject->id);
+        $exam = $this->makeExam($class->id, $subject->id, $year);
         $user = User::factory()->create();
 
         $component = Livewire::actingAs($user)
@@ -260,7 +275,7 @@ class TeacherGradesTest extends TestCase
         $assignedSubject = $this->makeSubject();
         $otherSubject = $this->makeSubject();
         [$class, $student] = $this->makeClassWithStudent($year);
-        $exam = $this->makeExam($class->id, $otherSubject->id);
+        $exam = $this->makeExam($class->id, $otherSubject->id, $year);
         $user = User::factory()->create();
         $this->linkTeacher($user, $class->id, $assignedSubject->id, $year->id);
 
@@ -280,9 +295,12 @@ class TeacherGradesTest extends TestCase
         $pastYear = $this->makeYear(false);
         $subject = $this->makeSubject();
         [$class, $student] = $this->makeClassWithStudent($activeYear);
-        $exam = $this->makeExam($class->id, $subject->id);
+        $exam = $this->makeExam($class->id, $subject->id, $activeYear);
         $user = User::factory()->create();
-        $this->linkTeacher($user, $class->id, $subject->id, $pastYear->id);
+        // Deliberately a past-year assignment (that's the point of this
+        // test) — creating it requires the explicit bypass since the
+        // TeacherAssignment itself is one of the locked models.
+        AcademicYearLock::withoutLock(fn () => $this->linkTeacher($user, $class->id, $subject->id, $pastYear->id));
 
         $component = Livewire::actingAs($user)
             ->test(TeacherGrades::class)
@@ -306,7 +324,7 @@ class TeacherGradesTest extends TestCase
         $assignedSubject = $this->makeSubject();
         $foreignSubject = $this->makeSubject();
         [$class, $student] = $this->makeClassWithStudent($year);
-        $exam = $this->makeExam($class->id, $assignedSubject->id);
+        $exam = $this->makeExam($class->id, $assignedSubject->id, $year);
         $user = User::factory()->create();
         $this->linkTeacher($user, $class->id, $assignedSubject->id, $year->id);
 
@@ -337,7 +355,7 @@ class TeacherGradesTest extends TestCase
         $subject = $this->makeSubject();
         [$assignedClass, $student] = $this->makeClassWithStudent($year, 'Assigned Student');
         [$foreignClass] = $this->makeClassWithStudent($year, 'Foreign Class Student');
-        $foreignExam = $this->makeExam($foreignClass->id, $subject->id);
+        $foreignExam = $this->makeExam($foreignClass->id, $subject->id, $year);
         $user = User::factory()->create();
         $this->linkTeacher($user, $assignedClass->id, $subject->id, $year->id);
 
@@ -363,7 +381,7 @@ class TeacherGradesTest extends TestCase
         $subject = $this->makeSubject();
         [$assignedClass, $assignedStudent] = $this->makeClassWithStudent($year, 'Assigned Student');
         [, $foreignStudent] = $this->makeClassWithStudent($year, 'Foreign Student');
-        $exam = $this->makeExam($assignedClass->id, $subject->id);
+        $exam = $this->makeExam($assignedClass->id, $subject->id, $year);
         $user = User::factory()->create();
         $this->linkTeacher($user, $assignedClass->id, $subject->id, $year->id);
 
@@ -386,7 +404,7 @@ class TeacherGradesTest extends TestCase
         $year = $this->makeYear();
         $subject = $this->makeSubject();
         [$class, $student] = $this->makeClassWithStudent($year);
-        $exam = $this->makeExam($class->id, $subject->id);
+        $exam = $this->makeExam($class->id, $subject->id, $year);
         $user = User::factory()->create();
         // No teacher linked at all.
 

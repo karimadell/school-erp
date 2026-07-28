@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
+use App\Contracts\ResolvesAcademicYear;
 use Illuminate\Database\Eloquent\Model;
 
-class LessonJournalEntry extends Model
+class LessonJournalEntry extends Model implements ResolvesAcademicYear
 {
     protected $fillable = [
         'teacher_id',
@@ -45,5 +46,10 @@ class LessonJournalEntry extends Model
     public function academicYear()
     {
         return $this->belongsTo(AcademicYear::class);
+    }
+
+    public function resolveAcademicYear(): ?AcademicYear
+    {
+        return AcademicYear::find($this->academic_year_id);
     }
 }

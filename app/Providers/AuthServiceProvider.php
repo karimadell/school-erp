@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Models\AcademicYear;
 use App\Models\Expense;
 use App\Models\Fee;
 use App\Models\FeePrice;
@@ -11,6 +12,7 @@ use App\Models\StudentFile;
 use App\Models\StudentServiceSubscription;
 use App\Models\TeacherAssignment;
 use App\Models\User;
+use App\Policies\AcademicYearPolicy;
 use App\Policies\ExpensePolicy;
 use App\Policies\FeePolicy;
 use App\Policies\FeePricePolicy;
@@ -30,6 +32,9 @@ class AuthServiceProvider extends ServiceProvider
 {
     protected $policies = [
         StudentFile::class => StudentFilePolicy::class,
+
+        // Item 2 (Batch 10)
+        AcademicYear::class => AcademicYearPolicy::class,
 
         // Batch 6
         Fee::class => FeePolicy::class,

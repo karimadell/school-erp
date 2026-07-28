@@ -8,6 +8,7 @@ use App\Filament\Resources\AcademicYears\Pages\ListAcademicYears;
 use App\Models\AcademicYear;
 use App\Models\User;
 use Database\Seeders\AcademicYearSeeder;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -15,6 +16,64 @@ use Tests\TestCase;
 class AcademicYearTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * Item 2: AcademicYearResource gained a real Policy (previously none
+     * existed — any authenticated user could reach it). Filament tests
+     * below now need 'manage academic years' explicitly.
+     */
+    protected function userWithManagePermission(): User
+    {
+        (new RolesAndPermissionsSeeder())->run();
+        $user = User::factory()->create();
+        $user->assignRole('admin');
+
+        return $user;
+    }
+
+    protected function userWithRole(string $role): User
+    {
+        (new RolesAndPermissionsSeeder())->run();
+        $user = User::factory()->create();
+        $user->assignRole($role);
+
+        return $user;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Item 2: AcademicYearPolicy CRUD gate — tested independently from the
+    | 'unlock' ability (see AcademicYearUnlockTest), per approved decision 2.
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_a_role_without_manage_academic_years_cannot_open_the_resource(): void
+    {
+        $user = $this->userWithRole('accountant');
+
+        Livewire::actingAs($user)->test(ListAcademicYears::class)->assertForbidden();
+    }
+
+    public function test_a_role_without_manage_academic_years_cannot_create_a_year(): void
+    {
+        $user = $this->userWithRole('accountant');
+
+        Livewire::actingAs($user)->test(CreateAcademicYear::class)->assertForbidden();
+    }
+
+    public function test_school_admin_has_manage_academic_years_and_can_open_the_resource(): void
+    {
+        $user = $this->userWithRole('school-admin');
+
+        Livewire::actingAs($user)->test(ListAcademicYears::class)->assertSuccessful();
+    }
+
+    public function test_principal_has_manage_academic_years_and_can_open_the_resource(): void
+    {
+        $user = $this->userWithRole('principal');
+
+        Livewire::actingAs($user)->test(ListAcademicYears::class)->assertSuccessful();
+    }
 
     /**
      * Regression test: AcademicYear had no $fillable at all, so Eloquent's
@@ -79,7 +138,7 @@ class AcademicYearTest extends TestCase
      */
     public function test_filament_can_create_an_academic_year(): void
     {
-        $user = User::factory()->create();
+        $user = $this->userWithManagePermission();
 
         Livewire::actingAs($user)
             ->test(CreateAcademicYear::class)
@@ -100,7 +159,7 @@ class AcademicYearTest extends TestCase
 
     public function test_filament_can_edit_an_academic_year(): void
     {
-        $user = User::factory()->create();
+        $user = $this->userWithManagePermission();
 
         $year = AcademicYear::create([
             'name' => '2026 / 2027',
@@ -120,7 +179,7 @@ class AcademicYearTest extends TestCase
 
     public function test_filament_list_page_renders_and_shows_active_state(): void
     {
-        $user = User::factory()->create();
+        $user = $this->userWithManagePermission();
 
         AcademicYear::create([
             'name' => '2026 / 2027',

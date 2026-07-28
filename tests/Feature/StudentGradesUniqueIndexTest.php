@@ -42,7 +42,18 @@ class StudentGradesUniqueIndexTest extends TestCase
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'A', 'name_ar' => 'الفصل أ']);
         $subject = Subject::create(['code' => 'MATH', 'name_ar' => 'رياضيات']);
 
-        return Exam::create(['name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id]);
+        // Item 2: Exam creation now fails closed without a resolvable
+        // quarter — this file's own tests are about A2's unique-index
+        // fix, unrelated to the academic-year lock, so the exam needs a
+        // real, active-year quarter just to be creatable at all. The
+        // tests' own "null quarter_id" scenarios are on the StudentGrade
+        // row itself, not on this exam.
+        $year = $this->makeYear();
+        $quarter = Quarter::create(['academic_year_id' => $year->id, 'name' => 'Fixture Q', 'order' => 1]);
+
+        return Exam::create([
+            'name' => 'Midterm', 'subject_id' => $subject->id, 'class_id' => $class->id, 'quarter_id' => $quarter->id,
+        ]);
     }
 
     public function test_legacy_index_shape_allowed_duplicate_null_quarter_rows(): void

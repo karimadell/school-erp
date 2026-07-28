@@ -11,7 +11,7 @@
         <select wire:model="classId" class="border p-2 rounded">
             <option value="">---</option>
 
-            @foreach(\App\Models\SchoolClass::all() as $class)
+            @foreach($assignedClasses as $class)
                 <option value="{{ $class->id }}">
                     {{ $class->name }}
                 </option>

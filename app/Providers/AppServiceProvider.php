@@ -10,6 +10,7 @@ use App\Models\Student;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\StudentServiceSubscription;
+use App\Models\TeacherAssignment;
 
 // Observer
 use App\Observers\AuditObserver;
@@ -38,5 +39,7 @@ class AppServiceProvider extends ServiceProvider
         if (class_exists(StudentServiceSubscription::class)) {
             StudentServiceSubscription::observe(AuditObserver::class);
         }
+
+        TeacherAssignment::observe(AuditObserver::class);
     }
 }

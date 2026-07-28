@@ -27,8 +27,12 @@ class TeacherTimetable extends Page
 
         if ($teacher) {
 
+            // Batch 8: eager-loaded 'class', a relation that doesn't
+            // exist on Timetable (it's named schoolClass()) — this page
+            // has never actually rendered successfully. Unrelated to
+            // this batch's scoping work, which was already correct.
             $this->lessons = Timetable::with([
-                'class',
+                'schoolClass',
                 'subject',
                 'day',
                 'period'

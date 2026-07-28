@@ -40,7 +40,7 @@
 </td>
 
 <td class="border p-2">
-{{ $lesson->class->name }}
+{{ $lesson->schoolClass->name }}
 </td>
 
 </tr>

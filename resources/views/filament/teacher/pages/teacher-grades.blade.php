@@ -14,7 +14,7 @@
 
 <option value="">Класс</option>
 
-@foreach(\App\Models\SchoolClass::all() as $class)
+@foreach($assignedClasses as $class)
 
 <option value="{{ $class->id }}">
 {{ $class->name }}
@@ -29,7 +29,7 @@
 
 <option value="">Предмет</option>
 
-@foreach(\App\Models\Subject::all() as $subject)
+@foreach($assignedSubjects as $subject)
 
 <option value="{{ $subject->id }}">
 {{ $subject->name }}

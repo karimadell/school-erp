@@ -4,6 +4,7 @@ namespace Tests\Feature\Teacher;
 
 use App\Filament\Teacher\Pages\TeacherJournal;
 use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Grade;
 use App\Models\LessonJournalEntry;
 use App\Models\SchoolClass;
@@ -60,6 +61,18 @@ class TeacherJournalTest extends TestCase
             'last_name' => 'Ivanova',
             'is_active' => true,
         ]);
+
+        // Batch 11 / C6: TeacherAssignment creation now also requires a
+        // matching Curriculum row (year + grade + subject) — unrelated
+        // to this file's own concern (journal entry authorization).
+        Curriculum::firstOrCreate(
+            [
+                'academic_year_id' => $academicYearId,
+                'grade_id' => SchoolClass::find($classId)->grade_id,
+                'subject_id' => $subjectId,
+            ],
+            ['weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY]
+        );
 
         TeacherAssignment::create([
             'teacher_id' => $teacher->id,

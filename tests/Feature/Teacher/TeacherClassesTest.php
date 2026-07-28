@@ -4,6 +4,7 @@ namespace Tests\Feature\Teacher;
 
 use App\Filament\Teacher\Pages\TeacherClasses;
 use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
@@ -61,6 +62,14 @@ class TeacherClassesTest extends TestCase
         $user = User::factory()->create();
         $teacher = Teacher::create([
             'user_id' => $user->id, 'first_name' => 'Anna', 'last_name' => 'Ivanova', 'is_active' => true,
+        ]);
+
+        // Batch 11 / C6: TeacherAssignment creation now also requires a
+        // matching Curriculum row (year + grade + subject) — unrelated
+        // to this file's own concern (teacher-portal class listing).
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $assignedClass->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
         ]);
 
         TeacherAssignment::create([
@@ -122,6 +131,12 @@ class TeacherClassesTest extends TestCase
         $user = User::factory()->create();
         $teacher = Teacher::create([
             'user_id' => $user->id, 'first_name' => 'Anna', 'last_name' => 'Ivanova', 'is_active' => true,
+        ]);
+        // Curriculum has no ResolvesAcademicYear/lock of its own — no
+        // withoutLock() needed here, unlike the TeacherAssignment below.
+        Curriculum::create([
+            'academic_year_id' => $pastYear->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
         ]);
 
         AcademicYearLock::withoutLock(fn () => TeacherAssignment::create([

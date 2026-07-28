@@ -101,6 +101,18 @@ class TeacherGradesTest extends TestCase
             'is_active' => true,
         ]);
 
+        // Batch 11 / C6: TeacherAssignment creation now also requires a
+        // matching Curriculum row (year + grade + subject) — unrelated
+        // to this file's own concern (teacher-portal authorization).
+        Curriculum::firstOrCreate(
+            [
+                'academic_year_id' => $academicYearId,
+                'grade_id' => SchoolClass::find($classId)->grade_id,
+                'subject_id' => $subjectId,
+            ],
+            ['weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY]
+        );
+
         TeacherAssignment::create([
             'teacher_id' => $teacher->id,
             'class_id' => $classId,
@@ -188,14 +200,12 @@ class TeacherGradesTest extends TestCase
         $subject = $this->makeSubject();
         [$class] = $this->makeClassWithStudent($year);
         $user = User::factory()->create();
+        // Batch 11 / C3/C6: linkTeacher() already creates the matching
+        // Curriculum row (year + grade + subject) as part of C6's own
+        // fixture needs — the inline-created Exam below relies on that
+        // same row via C3, so no separate Curriculum::create() is needed
+        // here.
         $this->linkTeacher($user, $class->id, $subject->id, $year->id);
-        // Batch 11 / C3: the inline-created Exam also requires a matching
-        // Curriculum row — unrelated to this test's own concern (teacher
-        // can create an exam for their assigned class/subject).
-        Curriculum::create([
-            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
-            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
-        ]);
 
         Livewire::actingAs($user)
             ->test(TeacherGrades::class)

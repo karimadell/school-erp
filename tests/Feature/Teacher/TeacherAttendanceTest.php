@@ -5,6 +5,7 @@ namespace Tests\Feature\Teacher;
 use App\Filament\Teacher\Pages\TeacherAttendance;
 use App\Models\AcademicYear;
 use App\Models\Attendance;
+use App\Models\Curriculum;
 use App\Models\Enrollment;
 use App\Models\Grade;
 use App\Models\SchoolClass;
@@ -73,12 +74,26 @@ class TeacherAttendanceTest extends TestCase
         ]);
 
         $subject = Subject::create(['code' => 'SUBJ-' . uniqid(), 'name_ar' => 'مادة', 'name_ru' => 'Предмет']);
+        $resolvedYearId = $academicYearId ?? $enrollment->academic_year_id;
+
+        // Batch 11 / C6: TeacherAssignment creation now also requires a
+        // matching Curriculum row (year + grade + subject) — unrelated
+        // to this file's own concern (teacher-portal attendance
+        // authorization).
+        Curriculum::firstOrCreate(
+            [
+                'academic_year_id' => $resolvedYearId,
+                'grade_id' => SchoolClass::find($enrollment->class_id)->grade_id,
+                'subject_id' => $subject->id,
+            ],
+            ['weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY]
+        );
 
         TeacherAssignment::create([
             'teacher_id' => $teacher->id,
             'class_id' => $enrollment->class_id,
             'subject_id' => $subject->id,
-            'academic_year_id' => $academicYearId ?? $enrollment->academic_year_id,
+            'academic_year_id' => $resolvedYearId,
         ]);
 
         return $teacher;
@@ -218,10 +233,24 @@ class TeacherAttendanceTest extends TestCase
             if (! $teacher) {
                 $teacher = $this->linkTeacher($user, $enrollment, $year->id);
             } else {
+                $subjectId = Subject::first()?->id ?? Subject::create(['code' => 'X', 'name_ar' => 'a', 'name_ru' => 'a'])->id;
+                // Batch 11 / C6: TeacherAssignment creation now also
+                // requires a matching Curriculum row — each iteration's
+                // enrollment has its own fresh class/grade, so this must
+                // be re-resolved per iteration.
+                Curriculum::firstOrCreate(
+                    [
+                        'academic_year_id' => $year->id,
+                        'grade_id' => SchoolClass::find($enrollment->class_id)->grade_id,
+                        'subject_id' => $subjectId,
+                    ],
+                    ['weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY]
+                );
+
                 TeacherAssignment::create([
                     'teacher_id' => $teacher->id,
                     'class_id' => $enrollment->class_id,
-                    'subject_id' => Subject::first()?->id ?? Subject::create(['code' => 'X', 'name_ar' => 'a', 'name_ru' => 'a'])->id,
+                    'subject_id' => $subjectId,
                     'academic_year_id' => $year->id,
                 ]);
             }

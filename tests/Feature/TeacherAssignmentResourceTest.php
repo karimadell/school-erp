@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Filament\Resources\TeacherAssignments\Pages\CreateTeacherAssignment;
 use App\Filament\Resources\TeacherAssignments\Pages\ListTeacherAssignments;
 use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
@@ -92,6 +93,13 @@ class TeacherAssignmentResourceTest extends TestCase
         $class = $this->makeClass();
         $subject = Subject::create(['code' => 'SUBJ', 'name_ar' => 'a', 'name_ru' => 'a']);
         $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B', 'is_active' => true]);
+        // Batch 11 / C6: TeacherAssignment creation now also requires a
+        // matching Curriculum row (year + grade + subject) — unrelated
+        // to this file's own concern (composite uniqueness).
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         TeacherAssignment::create([
             'teacher_id' => $teacher->id, 'class_id' => $class->id,
@@ -117,6 +125,14 @@ class TeacherAssignmentResourceTest extends TestCase
         $class = $this->makeClass();
         $subject = Subject::create(['code' => 'SUBJ', 'name_ar' => 'a', 'name_ru' => 'a']);
         $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B', 'is_active' => true]);
+        Curriculum::create([
+            'academic_year_id' => $yearOne->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+        Curriculum::create([
+            'academic_year_id' => $yearTwo->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         AcademicYearLock::withoutLock(fn () => TeacherAssignment::create([
             'teacher_id' => $teacher->id, 'class_id' => $class->id,
@@ -141,6 +157,10 @@ class TeacherAssignmentResourceTest extends TestCase
         $class = $this->makeClass();
         $subject = Subject::create(['code' => 'SUBJ', 'name_ar' => 'a', 'name_ru' => 'a']);
         $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B', 'is_active' => true]);
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         TeacherAssignment::create([
             'teacher_id' => $teacher->id, 'class_id' => $class->id,
@@ -176,6 +196,10 @@ class TeacherAssignmentResourceTest extends TestCase
         $class = $this->makeClass();
         $subject = Subject::create(['code' => 'SUBJ', 'name_ar' => 'a', 'name_ru' => 'a']);
         $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B', 'is_active' => true]);
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         Livewire::actingAs($user)
             ->test(CreateTeacherAssignment::class)

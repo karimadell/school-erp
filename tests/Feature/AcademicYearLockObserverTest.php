@@ -358,6 +358,13 @@ class AcademicYearLockObserverTest extends TestCase
         $class = $this->makeClass();
         $subject = $this->makeSubject();
         $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B', 'is_active' => true]);
+        // Batch 11 / C6: TeacherAssignment creation now also requires a
+        // matching Curriculum row (year + grade + subject) — unrelated
+        // to this file's own concern (the academic-year lock).
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         $assignment = TeacherAssignment::create([
             'teacher_id' => $teacher->id, 'class_id' => $class->id, 'subject_id' => $subject->id, 'academic_year_id' => $year->id,
@@ -373,6 +380,10 @@ class AcademicYearLockObserverTest extends TestCase
         $class = $this->makeClass();
         $subject = $this->makeSubject();
         $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B', 'is_active' => true]);
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
 
         $assignment = TeacherAssignment::create([
             'teacher_id' => $teacher->id, 'class_id' => $class->id, 'subject_id' => $subject->id, 'academic_year_id' => $year->id,

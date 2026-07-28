@@ -24,6 +24,7 @@ use App\Observers\AuditObserver;
 use App\Observers\AcademicYearLockObserver;
 use App\Observers\ExamSnapshotObserver;
 use App\Observers\CurriculumValidationObserver;
+use App\Observers\TeacherAssignmentCurriculumObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -86,5 +87,14 @@ class AppServiceProvider extends ServiceProvider
         // ("is this subject actually in the curriculum").
         Exam::observe(CurriculumValidationObserver::class);
         StudentGrade::observe(CurriculumValidationObserver::class);
+
+        // Batch 11 / C6: registered after AcademicYearLockObserver, same
+        // ordering rationale as C3 above — an unresolvable/locked
+        // academic year must be reported before this independent
+        // "is this subject actually in the curriculum" check ever runs.
+        // Kept as its own observer, separate from
+        // CurriculumValidationObserver, since a TeacherAssignment is an
+        // authorization grant, not a graded data row.
+        TeacherAssignment::observe(TeacherAssignmentCurriculumObserver::class);
     }
 }

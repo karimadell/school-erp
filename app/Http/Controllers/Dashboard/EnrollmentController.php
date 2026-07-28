@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class EnrollmentController extends Controller
 {
@@ -67,7 +68,16 @@ class EnrollmentController extends Controller
     public function store(Request $request, Student $student): RedirectResponse
     {
         $data = $request->validate([
-            'academic_year_id' => ['required', 'exists:academic_years,id'],
+            'academic_year_id' => [
+                'required',
+                'exists:academic_years,id',
+                // Backs the DB-level unique(student_id, academic_year_id)
+                // constraint (present since the first enrollments migration)
+                // with a friendly validation error instead of letting a
+                // duplicate submission crash with an uncaught QueryException.
+                Rule::unique('enrollments', 'academic_year_id')
+                    ->where(fn ($query) => $query->where('student_id', $student->id)),
+            ],
             'academic_year' => ['nullable', 'string', 'max:50'],
             'enrollment_mode_id' => ['nullable', 'exists:enrollment_modes,id'],
 
@@ -78,6 +88,8 @@ class EnrollmentController extends Controller
             'enrollment_date' => ['nullable', 'date'],
             'status' => ['required', 'in:active,transferred,withdrawn,graduated'],
             'notes' => ['nullable', 'string'],
+        ], [
+            'academic_year_id.unique' => __('enrollments.duplicate_year'),
         ]);
 
         DB::transaction(function () use ($data, $student) {
@@ -169,7 +181,13 @@ class EnrollmentController extends Controller
         $enrollment = Enrollment::findOrFail($id);
 
         $data = $request->validate([
-            'academic_year_id' => ['required', 'exists:academic_years,id'],
+            'academic_year_id' => [
+                'required',
+                'exists:academic_years,id',
+                Rule::unique('enrollments', 'academic_year_id')
+                    ->where(fn ($query) => $query->where('student_id', $enrollment->student_id))
+                    ->ignore($enrollment->id),
+            ],
             'academic_year' => ['nullable', 'string', 'max:50'],
             'enrollment_mode_id' => ['nullable', 'exists:enrollment_modes,id'],
 
@@ -180,6 +198,8 @@ class EnrollmentController extends Controller
             'enrollment_date' => ['nullable', 'date'],
             'status' => ['required', 'in:active,transferred,withdrawn,graduated'],
             'notes' => ['nullable', 'string'],
+        ], [
+            'academic_year_id.unique' => __('enrollments.duplicate_year'),
         ]);
 
         DB::transaction(function () use ($data, $enrollment) {

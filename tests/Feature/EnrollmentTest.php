@@ -223,6 +223,85 @@ class EnrollmentTest extends TestCase
 
     /*
     |--------------------------------------------------------------------------
+    | Batch 10: friendly validation in front of the pre-existing DB-level
+    | unique(student_id, academic_year_id) constraint. That constraint
+    | already made a duplicate impossible (see the raw-model test above,
+    | which still exercises it directly) — these tests cover the request
+    | layer, which previously let a duplicate submission crash with an
+    | uncaught QueryException instead of a normal validation error.
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_duplicate_enrollment_via_store_is_rejected_with_a_friendly_validation_error(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $year, $class)->assertSessionDoesntHaveErrors();
+
+        $response = $this->enroll($student, $year, $class);
+
+        $response->assertSessionHasErrors('academic_year_id');
+        $this->assertDatabaseCount('enrollments', 1);
+    }
+
+    public function test_updating_an_enrollment_to_collide_with_another_years_enrollment_is_rejected(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $yearOne = AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
+        $yearTwo = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $yearOne, $class);
+        $this->enroll($student, $yearTwo, $class);
+        $enrollmentTwo = Enrollment::where('academic_year_id', $yearTwo->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $response = $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollmentTwo->id), [
+            'academic_year_id' => $yearOne->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'active',
+        ]);
+
+        $response->assertSessionHasErrors('academic_year_id');
+        $this->assertSame($yearTwo->id, $enrollmentTwo->fresh()->academic_year_id);
+    }
+
+    public function test_updating_an_enrollment_without_changing_its_year_is_not_rejected_as_a_duplicate(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $year, $class);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $response = $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollment->id), [
+            'academic_year_id' => $year->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'transferred',
+        ]);
+
+        $response->assertSessionDoesntHaveErrors();
+        $this->assertSame('transferred', $enrollment->fresh()->status);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | Batch 4: enrollment modes (regular, distance_learning)
     |--------------------------------------------------------------------------
     */

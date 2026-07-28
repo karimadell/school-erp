@@ -51,6 +51,11 @@ class AppServiceProvider extends ServiceProvider
         TeacherAssignment::observe(AuditObserver::class);
         AcademicYearUnlock::observe(AuditObserver::class);
 
+        // Item 5 (Batch 10 / B8): Enrollment transfers/edits/deletions now
+        // have an audit trail, matching the other sensitive access/
+        // financial models already observed above.
+        Enrollment::observe(AuditObserver::class);
+
         // Item 2: historical academic-year write locking. Excludes
         // Invoice (academic_year_id population/backfill handled
         // separately) and MealSubscription/Timetable/Fee (no academic-year

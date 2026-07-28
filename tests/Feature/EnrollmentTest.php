@@ -385,4 +385,91 @@ class EnrollmentTest extends TestCase
             Enrollment::where('academic_year_id', $thisYear->id)->firstOrFail()->enrollment_mode_id
         );
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Item 5 (Batch 10 / B8): AuditObserver registered on Enrollment
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_creating_an_enrollment_is_audited(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $year, $class)->assertSessionDoesntHaveErrors();
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'created',
+            'model' => 'Enrollment',
+        ]);
+    }
+
+    public function test_updating_an_enrollment_is_audited_with_old_values(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $year, $class);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollment->id), [
+            'academic_year_id' => $year->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'transferred',
+        ])->assertSessionDoesntHaveErrors();
+
+        $log = \App\Models\AuditLog::where('action', 'updated')->where('model', 'Enrollment')->latest()->firstOrFail();
+        $this->assertSame('active', $log->old_values['status']);
+        $this->assertSame('transferred', $log->new_values['status']);
+    }
+
+    public function test_deleting_an_enrollment_is_audited(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $year, $class);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $this->actingAs($user)->delete(route('dashboard.enrollments.destroy', $enrollment->id));
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'deleted',
+            'model' => 'Enrollment',
+            'model_id' => $enrollment->id,
+        ]);
+    }
+
+    public function test_a_write_rejected_by_the_academic_year_lock_produces_no_audit_row(): void
+    {
+        // Documents the interaction with AcademicYearLockObserver (Item 2):
+        // creating/updating/deleting fire first and can block the write
+        // entirely, so AuditObserver's created/updated/deleted never runs
+        // for a rejected attempt — no audit row for a change that never
+        // happened.
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $lockedYear = AcademicYear::create([
+            'name' => '2024 / 2025', 'start_date' => '2024-09-01', 'end_date' => '2025-05-31', 'is_active' => false,
+        ]);
+
+        $this->enroll($student, $lockedYear, $class);
+
+        $this->assertDatabaseCount('enrollments', 0);
+        $this->assertDatabaseMissing('audit_logs', ['model' => 'Enrollment']);
+    }
 }

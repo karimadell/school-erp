@@ -7,6 +7,11 @@ use Illuminate\Support\ServiceProvider;
 // Contracts / Services
 use App\Contracts\HolidayCalendar;
 use App\Services\DatabaseHolidayCalendar;
+use App\Services\TimetableConflictChecker;
+use App\Support\ClassConflictRule;
+use App\Support\DuplicateLessonConflictRule;
+use App\Support\RoomConflictRule;
+use App\Support\TeacherConflictRule;
 
 // Models
 use App\Models\User;
@@ -39,6 +44,19 @@ class AppServiceProvider extends ServiceProvider
         // D1 Phase 2: holiday infrastructure only — no call site consults
         // this yet. See App\Contracts\HolidayCalendar's doc comment.
         $this->app->bind(HolidayCalendar::class, DatabaseHolidayCalendar::class);
+
+        // The one conflict engine — every timetable UI resolves this
+        // instead of running its own conflict SQL. Order matters:
+        // DuplicateLessonConflictRule must run before ClassConflictRule/
+        // TeacherConflictRule (see TimetableConflictChecker's doc comment).
+        $this->app->bind(TimetableConflictChecker::class, function () {
+            return new TimetableConflictChecker([
+                new DuplicateLessonConflictRule(),
+                new TeacherConflictRule(),
+                new ClassConflictRule(),
+                new RoomConflictRule(),
+            ]);
+        });
     }
 
     public function boot(): void

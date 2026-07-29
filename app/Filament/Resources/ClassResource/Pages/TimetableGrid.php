@@ -14,6 +14,8 @@ use App\Models\Day;
 use App\Models\Period;
 use App\Models\Subject;
 use App\Models\SchoolClass;
+use App\Services\TimetableConflictChecker;
+use App\Support\TimetableSlot;
 use App\Support\WorkingDays;
 
 class TimetableGrid extends Page
@@ -62,17 +64,30 @@ class TimetableGrid extends Page
             return;
         }
 
-        $teacherConflict = Timetable::where('teacher_id',$teacherId)
+        // The row already occupying this exact class+day+period (if any)
+        // is the one about to be upserted — excluded from every rule so
+        // editing a slot never conflicts with itself.
+        $existingId = Timetable::where('class_id',$this->classId)
             ->where('day_id',$dayId)
             ->where('period_id',$periodId)
-            ->where('class_id','!=',$this->classId)
-            ->exists();
+            ->value('id');
 
-        if($teacherConflict){
+        $slot = new TimetableSlot(
+            classId: $this->classId,
+            dayId: $dayId,
+            periodId: $periodId,
+            teacherId: $teacherId,
+            subjectId: $subjectId,
+            ignoreIds: $existingId ? [$existingId] : [],
+        );
+
+        $result = app(TimetableConflictChecker::class)->check($slot);
+
+        if($result->hasConflict()){
 
             Notification::make()
-                ->title('Teacher Conflict')
-                ->body('Teacher already has lesson at this time')
+                ->title(__('timetable.validation_error'))
+                ->body(__($result->first()))
                 ->danger()
                 ->send();
 
@@ -119,28 +134,42 @@ class TimetableGrid extends Page
         $sourcePeriodId = $draggedLesson->period_id;
         $classId = $draggedLesson->class_id;
 
-        $teacherConflict = Timetable::where('teacher_id',$draggedLesson->teacher_id)
+        $targetLesson = Timetable::where('class_id',$classId)
             ->where('day_id',$targetDayId)
             ->where('period_id',$targetPeriodId)
             ->where('id','!=',$draggedLesson->id)
-            ->exists();
+            ->first();
 
-        if($teacherConflict){
+        // Both the dragged row and (if present) the row being swapped
+        // away are excluded — a swap is not a conflict with either of
+        // the two rows actually involved in it.
+        $ignoreIds = $targetLesson
+            ? [$draggedLesson->id, $targetLesson->id]
+            : [$draggedLesson->id];
+
+        $slot = new TimetableSlot(
+            classId: $classId,
+            dayId: $targetDayId,
+            periodId: $targetPeriodId,
+            teacherId: $draggedLesson->teacher_id,
+            subjectId: $draggedLesson->subject_id,
+            room: $draggedLesson->room,
+            ignoreIds: $ignoreIds,
+        );
+
+        $result = app(TimetableConflictChecker::class)->check($slot);
+
+        if($result->hasConflict()){
 
             Notification::make()
-                ->title('Teacher Conflict')
+                ->title(__('timetable.validation_error'))
+                ->body(__($result->first()))
                 ->danger()
                 ->send();
 
             $this->dragLessonId = null;
             return;
         }
-
-        $targetLesson = Timetable::where('class_id',$classId)
-            ->where('day_id',$targetDayId)
-            ->where('period_id',$targetPeriodId)
-            ->where('id','!=',$draggedLesson->id)
-            ->first();
 
         if(!$targetLesson){
 
@@ -153,15 +182,29 @@ class TimetableGrid extends Page
             return;
         }
 
-        $targetLesson->update([
-            'day_id'=>$sourceDayId,
-            'period_id'=>$sourcePeriodId
-        ]);
+        // Swap: capture the target lesson's data and delete it before
+        // moving the dragged lesson in. Updating both rows in place (old
+        // behavior) could transiently violate the (teacher_id, day_id,
+        // period_id) / (class_id, day_id, period_id) unique constraints
+        // whenever the two lessons share a teacher or class — each row
+        // briefly needs to sit in the other's still-occupied slot.
+        // Deleting the target first means no two rows ever collide.
+        $targetData = [
+            'class_id' => $targetLesson->class_id,
+            'subject_id' => $targetLesson->subject_id,
+            'teacher_id' => $targetLesson->teacher_id,
+        ];
+        $targetLesson->delete();
 
         $draggedLesson->update([
             'day_id'=>$targetDayId,
             'period_id'=>$targetPeriodId
         ]);
+
+        Timetable::create(array_merge($targetData, [
+            'day_id' => $sourceDayId,
+            'period_id' => $sourcePeriodId,
+        ]));
 
         $this->dragLessonId = null;
     }

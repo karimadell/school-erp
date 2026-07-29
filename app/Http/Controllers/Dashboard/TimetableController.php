@@ -9,11 +9,17 @@ use App\Models\Day;
 use App\Models\Period;
 use App\Models\Subject;
 use App\Models\Teacher;
+use App\Services\TimetableConflictChecker;
+use App\Support\TimetableSlot;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
 class TimetableController extends Controller
 {
+    public function __construct(private readonly TimetableConflictChecker $conflictChecker)
+    {
+    }
+
     public function index()
     {
         $classes = SchoolClass::with('grade.stage')
@@ -86,10 +92,10 @@ class TimetableController extends Controller
             'room'       => 'nullable|string|max:50',
         ]);
 
-        $error = $this->checkConflicts($data);
+        $result = $this->conflictChecker->check($this->slotFromData($data));
 
-        if ($error) {
-            return back()->withInput()->withErrors($error);
+        if ($result->hasConflict()) {
+            return back()->withInput()->withErrors(['error' => __($result->first())]);
         }
 
         Timetable::create($data);
@@ -110,10 +116,10 @@ class TimetableController extends Controller
             'room'       => 'nullable|string|max:50',
         ]);
 
-        $error = $this->checkConflicts($data, $timetable->id);
+        $result = $this->conflictChecker->check($this->slotFromData($data, [$timetable->id]));
 
-        if ($error) {
-            return back()->withInput()->withErrors($error);
+        if ($result->hasConflict()) {
+            return back()->withInput()->withErrors(['error' => __($result->first())]);
         }
 
         $timetable->update($data);
@@ -155,12 +161,12 @@ class TimetableController extends Controller
             'room'       => $timetable->room,
         ];
 
-        $error = $this->checkConflicts($newData, $timetable->id);
+        $result = $this->conflictChecker->check($this->slotFromData($newData, [$timetable->id]));
 
-        if ($error) {
+        if ($result->hasConflict()) {
             return response()->json([
                 'success' => false,
-                'message' => collect($error)->first(),
+                'message' => __($result->first()),
             ], 422);
         }
 
@@ -191,46 +197,20 @@ class TimetableController extends Controller
 
     /*
     |--------------------------------------------------------------------------
-    | 🔥 CONFLICT ENGINE
+    | Orchestration only — conflict business logic lives in
+    | App\Services\TimetableConflictChecker and its rules.
     |--------------------------------------------------------------------------
     */
-    private function checkConflicts($data, $ignoreId = null)
+    private function slotFromData(array $data, array $ignoreIds = []): TimetableSlot
     {
-        // 1️⃣ Class
-        $class = Timetable::where('class_id',$data['class_id'])
-            ->where('day_id',$data['day_id'])
-            ->where('period_id',$data['period_id']);
-
-        if ($ignoreId) $class->where('id','!=',$ignoreId);
-
-        if ($class->exists()) {
-            return ['error' => __('timetable.class_conflict')];
-        }
-
-        // 2️⃣ Teacher
-        $teacher = Timetable::where('teacher_id',$data['teacher_id'])
-            ->where('day_id',$data['day_id'])
-            ->where('period_id',$data['period_id']);
-
-        if ($ignoreId) $teacher->where('id','!=',$ignoreId);
-
-        if ($teacher->exists()) {
-            return ['error' => __('timetable.teacher_conflict')];
-        }
-
-        // 3️⃣ Room
-        if (!empty($data['room'])) {
-            $room = Timetable::where('room',$data['room'])
-                ->where('day_id',$data['day_id'])
-                ->where('period_id',$data['period_id']);
-
-            if ($ignoreId) $room->where('id','!=',$ignoreId);
-
-            if ($room->exists()) {
-                return ['error' => __('timetable.room_conflict')];
-            }
-        }
-
-        return null;
+        return new TimetableSlot(
+            classId: (int) $data['class_id'],
+            dayId: (int) $data['day_id'],
+            periodId: (int) $data['period_id'],
+            teacherId: (int) $data['teacher_id'],
+            subjectId: (int) $data['subject_id'],
+            room: $data['room'] ?? null,
+            ignoreIds: $ignoreIds,
+        );
     }
 }

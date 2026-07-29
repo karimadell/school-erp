@@ -12,6 +12,7 @@ class Timetable extends Model
         'teacher_id',
         'day_id',
         'period_id',
+        'room',
     ];
 
     /*

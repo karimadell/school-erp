@@ -35,8 +35,22 @@ class TimetableGrid extends Page
 
     public $dragLessonId = null;
 
+    /**
+     * Batch 4 / Timetable Permissions (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md):
+     * defense-in-depth only — Filament consults a resource sub-page's own
+     * canAccess() solely for navigation-item visibility, not for actually
+     * gating the route. Real enforcement is the abort_unless() at the top
+     * of mount() below; this override must not be relied on by itself.
+     */
+    public static function canAccess(array $parameters = []): bool
+    {
+        return auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ?? false;
+    }
+
     public function mount($record): void
     {
+        abort_unless(auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']), 403);
+
         $this->classId = $record;
 
         $this->days = Day::orderBy('order')->get();
@@ -96,6 +110,8 @@ class TimetableGrid extends Page
 
     public function saveLesson($dayId,$periodId)
     {
+        abort_unless(auth()->user()?->can('manage timetable'), 403);
+
         $subjectId = $this->selectedSubject[$dayId][$periodId] ?? null;
         $teacherId = $this->selectedTeacher[$dayId][$periodId] ?? null;
 
@@ -158,6 +174,8 @@ class TimetableGrid extends Page
 
     public function moveLesson($targetDayId,$targetPeriodId): void
     {
+        abort_unless(auth()->user()?->can('manage timetable'), 403);
+
         if(!$this->dragLessonId){
             return;
         }
@@ -250,6 +268,8 @@ class TimetableGrid extends Page
 
     public function generateTimetable(): void
     {
+        abort_unless(auth()->user()?->can('manage timetable'), 403);
+
         $activeYearId = AcademicYear::where('is_active', true)->value('id');
 
         $classes = SchoolClass::all();

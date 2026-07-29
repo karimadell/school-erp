@@ -45,6 +45,15 @@ class RolesAndPermissionsSeeder extends Seeder
             // hold every other academic-management permission.
             'manage curriculum',
 
+            // Batch 4 (Timetable Permissions): dedicated timetable
+            // permissions, kept separate from 'manage classes'. Admin-only
+            // per approved decision — not auto-extended to any other role.
+            // 'manage timetable' implies 'view timetable' in application
+            // logic (TimetableGrid's own checks), not via Spatie, which has
+            // no permission hierarchy.
+            'view timetable',
+            'manage timetable',
+
             // Finance
             'view invoices', 'manage invoices',
             'manage fees',
@@ -86,6 +95,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'unlock historical academic year',
             // Item 8: same reasoning — Curriculum admin is admin-only.
             'manage curriculum',
+            // Batch 4: same reasoning — Timetable permissions are
+            // admin-only, not auto-extended to school-admin.
+            'view timetable',
+            'manage timetable',
         ])));
 
         // 3. Accountant — full access to fees/fee prices/invoices/expenses/

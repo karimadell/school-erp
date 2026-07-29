@@ -15,7 +15,9 @@ use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use App\Models\TimetableSetting;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 /**
@@ -27,10 +29,32 @@ use Tests\TestCase;
  * `order` column) unrelated to this batch's scope. Tests build the
  * page's public properties directly instead, exercising
  * generateTimetable() in isolation.
+ *
+ * Batch 4 / Timetable Permissions: generateTimetable() now abort_unless
+ * the acting user has 'manage timetable'. setUp() authenticates a user
+ * with that permission for every test in this class — see
+ * TimetableGridAuthorizationTest for the permission checks themselves.
  */
 class TimetableGridGenerateTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->actingAsTimetableManager();
+    }
+
+    protected function actingAsTimetableManager(): User
+    {
+        $user = User::factory()->create();
+        Permission::firstOrCreate(['name' => 'manage timetable']);
+        $user->givePermissionTo('manage timetable');
+        $this->actingAs($user);
+
+        return $user;
+    }
 
     protected function makeYear(bool $active = true): AcademicYear
     {

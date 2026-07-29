@@ -14,7 +14,9 @@ use App\Models\Subject;
 use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\Timetable;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 /**
@@ -28,10 +30,34 @@ use Tests\TestCase;
  * matching TeacherAssignment row, or TeacherAssignmentRule would reject
  * it first for the wrong reason. TimetableController (#1, deprecated)
  * is unaffected — it still resolves the unmodified TimetableConflictChecker.
+ *
+ * Batch 4 / Timetable Permissions: saveLesson()/moveLesson() now
+ * abort_unless the acting user has 'manage timetable'. setUp()
+ * authenticates a user with that permission for every test in this
+ * class, so the pre-existing tests above keep testing what they always
+ * tested rather than failing on an unrelated 403 — see
+ * TimetableGridAuthorizationTest for the permission checks themselves.
  */
 class TimetableGridManualEditTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->actingAsTimetableManager();
+    }
+
+    protected function actingAsTimetableManager(): User
+    {
+        $user = User::factory()->create();
+        Permission::firstOrCreate(['name' => 'manage timetable']);
+        $user->givePermissionTo('manage timetable');
+        $this->actingAs($user);
+
+        return $user;
+    }
 
     protected function makeClass(): SchoolClass
     {

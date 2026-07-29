@@ -17,14 +17,14 @@ class CashTransferController extends Controller
             ->latest('transfer_date')
             ->paginate(20);
 
-        return view('cash.transfers.index', compact('transfers'));
+        return view('dashboard.cash.transfer.index', compact('transfers'));
     }
 
     public function create()
     {
         $accounts = CashAccount::orderBy('type')->orderBy('name')->get();
 
-        return view('cash.transfers.create', compact('accounts'));
+        return view('dashboard.cash.transfer.create', compact('accounts'));
     }
 
     public function store(Request $request)
@@ -53,7 +53,7 @@ class CashTransferController extends Controller
                 'from_account_id' => $from->id,
                 'to_account_id' => $to->id,
                 'amount' => $data['amount'],
-                'notes' => $data['purpose'] . ($data['notes'] ? ' - ' . $data['notes'] : ''),
+                'notes' => $data['purpose'] . (($data['notes'] ?? null) ? ' - ' . $data['notes'] : ''),
                 'transfer_date' => $data['transfer_date'] ?? now(),
                 'created_by' => auth()->id(),
             ]);

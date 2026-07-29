@@ -29,4 +29,9 @@ class CashTransfer extends Model
         return $this->belongsTo(CashAccount::class, 'to_account_id');
     }
 
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
 }

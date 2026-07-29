@@ -162,7 +162,7 @@ class TimetableGrid extends Page
         );
 
         Notification::make()
-            ->title('Lesson Saved')
+            ->title(__('timetable.saved_success'))
             ->success()
             ->send();
     }
@@ -367,7 +367,7 @@ class TimetableGrid extends Page
         }
 
         Notification::make()
-            ->title('Smart Timetable Generated')
+            ->title(__('timetable.generated_success'))
             ->success()
             ->send();
     }

@@ -15,6 +15,7 @@ use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use App\Models\User;
+use Filament\Notifications\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -156,6 +157,11 @@ class TimetableGridManualEditTest extends TestCase
         $grid->saveLesson($day->id, $period->id);
 
         $this->assertSame(1, Timetable::where('class_id', $class->id)->count());
+
+        // Batch 12 / Localization: saveLesson()'s success Notification
+        // title was hardcoded English ("Lesson Saved") — now reuses the
+        // existing timetable.saved_success key.
+        Notification::assertNotified(__('timetable.saved_success'));
     }
 
     public function test_move_lesson_rejects_a_teacher_conflict_at_the_target_slot(): void

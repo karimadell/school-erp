@@ -16,6 +16,7 @@ use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use App\Models\TimetableSetting;
 use App\Models\User;
+use Filament\Notifications\Notification;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -137,6 +138,11 @@ class TimetableGridGenerateTest extends TestCase
         $grid->generateTimetable();
 
         $this->assertSame(5, Timetable::where('class_id', $class->id)->where('subject_id', $subject->id)->count());
+
+        // Batch 12 / Localization: generateTimetable()'s success
+        // Notification title was hardcoded English ("Smart Timetable
+        // Generated") — now uses the new timetable.generated_success key.
+        Notification::assertNotified(__('timetable.generated_success'));
     }
 
     public function test_curriculum_lookup_is_scoped_to_the_classs_grade(): void

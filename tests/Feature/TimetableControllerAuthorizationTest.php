@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Models\AcademicYear;
+use App\Models\Curriculum;
 use App\Models\Day;
 use App\Models\Grade;
 use App\Models\Period;
@@ -9,6 +11,7 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Subject;
 use App\Models\Teacher;
+use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -82,6 +85,31 @@ class TimetableControllerAuthorizationTest extends TestCase
         }
 
         return $user;
+    }
+
+    /**
+     * Batch 10: store/update/move now go through
+     * CurriculumAwareTimetableConflictChecker, so a fixture whose mutation
+     * is expected to actually succeed needs an active AcademicYear, a
+     * Curriculum row and a TeacherAssignment for the (class, subject,
+     * teacher) it exercises, or an earlier rule would reject it before
+     * the authorization-focused assertion below is ever reached.
+     */
+    protected function makeEligible(SchoolClass $class, Subject $subject, Teacher $teacher): void
+    {
+        $year = AcademicYear::create([
+            'name' => 'Year ' . uniqid(), 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $class->grade_id, 'subject_id' => $subject->id,
+            'weekly_hours' => 10, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+
+        TeacherAssignment::create([
+            'teacher_id' => $teacher->id, 'class_id' => $class->id,
+            'subject_id' => $subject->id, 'academic_year_id' => $year->id,
+        ]);
     }
 
     public function test_guest_is_redirected_to_login_on_a_read_and_a_mutating_route(): void
@@ -172,6 +200,7 @@ class TimetableControllerAuthorizationTest extends TestCase
         $day = $this->makeDay();
         $period = $this->makePeriod();
         $teacher = $this->makeTeacher();
+        $this->makeEligible($class, $subject, $teacher);
 
         $storeResponse = $this->actingAs($user)->post(route('dashboard.timetable.store'), [
             'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $period->id,

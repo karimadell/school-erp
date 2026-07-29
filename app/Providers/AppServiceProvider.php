@@ -64,9 +64,10 @@ class AppServiceProvider extends ServiceProvider
         });
 
         // Batch 1 / Curriculum Enforcement + Batch 2 / TeacherAssignment
-        // Enforcement + Batch 3 / Working Days Enforcement: only the
-        // canonical UI (TimetableGrid) resolves this — TimetableController
-        // (#1, deprecated) keeps resolving the unmodified
+        // Enforcement + Batch 3 / Working Days Enforcement: the canonical
+        // UI (TimetableGrid) resolves this, and, as of Batch 10, so does
+        // TimetableController (#1, deprecated) — every timetable mutation
+        // path now goes through the same rule set, not just the base
         // TimetableConflictChecker binding above. WorkingDayRule runs
         // first: a non-working day is an invalid target regardless of
         // subject/teacher/conflict validity, so it must fail before

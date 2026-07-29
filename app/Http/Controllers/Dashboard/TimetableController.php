@@ -9,7 +9,7 @@ use App\Models\Day;
 use App\Models\Period;
 use App\Models\Subject;
 use App\Models\Teacher;
-use App\Services\TimetableConflictChecker;
+use App\Services\CurriculumAwareTimetableConflictChecker;
 use App\Support\TimetableSlot;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -23,7 +23,7 @@ use Illuminate\Http\Request;
  */
 class TimetableController extends Controller
 {
-    public function __construct(private readonly TimetableConflictChecker $conflictChecker)
+    public function __construct(private readonly CurriculumAwareTimetableConflictChecker $conflictChecker)
     {
     }
 
@@ -243,7 +243,9 @@ class TimetableController extends Controller
     /*
     |--------------------------------------------------------------------------
     | Orchestration only — conflict business logic lives in
-    | App\Services\TimetableConflictChecker and its rules.
+    | App\Services\CurriculumAwareTimetableConflictChecker and its rules
+    | (Batch 10: same checker/rule set the canonical TimetableGrid uses —
+    | see the binding in AppServiceProvider).
     |--------------------------------------------------------------------------
     */
     private function slotFromData(array $data, array $ignoreIds = []): TimetableSlot

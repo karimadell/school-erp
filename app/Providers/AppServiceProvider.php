@@ -16,6 +16,7 @@ use App\Support\DuplicateLessonConflictRule;
 use App\Support\RoomConflictRule;
 use App\Support\TeacherAssignmentRule;
 use App\Support\TeacherConflictRule;
+use App\Support\WorkingDayRule;
 
 // Models
 use App\Models\User;
@@ -63,15 +64,16 @@ class AppServiceProvider extends ServiceProvider
         });
 
         // Batch 1 / Curriculum Enforcement + Batch 2 / TeacherAssignment
-        // Enforcement: only the canonical UI (TimetableGrid) resolves
-        // this — TimetableController (#1, deprecated) keeps resolving
-        // the unmodified TimetableConflictChecker binding above.
-        // Curriculum and TeacherAssignment rules run first: "can this
-        // subject even be scheduled here" and "is this teacher even
-        // authorized for it" are both more fundamental than a scheduling
-        // collision between two otherwise-valid rows.
+        // Enforcement + Batch 3 / Working Days Enforcement: only the
+        // canonical UI (TimetableGrid) resolves this — TimetableController
+        // (#1, deprecated) keeps resolving the unmodified
+        // TimetableConflictChecker binding above. WorkingDayRule runs
+        // first: a non-working day is an invalid target regardless of
+        // subject/teacher/conflict validity, so it must fail before
+        // Curriculum, TeacherAssignment, or any conflict check ever runs.
         $this->app->bind(CurriculumAwareTimetableConflictChecker::class, function () {
             return new CurriculumAwareTimetableConflictChecker([
+                new WorkingDayRule(),
                 new CurriculumSubjectRule(),
                 new CurriculumWeeklyHoursRule(),
                 new TeacherAssignmentRule(),

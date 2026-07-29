@@ -64,6 +64,27 @@ class TimetableGrid extends Page
             ->get();
     }
 
+    /**
+     * Batch 2 / TeacherAssignment Enforcement (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md):
+     * only teachers actually assigned (TeacherAssignment: teacher x this
+     * class x the given subject x active year) are ever offered in the
+     * manual-entry teacher dropdown — replaces the previous
+     * teacher_subject-qualification-only source. TeacherAssignmentRule
+     * (via CurriculumAwareTimetableConflictChecker) is the backstop for
+     * any write that doesn't go through this dropdown.
+     */
+    public function assignedTeachersFor($subjectId)
+    {
+        if (!$subjectId) {
+            return collect();
+        }
+
+        return Teacher::whereHas('currentAssignments', function ($q) use ($subjectId) {
+            $q->where('class_id', $this->classId)
+              ->where('subject_id', $subjectId);
+        })->get();
+    }
+
     public function getLesson($dayId, $periodId)
     {
         return Timetable::with(['subject','teacher'])

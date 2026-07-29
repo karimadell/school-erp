@@ -14,6 +14,7 @@ use App\Support\CurriculumSubjectRule;
 use App\Support\CurriculumWeeklyHoursRule;
 use App\Support\DuplicateLessonConflictRule;
 use App\Support\RoomConflictRule;
+use App\Support\TeacherAssignmentRule;
 use App\Support\TeacherConflictRule;
 
 // Models
@@ -61,16 +62,19 @@ class AppServiceProvider extends ServiceProvider
             ]);
         });
 
-        // Batch 1 / Curriculum Enforcement: only the canonical UI
-        // (TimetableGrid) resolves this — TimetableController (#1,
-        // deprecated) keeps resolving the unmodified TimetableConflictChecker
-        // binding above. Curriculum rules run first: a subject that isn't
-        // even schedulable at all is a more fundamental problem than a
-        // scheduling collision.
+        // Batch 1 / Curriculum Enforcement + Batch 2 / TeacherAssignment
+        // Enforcement: only the canonical UI (TimetableGrid) resolves
+        // this — TimetableController (#1, deprecated) keeps resolving
+        // the unmodified TimetableConflictChecker binding above.
+        // Curriculum and TeacherAssignment rules run first: "can this
+        // subject even be scheduled here" and "is this teacher even
+        // authorized for it" are both more fundamental than a scheduling
+        // collision between two otherwise-valid rows.
         $this->app->bind(CurriculumAwareTimetableConflictChecker::class, function () {
             return new CurriculumAwareTimetableConflictChecker([
                 new CurriculumSubjectRule(),
                 new CurriculumWeeklyHoursRule(),
+                new TeacherAssignmentRule(),
                 new DuplicateLessonConflictRule(),
                 new TeacherConflictRule(),
                 new ClassConflictRule(),

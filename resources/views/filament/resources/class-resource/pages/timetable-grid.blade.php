@@ -102,7 +102,7 @@ class="border rounded p-1 mt-1 w-full"
 
 <option value="">Teacher</option>
 
-@foreach($subjects->find($selectedSubject[$day->id][$period->id] ?? null)?->teachers ?? [] as $teacher)
+@foreach($this->assignedTeachersFor($selectedSubject[$day->id][$period->id] ?? null) as $teacher)
 
 <option value="{{$teacher->id}}">
 

@@ -12,6 +12,7 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Subject;
 use App\Models\Teacher;
+use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -19,10 +20,14 @@ use Tests\TestCase;
 /**
  * TimetableGrid::saveLesson()/moveLesson() go through
  * App\Services\CurriculumAwareTimetableConflictChecker — the base
- * conflict rules (Batch: conflict-service extraction) plus, as of
- * Batch 1 / Curriculum Enforcement, Curriculum subject-membership and
- * weekly-hours rules. TimetableController (#1, deprecated) is
- * unaffected — it still resolves the unmodified TimetableConflictChecker.
+ * conflict rules (Batch: conflict-service extraction), Curriculum
+ * subject-membership/weekly-hours rules (Batch 1), and, as of Batch 2 /
+ * TeacherAssignment Enforcement, the TeacherAssignmentRule. Every
+ * fixture below that expects saveLesson()/moveLesson() to actually
+ * succeed (or to be rejected by a *specific* later rule) now needs a
+ * matching TeacherAssignment row, or TeacherAssignmentRule would reject
+ * it first for the wrong reason. TimetableController (#1, deprecated)
+ * is unaffected — it still resolves the unmodified TimetableConflictChecker.
  */
 class TimetableGridManualEditTest extends TestCase
 {
@@ -61,6 +66,14 @@ class TimetableGridManualEditTest extends TestCase
         ]);
     }
 
+    protected function makeAssignment(AcademicYear $year, SchoolClass $class, Subject $subject, Teacher $teacher): TeacherAssignment
+    {
+        return TeacherAssignment::create([
+            'teacher_id' => $teacher->id, 'class_id' => $class->id,
+            'subject_id' => $subject->id, 'academic_year_id' => $year->id,
+        ]);
+    }
+
     protected function makeGrid(SchoolClass $class): TimetableGrid
     {
         $grid = new TimetableGrid();
@@ -84,6 +97,7 @@ class TimetableGridManualEditTest extends TestCase
 
         $class = $this->makeClass();
         $this->makeCurriculum($year, $class, $subject);
+        $this->makeAssignment($year, $class, $subject, $teacher);
         $grid = $this->makeGrid($class);
         $grid->selectedSubject = [$day->id => [$period->id => $subject->id]];
         $grid->selectedTeacher = [$day->id => [$period->id => $teacher->id]];
@@ -102,6 +116,7 @@ class TimetableGridManualEditTest extends TestCase
         $teacher = $this->makeTeacher();
         $subject = $this->makeSubject();
         $this->makeCurriculum($year, $class, $subject);
+        $this->makeAssignment($year, $class, $subject, $teacher);
 
         $grid = $this->makeGrid($class);
         $grid->selectedSubject = [$day->id => [$period->id => $subject->id]];
@@ -122,6 +137,7 @@ class TimetableGridManualEditTest extends TestCase
         $teacher = $this->makeTeacher();
         $subject = $this->makeSubject();
         $this->makeCurriculum($year, $class, $subject);
+        $this->makeAssignment($year, $class, $subject, $teacher);
 
         $moving = Timetable::create([
             'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $sourcePeriod->id,
@@ -157,6 +173,8 @@ class TimetableGridManualEditTest extends TestCase
         $targetSubject = $this->makeSubject();
         $this->makeCurriculum($year, $class, $subject);
         $this->makeCurriculum($year, $class, $targetSubject);
+        $this->makeAssignment($year, $class, $subject, $teacher);
+        $this->makeAssignment($year, $class, $targetSubject, $teacher);
 
         $moving = Timetable::create([
             'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $sourcePeriod->id,
@@ -256,6 +274,7 @@ class TimetableGridManualEditTest extends TestCase
         $teacher = $this->makeTeacher();
         $subject = $this->makeSubject();
         $this->makeCurriculum($year, $class, $subject, weeklyHours: 2);
+        $this->makeAssignment($year, $class, $subject, $teacher);
 
         $day = Day::create(['name' => 'd', 'code' => 'd1', 'order' => 0]);
         $periodOne = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
@@ -305,6 +324,7 @@ class TimetableGridManualEditTest extends TestCase
         $teacher = $this->makeTeacher();
         $subject = $this->makeSubject();
         $this->makeCurriculum($year, $class, $subject, weeklyHours: 1);
+        $this->makeAssignment($year, $class, $subject, $teacher);
 
         $day = Day::create(['name' => 'd', 'code' => 'd1', 'order' => 0]);
         $sourcePeriod = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
@@ -320,5 +340,135 @@ class TimetableGridManualEditTest extends TestCase
         $grid->moveLesson($day->id, $targetPeriod->id);
 
         $this->assertSame($targetPeriod->id, $moving->fresh()->period_id);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Batch 2 / TeacherAssignment Enforcement
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_assigned_teachers_for_only_returns_teachers_with_a_matching_assignment(): void
+    {
+        $year = $this->makeYear();
+        $class = $this->makeClass();
+        $subject = $this->makeSubject();
+        $assigned = $this->makeTeacher();
+        $unassigned = $this->makeTeacher();
+        $unassigned->subjects()->attach($subject->id); // teacher_subject only.
+        $this->makeCurriculum($year, $class, $subject);
+        $this->makeAssignment($year, $class, $subject, $assigned);
+
+        $grid = $this->makeGrid($class);
+        $teacherIds = $grid->assignedTeachersFor($subject->id)->pluck('id')->all();
+
+        $this->assertContains($assigned->id, $teacherIds);
+        $this->assertNotContains($unassigned->id, $teacherIds);
+    }
+
+    public function test_save_lesson_is_rejected_when_the_teacher_has_no_assignment(): void
+    {
+        $year = $this->makeYear();
+        $day = Day::create(['name' => 'd', 'code' => 'd1', 'order' => 0]);
+        $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+        $class = $this->makeClass();
+        $teacher = $this->makeTeacher();
+        $subject = $this->makeSubject();
+        $this->makeCurriculum($year, $class, $subject);
+        // Deliberately no TeacherAssignment for $teacher at all.
+
+        $grid = $this->makeGrid($class);
+        $grid->selectedSubject = [$day->id => [$period->id => $subject->id]];
+        $grid->selectedTeacher = [$day->id => [$period->id => $teacher->id]];
+
+        $grid->saveLesson($day->id, $period->id);
+
+        $this->assertSame(0, Timetable::where('class_id', $class->id)->count());
+    }
+
+    public function test_save_lesson_edit_is_rejected_when_the_replacement_teacher_has_no_assignment(): void
+    {
+        $year = $this->makeYear();
+        $day = Day::create(['name' => 'd', 'code' => 'd1', 'order' => 0]);
+        $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+        $class = $this->makeClass();
+        $subject = $this->makeSubject();
+        $this->makeCurriculum($year, $class, $subject);
+        $assignedTeacher = $this->makeTeacher();
+        $this->makeAssignment($year, $class, $subject, $assignedTeacher);
+        $unassignedTeacher = $this->makeTeacher();
+
+        $existing = Timetable::create([
+            'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $period->id,
+            'teacher_id' => $assignedTeacher->id, 'subject_id' => $subject->id,
+        ]);
+
+        $grid = $this->makeGrid($class);
+        $grid->selectedSubject = [$day->id => [$period->id => $subject->id]];
+        $grid->selectedTeacher = [$day->id => [$period->id => $unassignedTeacher->id]];
+
+        $grid->saveLesson($day->id, $period->id);
+
+        $this->assertSame($assignedTeacher->id, $existing->fresh()->teacher_id);
+    }
+
+    public function test_move_lesson_is_rejected_when_the_dragged_lessons_teacher_has_no_assignment(): void
+    {
+        // The lesson already exists with an unassigned teacher (e.g. the
+        // assignment was later revoked) — moving it must still be
+        // enforced, not treated as a structural pass-through.
+        $class = $this->makeClass();
+        $teacher = $this->makeTeacher();
+        $subject = $this->makeSubject();
+        $day = Day::create(['name' => 'd', 'code' => 'd1', 'order' => 0]);
+        $sourcePeriod = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+        $targetPeriod = Period::create(['number' => 2, 'start_time' => '08:50', 'end_time' => '09:35']);
+
+        $moving = Timetable::create([
+            'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $sourcePeriod->id,
+            'teacher_id' => $teacher->id, 'subject_id' => $subject->id,
+        ]);
+
+        $grid = $this->makeGrid($class);
+        $grid->dragLessonId = $moving->id;
+        $grid->moveLesson($day->id, $targetPeriod->id);
+
+        $this->assertSame($sourcePeriod->id, $moving->fresh()->period_id);
+    }
+
+    public function test_move_lesson_swap_does_not_falsely_reject_when_both_lessons_remain_assigned(): void
+    {
+        $year = $this->makeYear();
+        $class = $this->makeClass();
+        $day = Day::create(['name' => 'd', 'code' => 'd1', 'order' => 0]);
+        $sourcePeriod = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+        $targetPeriod = Period::create(['number' => 2, 'start_time' => '08:50', 'end_time' => '09:35']);
+        $teacherA = $this->makeTeacher();
+        $teacherB = $this->makeTeacher();
+        $subjectA = $this->makeSubject();
+        $subjectB = $this->makeSubject();
+        $this->makeCurriculum($year, $class, $subjectA);
+        $this->makeCurriculum($year, $class, $subjectB);
+        $this->makeAssignment($year, $class, $subjectA, $teacherA);
+        $this->makeAssignment($year, $class, $subjectB, $teacherB);
+
+        $moving = Timetable::create([
+            'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $sourcePeriod->id,
+            'teacher_id' => $teacherA->id, 'subject_id' => $subjectA->id,
+        ]);
+        Timetable::create([
+            'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $targetPeriod->id,
+            'teacher_id' => $teacherB->id, 'subject_id' => $subjectB->id,
+        ]);
+
+        $grid = $this->makeGrid($class);
+        $grid->dragLessonId = $moving->id;
+        $grid->moveLesson($day->id, $targetPeriod->id);
+
+        $this->assertSame($targetPeriod->id, $moving->fresh()->period_id);
+        $this->assertDatabaseHas('timetables', [
+            'class_id' => $class->id, 'day_id' => $day->id, 'period_id' => $sourcePeriod->id,
+            'teacher_id' => $teacherB->id, 'subject_id' => $subjectB->id,
+        ]);
     }
 }

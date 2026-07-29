@@ -6,11 +6,15 @@ use App\Filament\Resources\ClassResource;
 use Filament\Resources\Pages\Page;
 use Filament\Notifications\Notification;
 
+use App\Models\AcademicYear;
+use App\Models\Curriculum;
+use App\Models\Teacher;
 use App\Models\Timetable;
 use App\Models\Day;
 use App\Models\Period;
 use App\Models\Subject;
 use App\Models\SchoolClass;
+use App\Support\WorkingDays;
 
 class TimetableGrid extends Page
 {
@@ -164,18 +168,28 @@ class TimetableGrid extends Page
 
     public function generateTimetable(): void
     {
+        $activeYearId = AcademicYear::where('is_active', true)->value('id');
+
         $classes = SchoolClass::all();
+
+        $workingDays = app(WorkingDays::class)->workingDays($this->days);
 
         foreach($classes as $class){
 
             // حذف الجدول القديم
             Timetable::where('class_id',$class->id)->delete();
 
+            $curricula = Curriculum::with('subject')
+                ->where('academic_year_id', $activeYearId)
+                ->where('grade_id', $class->grade_id)
+                ->get();
+
             $pool = [];
 
-            foreach($this->subjects as $subject){
+            foreach($curricula as $curriculum){
 
-                $hours = (int)($subject->hours_per_week ?? 0);
+                $subject = $curriculum->subject;
+                $hours = (int)$curriculum->weekly_hours;
 
                 for($i=0;$i<$hours;$i++){
                     $pool[] = $subject;
@@ -186,7 +200,7 @@ class TimetableGrid extends Page
 
             $lastSubjectId = null;
 
-            foreach($this->days as $day){
+            foreach($workingDays as $day){
 
                 $usedToday = [];
 
@@ -206,7 +220,12 @@ class TimetableGrid extends Page
 
                     $subject = $availableSubjects->random();
 
-                    $teacher = $subject->teachers()
+                    $teacher = Teacher::whereHas('currentAssignments', function($q) use($class,$subject){
+
+                            $q->where('class_id',$class->id)
+                              ->where('subject_id',$subject->id);
+
+                        })
                         ->whereDoesntHave('timetables',function($q) use($day,$period){
 
                             $q->where('day_id',$day->id)

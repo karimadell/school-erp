@@ -4,6 +4,10 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 
+// Contracts / Services
+use App\Contracts\HolidayCalendar;
+use App\Services\DatabaseHolidayCalendar;
+
 // Models
 use App\Models\User;
 use App\Models\Student;
@@ -32,7 +36,9 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // D1 Phase 2: holiday infrastructure only — no call site consults
+        // this yet. See App\Contracts\HolidayCalendar's doc comment.
+        $this->app->bind(HolidayCalendar::class, DatabaseHolidayCalendar::class);
     }
 
     public function boot(): void

@@ -18,6 +18,7 @@ class DatabaseSeeder extends Seeder
             AcademicYearSeeder::class,
             QuarterSeeder::class,
             PeriodSeeder::class,
+            DaySeeder::class,
             EnrollmentModeSeeder::class,
 
         ]);

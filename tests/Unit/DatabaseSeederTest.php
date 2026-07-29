@@ -2,9 +2,11 @@
 
 namespace Tests\Unit;
 
+use App\Models\Day;
 use App\Models\Grade;
 use App\Models\Period;
 use App\Models\Stage;
+use Database\Seeders\DaySeeder;
 use Database\Seeders\GradeSeeder;
 use Database\Seeders\PeriodSeeder;
 use Database\Seeders\StageSeeder;
@@ -56,5 +58,31 @@ class DatabaseSeederTest extends TestCase
 
         $this->assertSame(7, Period::count());
         $this->assertTrue(Period::where('number', 1)->exists());
+    }
+
+    /**
+     * D1 Phase 2 (docs/IMPLEMENTATION_READINESS_ROADMAP.md, row D1):
+     * `days` had no seeder at all, leaving TimetableGrid's day columns
+     * empty on a fresh install even after `order`/`code` were added.
+     */
+    public function test_day_seeder_runs_without_error(): void
+    {
+        (new DaySeeder())->run();
+
+        $this->assertSame(7, Day::count());
+
+        $sunday = Day::where('code', 'sun')->firstOrFail();
+        $saturday = Day::where('code', 'sat')->firstOrFail();
+
+        $this->assertSame(0, $sunday->order);
+        $this->assertSame(6, $saturday->order);
+    }
+
+    public function test_day_seeder_is_idempotent(): void
+    {
+        (new DaySeeder())->run();
+        (new DaySeeder())->run();
+
+        $this->assertSame(7, Day::count());
     }
 }

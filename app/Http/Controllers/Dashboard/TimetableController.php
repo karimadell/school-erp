@@ -14,6 +14,13 @@ use App\Support\TimetableSlot;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 
+/**
+ * Deprecated (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md): the canonical
+ * timetable UI is App\Filament\Resources\ClassResource\Pages\TimetableGrid.
+ * These routes/views remain registered and functional temporarily for
+ * backwards compatibility with any existing bookmarks/links. Full removal
+ * is deferred to a later dedicated batch.
+ */
 class TimetableController extends Controller
 {
     public function __construct(private readonly TimetableConflictChecker $conflictChecker)

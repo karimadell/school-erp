@@ -58,9 +58,10 @@ class CashTransferController extends Controller
                 'created_by' => auth()->id(),
             ]);
 
-            $from->decrement('balance', $data['amount']);
-            $to->increment('balance', $data['amount']);
-
+            // Balance is adjusted exactly once per side, by CashTransaction's
+            // own created-event hook (see CashTransaction::booted()) — do
+            // not also mutate $from/$to->balance here, or the transfer is
+            // posted twice on both accounts.
             CashTransaction::create([
                 'cash_account_id' => $from->id,
                 'amount' => $data['amount'],

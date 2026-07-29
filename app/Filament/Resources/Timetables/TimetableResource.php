@@ -10,6 +10,14 @@ use Filament\Tables\Table;
 use Filament\Resources\Resource;
 use App\Filament\Resources\Timetables\Pages;
 
+/**
+ * Deprecated (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md): the canonical
+ * timetable UI is App\Filament\Resources\ClassResource\Pages\TimetableGrid,
+ * reached via the row action on ClassResource's list. This resource
+ * remains route-accessible temporarily for backwards compatibility; it is
+ * only hidden from navigation (Batch 6). Full removal is deferred to a
+ * later dedicated batch.
+ */
 class TimetableResource extends Resource
 {
     protected static ?string $model = Timetable::class;
@@ -21,6 +29,11 @@ class TimetableResource extends Resource
     protected static ?string $modelLabel = 'Урок';
 
     protected static ?string $pluralModelLabel = 'Расписание';
+
+    public static function shouldRegisterNavigation(): bool
+    {
+        return false;
+    }
 
     public static function form(Schema $schema): Schema
     {

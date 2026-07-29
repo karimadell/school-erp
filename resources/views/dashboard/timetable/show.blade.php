@@ -116,9 +116,6 @@
                                                 @endif
 
                                                 <div class="mt-2 d-flex justify-content-center gap-1">
-                                                    <a href="{{ route('dashboard.timetable.edit', $lesson->id) }}"
-                                                       class="btn btn-sm btn-warning">✏</a>
-
                                                     <form method="POST"
                                                           action="{{ route('dashboard.timetable.destroy', $lesson->id) }}"
                                                           onsubmit="return confirm('{{ __('timetable.confirm_delete') }}')">

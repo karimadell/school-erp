@@ -177,9 +177,6 @@ Route::middleware(['auth'])
         Route::post('timetable', [TimetableController::class, 'store'])
             ->name('timetable.store');
 
-        Route::get('timetable/{timetable}/edit', [TimetableController::class, 'edit'])
-            ->name('timetable.edit');
-
         Route::put('timetable/{timetable}', [TimetableController::class, 'update'])
             ->name('timetable.update');
 

@@ -14,7 +14,8 @@ use App\Models\Day;
 use App\Models\Period;
 use App\Models\Subject;
 use App\Models\SchoolClass;
-use App\Services\TimetableConflictChecker;
+use App\Services\CurriculumAwareTimetableConflictChecker;
+use App\Support\CurriculumContext;
 use App\Support\TimetableSlot;
 use App\Support\WorkingDays;
 
@@ -41,8 +42,25 @@ class TimetableGrid extends Page
         $this->days = Day::orderBy('order')->get();
         $this->periods = Period::orderBy('order')->get();
 
-        $this->subjects = Subject::with('teachers')
+        $this->subjects = $this->curriculumSubjectsForClass();
+    }
+
+    /**
+     * Batch 1 / Curriculum Enforcement (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md):
+     * only subjects in the active year's Curriculum for this class's
+     * grade are ever offered in the manual-entry subject dropdown — an
+     * invalid choice is never shown, not accepted and rejected after
+     * the fact. CurriculumSubjectRule (used by saveLesson()/moveLesson()
+     * via CurriculumAwareTimetableConflictChecker) is the backstop for
+     * any write that doesn't go through this dropdown.
+     */
+    public function curriculumSubjectsForClass()
+    {
+        $subjectIds = CurriculumContext::forClass($this->classId)?->subjectIds() ?? collect();
+
+        return Subject::with('teachers')
             ->where('is_active', true)
+            ->whereIn('id', $subjectIds)
             ->get();
     }
 
@@ -81,7 +99,7 @@ class TimetableGrid extends Page
             ignoreIds: $existingId ? [$existingId] : [],
         );
 
-        $result = app(TimetableConflictChecker::class)->check($slot);
+        $result = app(CurriculumAwareTimetableConflictChecker::class)->check($slot);
 
         if($result->hasConflict()){
 
@@ -157,7 +175,7 @@ class TimetableGrid extends Page
             ignoreIds: $ignoreIds,
         );
 
-        $result = app(TimetableConflictChecker::class)->check($slot);
+        $result = app(CurriculumAwareTimetableConflictChecker::class)->check($slot);
 
         if($result->hasConflict()){
 

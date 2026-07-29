@@ -6,9 +6,12 @@ use Illuminate\Support\ServiceProvider;
 
 // Contracts / Services
 use App\Contracts\HolidayCalendar;
+use App\Services\CurriculumAwareTimetableConflictChecker;
 use App\Services\DatabaseHolidayCalendar;
 use App\Services\TimetableConflictChecker;
 use App\Support\ClassConflictRule;
+use App\Support\CurriculumSubjectRule;
+use App\Support\CurriculumWeeklyHoursRule;
 use App\Support\DuplicateLessonConflictRule;
 use App\Support\RoomConflictRule;
 use App\Support\TeacherConflictRule;
@@ -51,6 +54,23 @@ class AppServiceProvider extends ServiceProvider
         // TeacherConflictRule (see TimetableConflictChecker's doc comment).
         $this->app->bind(TimetableConflictChecker::class, function () {
             return new TimetableConflictChecker([
+                new DuplicateLessonConflictRule(),
+                new TeacherConflictRule(),
+                new ClassConflictRule(),
+                new RoomConflictRule(),
+            ]);
+        });
+
+        // Batch 1 / Curriculum Enforcement: only the canonical UI
+        // (TimetableGrid) resolves this — TimetableController (#1,
+        // deprecated) keeps resolving the unmodified TimetableConflictChecker
+        // binding above. Curriculum rules run first: a subject that isn't
+        // even schedulable at all is a more fundamental problem than a
+        // scheduling collision.
+        $this->app->bind(CurriculumAwareTimetableConflictChecker::class, function () {
+            return new CurriculumAwareTimetableConflictChecker([
+                new CurriculumSubjectRule(),
+                new CurriculumWeeklyHoursRule(),
                 new DuplicateLessonConflictRule(),
                 new TeacherConflictRule(),
                 new ClassConflictRule(),

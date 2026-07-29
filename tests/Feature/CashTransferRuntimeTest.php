@@ -124,4 +124,75 @@ class CashTransferRuntimeTest extends TestCase
         $transfer = CashTransfer::sole();
         $indexResponse->assertSee($transfer->receipt_number);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Finance Batch 3 / Transfer form <-> validation mismatch
+    |--------------------------------------------------------------------------
+    | store()'s validation has always required 'purpose', but the rendered
+    | create form never had a 'purpose' input at all — so a real user could
+    | never submit the actual page successfully. The translation key
+    | (cash.purpose) already existed; only the field itself was missing.
+    */
+
+    public function test_the_transfer_form_renders_the_purpose_field_with_its_russian_label(): void
+    {
+        $user = User::factory()->create();
+
+        app()->setLocale('ru');
+
+        $response = $this->actingAs($user)->get(route('dashboard.cash.transfer.form'));
+
+        $response->assertOk();
+        $response->assertSee('name="purpose"', false);
+        $response->assertSee(__('cash.purpose'));
+    }
+
+    public function test_a_browser_style_submission_using_only_the_fields_present_in_the_form_succeeds(): void
+    {
+        $user = User::factory()->create();
+        $from = $this->makeCashAccount(balance: 500);
+        $to = $this->makeCashAccount(balance: 0);
+
+        // Exactly the fields the rendered form actually provides:
+        // from_account_id, to_account_id, amount, transfer_date, purpose,
+        // notes — nothing else.
+        $response = $this->actingAs($user)->post(route('dashboard.cash.transfer.store'), [
+            'from_account_id' => $from->id,
+            'to_account_id' => $to->id,
+            'amount' => 250,
+            'transfer_date' => now()->toDateString(),
+            'purpose' => 'Office supplies',
+            'notes' => 'Optional detail',
+        ]);
+
+        $response->assertRedirect(route('dashboard.cash.transfers'));
+        $response->assertSessionHasNoErrors();
+
+        $this->assertSame(1, CashTransfer::count());
+        $this->assertSame('250.00', $from->fresh()->balance);
+        $this->assertSame('250.00', $to->fresh()->balance);
+    }
+
+    public function test_omitting_purpose_redirects_back_with_a_validation_error_and_creates_nothing(): void
+    {
+        $user = User::factory()->create();
+        $from = $this->makeCashAccount(balance: 500);
+        $to = $this->makeCashAccount(balance: 0);
+
+        // Deliberately no 'purpose' key at all — proves the still-required
+        // rule is enforced normally (a validation redirect), not a runtime
+        // exception, and that nothing is written when it fails.
+        $response = $this->actingAs($user)->post(route('dashboard.cash.transfer.store'), [
+            'from_account_id' => $from->id,
+            'to_account_id' => $to->id,
+            'amount' => 100,
+        ]);
+
+        $response->assertSessionHasErrors('purpose');
+
+        $this->assertSame(0, CashTransfer::count());
+        $this->assertSame('500.00', $from->fresh()->balance);
+        $this->assertSame('0.00', $to->fresh()->balance);
+    }
 }

@@ -29,8 +29,7 @@ use Tests\TestCase;
  * fixture below that expects saveLesson()/moveLesson() to actually
  * succeed (or to be rejected by a *specific* later rule) now needs a
  * matching TeacherAssignment row, or TeacherAssignmentRule would reject
- * it first for the wrong reason. TimetableController (#1, deprecated)
- * is unaffected — it still resolves the unmodified TimetableConflictChecker.
+ * it first for the wrong reason.
  *
  * Batch 4 / Timetable Permissions: saveLesson()/moveLesson() now
  * abort_unless the acting user has 'manage timetable'. setUp()

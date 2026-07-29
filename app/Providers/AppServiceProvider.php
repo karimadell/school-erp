@@ -8,7 +8,6 @@ use Illuminate\Support\ServiceProvider;
 use App\Contracts\HolidayCalendar;
 use App\Services\CurriculumAwareTimetableConflictChecker;
 use App\Services\DatabaseHolidayCalendar;
-use App\Services\TimetableConflictChecker;
 use App\Support\ClassConflictRule;
 use App\Support\CurriculumSubjectRule;
 use App\Support\CurriculumWeeklyHoursRule;
@@ -52,26 +51,14 @@ class AppServiceProvider extends ServiceProvider
 
         // The one conflict engine — every timetable UI resolves this
         // instead of running its own conflict SQL. Order matters:
-        // DuplicateLessonConflictRule must run before ClassConflictRule/
-        // TeacherConflictRule (see TimetableConflictChecker's doc comment).
-        $this->app->bind(TimetableConflictChecker::class, function () {
-            return new TimetableConflictChecker([
-                new DuplicateLessonConflictRule(),
-                new TeacherConflictRule(),
-                new ClassConflictRule(),
-                new RoomConflictRule(),
-            ]);
-        });
-
-        // Batch 1 / Curriculum Enforcement + Batch 2 / TeacherAssignment
-        // Enforcement + Batch 3 / Working Days Enforcement: the canonical
-        // UI (TimetableGrid) resolves this, and, as of Batch 10, so does
-        // TimetableController (#1, deprecated) — every timetable mutation
-        // path now goes through the same rule set, not just the base
-        // TimetableConflictChecker binding above. WorkingDayRule runs
-        // first: a non-working day is an invalid target regardless of
-        // subject/teacher/conflict validity, so it must fail before
-        // Curriculum, TeacherAssignment, or any conflict check ever runs.
+        // WorkingDayRule runs first (a non-working day is an invalid
+        // target regardless of subject/teacher/conflict validity), then
+        // Curriculum/TeacherAssignment rules, then DuplicateLessonConflictRule
+        // before ClassConflictRule/TeacherConflictRule (see
+        // TimetableConflictChecker's doc comment). Batch 13: this is now
+        // the only conflict-checker binding — the base TimetableConflictChecker
+        // binding (used only by the since-removed legacy TimetableController)
+        // was removed; the class itself remains as this one's parent.
         $this->app->bind(CurriculumAwareTimetableConflictChecker::class, function () {
             return new CurriculumAwareTimetableConflictChecker([
                 new WorkingDayRule(),

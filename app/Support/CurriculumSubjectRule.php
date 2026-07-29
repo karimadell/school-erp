@@ -7,10 +7,10 @@ use App\Contracts\TimetableConflictRule;
 /**
  * Batch 1 / Curriculum Enforcement (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md):
  * the slot's subject must be part of the active year's Curriculum for the
- * class's grade. Used only by the canonical UI's conflict checker
- * (App\Services\CurriculumAwareTimetableConflictChecker) — never added to
- * the base TimetableConflictChecker, which TimetableController (#1,
- * deprecated) still resolves unmodified.
+ * class's grade. Used by App\Services\CurriculumAwareTimetableConflictChecker
+ * — never added to the base TimetableConflictChecker (Batch 13: that
+ * binding, and the legacy TimetableController that was its only caller,
+ * have both been removed).
  */
 class CurriculumSubjectRule implements TimetableConflictRule
 {

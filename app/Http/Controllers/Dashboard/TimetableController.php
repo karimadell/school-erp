@@ -29,6 +29,8 @@ class TimetableController extends Controller
 
     public function index()
     {
+        $this->authorizeView();
+
         $classes = SchoolClass::with('grade.stage')
             ->orderBy('grade_id')
             ->orderBy('name_ru')
@@ -39,6 +41,8 @@ class TimetableController extends Controller
 
     public function show(SchoolClass $class)
     {
+        $this->authorizeView();
+
         // The days table has no 'order' column (only id/name); order by id
         // to match how create()/pdf() already load days on this controller.
         $days = Day::orderBy('id')->get();
@@ -54,6 +58,8 @@ class TimetableController extends Controller
 
     public function create()
     {
+        $this->authorizeManage();
+
         return view('dashboard.timetable.create', [
             'classes' => SchoolClass::all(),
             'days' => Day::all(),
@@ -65,6 +71,8 @@ class TimetableController extends Controller
 
     public function teachersBySubject(Subject $subject)
 {
+    $this->authorizeManage();
+
     $teachers = $subject->teachers()
         ->where('is_active', true)
         ->orderBy('last_name')
@@ -90,6 +98,8 @@ class TimetableController extends Controller
 
     public function store(Request $request)
     {
+        $this->authorizeManage();
+
         $data = $request->validate([
             'class_id'   => 'required|exists:classes,id',
             'day_id'     => 'required|exists:days,id',
@@ -114,6 +124,8 @@ class TimetableController extends Controller
 
     public function update(Request $request, Timetable $timetable)
     {
+        $this->authorizeManage();
+
         $data = $request->validate([
             'class_id'   => 'required|exists:classes,id',
             'day_id'     => 'required|exists:days,id',
@@ -138,6 +150,8 @@ class TimetableController extends Controller
 
     public function destroy(Timetable $timetable)
     {
+        $this->authorizeManage();
+
         $classId = $timetable->class_id;
 
         $timetable->delete();
@@ -154,6 +168,8 @@ class TimetableController extends Controller
     */
     public function move(Request $request, Timetable $timetable)
     {
+        $this->authorizeManage();
+
         $data = $request->validate([
             'day_id'    => 'required|exists:days,id',
             'period_id' => 'required|exists:periods,id',
@@ -187,6 +203,8 @@ class TimetableController extends Controller
 
     public function pdf(SchoolClass $class)
     {
+        $this->authorizeView();
+
         $days = Day::all();
         $periods = Period::all();
 
@@ -200,6 +218,26 @@ class TimetableController extends Controller
         ))->setPaper('a4','landscape');
 
         return $pdf->download('timetable-'.$class->id.'.pdf');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Batch 9 / Authorization (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md §4):
+    | mirrors TimetableGrid's own abort_unless() gating exactly — read-only
+    | actions accept either permission, mutating actions require
+    | 'manage timetable' specifically. Spatie has no permission hierarchy,
+    | so hasAnyPermission() is what makes 'manage timetable' imply read
+    | access, not an assumption that mutation permission is a superset.
+    |--------------------------------------------------------------------------
+    */
+    private function authorizeView(): void
+    {
+        abort_unless(auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']), 403);
+    }
+
+    private function authorizeManage(): void
+    {
+        abort_unless(auth()->user()?->can('manage timetable'), 403);
     }
 
     /*

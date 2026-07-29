@@ -12,6 +12,7 @@ use App\Models\Teacher;
 use App\Models\Timetable;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 /**
@@ -21,10 +22,25 @@ use Tests\TestCase;
  * isolation (covered separately in TimetableConflictRulesTest /
  * TimetableConflictCheckerTest). No coverage existed for these routes
  * before this batch.
+ *
+ * Batch 9: store/update/move are now manage-gated
+ * (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md §4), so every test user here
+ * needs 'manage timetable' to keep proving conflict-checker wiring rather
+ * than incidentally proving a 403 — authorization itself is covered
+ * separately in TimetableControllerAuthorizationTest.
  */
 class TimetableControllerConflictTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function makeUser(): User
+    {
+        $user = User::factory()->create();
+        Permission::firstOrCreate(['name' => 'manage timetable']);
+        $user->givePermissionTo('manage timetable');
+
+        return $user;
+    }
 
     protected function makeClass(): SchoolClass
     {
@@ -56,7 +72,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_store_rejects_a_duplicate_lesson_before_the_broader_class_conflict(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
         $class = $this->makeClass();
         $day = $this->makeDay();
         $period = $this->makePeriod();
@@ -82,7 +98,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_store_reports_a_class_conflict_for_a_different_subject_in_an_occupied_slot(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
         $class = $this->makeClass();
         $day = $this->makeDay();
         $period = $this->makePeriod();
@@ -102,7 +118,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_store_reports_a_teacher_conflict_across_different_classes(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
         $day = $this->makeDay();
         $period = $this->makePeriod();
         $teacher = $this->makeTeacher();
@@ -122,7 +138,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_store_reports_a_room_conflict(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
         $day = $this->makeDay();
         $period = $this->makePeriod();
 
@@ -143,7 +159,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_store_succeeds_when_nothing_conflicts(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
 
         $response = $this->actingAs($user)->post(route('dashboard.timetable.store'), [
             'class_id' => $this->makeClass()->id, 'day_id' => $this->makeDay()->id, 'period_id' => $this->makePeriod()->id,
@@ -156,7 +172,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_update_excludes_the_record_being_edited_from_every_rule(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
         $class = $this->makeClass();
         $day = $this->makeDay();
         $period = $this->makePeriod();
@@ -180,7 +196,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_move_rejects_a_teacher_conflict_at_the_target_slot(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
         $day = $this->makeDay();
         $targetPeriod = $this->makePeriod();
         $sourcePeriod = Period::create(['number' => 2, 'start_time' => '08:50', 'end_time' => '09:35']);
@@ -205,7 +221,7 @@ class TimetableControllerConflictTest extends TestCase
 
     public function test_move_succeeds_when_nothing_conflicts(): void
     {
-        $user = User::factory()->create();
+        $user = $this->makeUser();
         $day = $this->makeDay();
         $sourcePeriod = $this->makePeriod();
         $targetPeriod = Period::create(['number' => 2, 'start_time' => '08:50', 'end_time' => '09:35']);

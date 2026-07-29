@@ -4,7 +4,7 @@
 wire:click="generateTimetable"
 class="bg-green-600 text-white px-4 py-2 rounded mb-4"
 >
-Generate Smart Timetable
+{{ __('timetable.generate_smart_timetable') }}
 </button>
 
 <table class="w-full border text-center">
@@ -80,7 +80,7 @@ wire:model="selectedSubject.{{ $day->id }}.{{ $period->id }}"
 class="border rounded p-1 mt-2 w-full"
 >
 
-<option value="">Subject</option>
+<option value="">{{ __('timetable.subject') }}</option>
 
 @foreach($subjects as $subject)
 
@@ -100,7 +100,7 @@ wire:model="selectedTeacher.{{ $day->id }}.{{ $period->id }}"
 class="border rounded p-1 mt-1 w-full"
 >
 
-<option value="">Teacher</option>
+<option value="">{{ __('timetable.teacher') }}</option>
 
 @foreach($this->assignedTeachersFor($selectedSubject[$day->id][$period->id] ?? null) as $teacher)
 
@@ -119,7 +119,7 @@ class="border rounded p-1 mt-1 w-full"
 class="bg-blue-500 text-white px-2 py-1 rounded mt-1 w-full"
 >
 
-Save
+{{ __('timetable.save') }}
 
 </button>
 

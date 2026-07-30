@@ -11,6 +11,7 @@ use App\Models\TeacherSalary;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Tables;
 
@@ -89,7 +90,7 @@ class TeacherSalaryResource extends Resource
 
             ])
             ->actions([
-                Tables\Actions\EditAction::make(),
+                EditAction::make(),
             ]);
     }
 

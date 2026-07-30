@@ -6,6 +6,7 @@ use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Pages\Dashboard;
 use Filament\Support\Colors\Color;
+use Filament\Enums\ThemeMode;
 
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -31,6 +32,13 @@ class TeacherPanelProvider extends PanelProvider
             ->colors([
                 'primary' => Color::Indigo,
             ])
+
+            // Filament Visual Unification — Batch 1: default to light mode
+            // instead of following the OS/browser color-scheme preference,
+            // matching the dashboard shell (which has no dark mode at all).
+            // The dark-mode toggle itself is untouched — users can still
+            // switch to dark manually.
+            ->defaultThemeMode(ThemeMode::Light)
 
             ->discoverPages(
                 in: app_path('Filament/Teacher/Pages'),

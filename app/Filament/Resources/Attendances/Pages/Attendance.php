@@ -12,7 +12,7 @@ class Attendance extends Page
 
     protected static ?string $title = 'Посещаемость';
 
-    protected static string|\UnitEnum|null $navigationGroup = 'Академия';
+    protected static string|\UnitEnum|null $navigationGroup = 'Учебный процесс';
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-calendar-days';
 

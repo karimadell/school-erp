@@ -16,7 +16,7 @@ class TeacherResource extends Resource
 
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-user-group';
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Академия';
+    protected static \UnitEnum|string|null $navigationGroup = 'Учителя и сотрудники';
 
     protected static ?string $modelLabel = 'Учитель';
 

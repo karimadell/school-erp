@@ -15,7 +15,7 @@ class ReportCard extends Page
 
     protected static ?string $navigationLabel = 'Табель';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Академия';
+    protected static string|UnitEnum|null $navigationGroup = 'Учебный процесс';
 
     protected string $view = 'filament.pages.report-card';
 

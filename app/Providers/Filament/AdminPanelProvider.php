@@ -38,8 +38,10 @@ class AdminPanelProvider extends PanelProvider
 
             ->login()
 
+            // Modern UI v3: same accent color as the classic dashboard shell
+            // (layouts/dashboard.blade.php's indigo-600 sidebar-active/accent).
             ->colors([
-                'primary' => Color::Amber,
+                'primary' => Color::Indigo,
             ])
 
             ->discoverResources(

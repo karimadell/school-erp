@@ -33,7 +33,7 @@ class AttendanceResource extends Resource
 
     protected static ?string $pluralModelLabel = null;
 
-    protected static string|UnitEnum|null $navigationGroup = 'Academic';
+    protected static string|UnitEnum|null $navigationGroup = 'Учебный процесс';
 
     public static function getNavigationLabel(): string
     {

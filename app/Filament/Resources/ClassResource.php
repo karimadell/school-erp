@@ -18,7 +18,7 @@ class ClassResource extends Resource
 
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-building-office';
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Академия';
+    protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
 
     protected static ?string $modelLabel = 'Класс';
 

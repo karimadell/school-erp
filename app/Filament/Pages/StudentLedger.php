@@ -14,7 +14,7 @@ class StudentLedger extends Page
 
     protected static ?string $navigationLabel = 'كشف حساب الطالب';
 
-    protected static string|UnitEnum|null $navigationGroup = 'المالية';
+    protected static string|UnitEnum|null $navigationGroup = 'Финансы';
 
     protected string $view = 'filament.pages.student-ledger';
 

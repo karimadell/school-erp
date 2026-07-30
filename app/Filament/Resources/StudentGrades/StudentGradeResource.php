@@ -32,7 +32,7 @@ class StudentGradeResource extends Resource
 
     protected static ?string $pluralModelLabel = 'Оценки';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Академия';
+    protected static string|UnitEnum|null $navigationGroup = 'Учебный процесс';
 
     public static function form(Schema $schema): Schema
     {

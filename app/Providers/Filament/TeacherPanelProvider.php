@@ -26,8 +26,10 @@ class TeacherPanelProvider extends PanelProvider
             ->path('teacher')
             ->login()
 
+            // Modern UI v3: same accent color as the classic dashboard shell
+            // and the Admin panel, for one consistent color system.
             ->colors([
-                'primary' => Color::Blue,
+                'primary' => Color::Indigo,
             ])
 
             ->discoverPages(

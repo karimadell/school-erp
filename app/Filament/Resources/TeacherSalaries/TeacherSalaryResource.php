@@ -24,7 +24,7 @@ class TeacherSalaryResource extends Resource
 
     protected static BackedEnum|string|null $navigationIcon = 'heroicon-o-banknotes';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Payroll';
+    protected static string|UnitEnum|null $navigationGroup = 'Учителя и сотрудники';
 
     protected static ?string $navigationLabel = 'Teacher Salaries';
 

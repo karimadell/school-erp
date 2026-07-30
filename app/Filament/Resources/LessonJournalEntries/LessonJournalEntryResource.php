@@ -26,7 +26,7 @@ class LessonJournalEntryResource extends Resource
 
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-book-open';
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Академия';
+    protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
 
     protected static ?string $modelLabel = 'Запись журнала';
 

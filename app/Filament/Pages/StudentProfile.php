@@ -10,7 +10,7 @@ class StudentProfile extends Page
 {
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-user';
 
-    protected static string|\UnitEnum|null $navigationGroup = 'Академия';
+    protected static string|\UnitEnum|null $navigationGroup = 'Ученики';
     protected static ?string $navigationLabel = 'Профиль студента';
 
 

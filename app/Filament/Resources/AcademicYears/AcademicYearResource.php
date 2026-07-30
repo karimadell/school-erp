@@ -16,7 +16,7 @@ class AcademicYearResource extends Resource
 {
     protected static ?string $model = AcademicYear::class;
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Академия';
+    protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
 
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-calendar';
 

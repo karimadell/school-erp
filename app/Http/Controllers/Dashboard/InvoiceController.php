@@ -409,8 +409,11 @@ class InvoiceController extends Controller
             $invoice->refreshPaymentStatus();
 
             $cashAccount = CashAccount::lockForUpdate()->findOrFail($data['cash_account_id']);
-            $cashAccount->decrement('balance', $refundAmount);
 
+            // Balance is adjusted exactly once, by CashTransaction's own
+            // created-event hook (see CashTransaction::booted()) — do not
+            // also mutate $cashAccount->balance here, or the refund is
+            // posted twice.
             CashTransaction::create([
                 'cash_account_id' => $cashAccount->id,
                 'amount' => $refundAmount,
@@ -441,8 +444,11 @@ class InvoiceController extends Controller
         string $description
     ): void {
         $cashAccount = CashAccount::lockForUpdate()->findOrFail($cashAccountId);
-        $cashAccount->increment('balance', $amount);
 
+        // Balance is adjusted exactly once, by CashTransaction's own
+        // created-event hook (see CashTransaction::booted()) — do not
+        // also mutate $cashAccount->balance here, or the payment is
+        // posted twice.
         CashTransaction::create([
             'cash_account_id' => $cashAccount->id,
             'amount' => $amount,

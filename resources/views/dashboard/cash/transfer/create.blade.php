@@ -88,6 +88,26 @@
                         >
                     </div>
 
+                    {{-- Purpose --}}
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">
+                            {{ __('cash.purpose') }}
+                        </label>
+
+                        <input
+                            type="text"
+                            name="purpose"
+                            maxlength="100"
+                            class="form-control @error('purpose') is-invalid @enderror"
+                            value="{{ old('purpose') }}"
+                            required
+                        >
+
+                        @error('purpose')
+                            <div class="invalid-feedback">{{ $message }}</div>
+                        @enderror
+                    </div>
+
                     {{-- Notes --}}
                     <div class="col-md-12 mb-3">
                         <label class="form-label">

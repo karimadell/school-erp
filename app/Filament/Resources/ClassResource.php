@@ -3,6 +3,7 @@
 namespace App\Filament\Resources;
 
 use App\Models\SchoolClass;
+use Filament\Actions\Action;
 use Filament\Forms;
 use Filament\Schemas\Schema;
 use Filament\Tables;
@@ -58,6 +59,22 @@ class ClassResource extends Resource
 
                 Tables\Columns\IconColumn::make('is_active')
                     ->boolean(),
+
+            ])
+            ->recordActions([
+
+                // Batch 5 / Timetable Navigation (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md):
+                // the only discoverable link to the canonical TimetableGrid
+                // page — it is a per-class sub-page and can never have its
+                // own top-level navigation item. Visibility mirrors
+                // TimetableGrid::canAccess()/mount() exactly, so this link
+                // is never shown to a user who would immediately be
+                // aborted for clicking it.
+                Action::make('timetable')
+                    ->label(__('timetable.view_schedule'))
+                    ->icon('heroicon-o-calendar')
+                    ->url(fn ($record) => static::getUrl('timetable', ['record' => $record]))
+                    ->visible(fn () => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ?? false),
 
             ]);
     }

@@ -14,7 +14,6 @@ use App\Http\Controllers\Dashboard\TeacherController;
 use App\Http\Controllers\Dashboard\StageController;
 use App\Http\Controllers\Dashboard\GradeController;
 use App\Http\Controllers\Dashboard\StudentGradeController;
-use App\Http\Controllers\Dashboard\TimetableController;
 use App\Http\Controllers\Dashboard\AttendanceController;
 use App\Http\Controllers\Dashboard\ExamController;
 use App\Http\Controllers\Dashboard\ReportCardController;
@@ -167,36 +166,6 @@ Route::middleware(['auth'])
             ->name('student-grades.report.excel');
 
         Route::resource('student-grades', StudentGradeController::class);
-
-        Route::get('timetable', [TimetableController::class, 'index'])
-            ->name('timetable.index');
-
-        Route::get('timetable/create', [TimetableController::class, 'create'])
-            ->name('timetable.create');
-
-        Route::post('timetable', [TimetableController::class, 'store'])
-            ->name('timetable.store');
-
-        Route::get('timetable/{timetable}/edit', [TimetableController::class, 'edit'])
-            ->name('timetable.edit');
-
-        Route::put('timetable/{timetable}', [TimetableController::class, 'update'])
-            ->name('timetable.update');
-
-        Route::delete('timetable/{timetable}', [TimetableController::class, 'destroy'])
-            ->name('timetable.destroy');
-
-        Route::post('timetable/{timetable}/move', [TimetableController::class, 'move'])
-            ->name('timetable.move');
-
-        Route::get('timetable/subject/{subject}/teachers', [TimetableController::class, 'teachersBySubject'])
-            ->name('timetable.subject.teachers');
-
-        Route::get('timetable/class/{class}/pdf', [TimetableController::class, 'pdf'])
-            ->name('timetable.pdf');
-
-        Route::get('timetable/class/{class}', [TimetableController::class, 'show'])
-            ->name('timetable.show');
 
         Route::get('attendance', [AttendanceController::class, 'index'])
             ->name('attendance.index');

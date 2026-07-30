@@ -11,20 +11,29 @@ use Illuminate\Support\Facades\DB;
 
 class CashTransferController extends Controller
 {
+    public function __construct()
+    {
+        // Every action here reads or moves money between cash accounts —
+        // gated identically to CashAccountController's own write actions
+        // (permission:manage cash), since this module has no separate
+        // read-only cash permission to fall back to.
+        $this->middleware('permission:manage cash');
+    }
+
     public function index()
     {
         $transfers = CashTransfer::with(['fromAccount', 'toAccount', 'creator'])
             ->latest('transfer_date')
             ->paginate(20);
 
-        return view('cash.transfers.index', compact('transfers'));
+        return view('dashboard.cash.transfer.index', compact('transfers'));
     }
 
     public function create()
     {
         $accounts = CashAccount::orderBy('type')->orderBy('name')->get();
 
-        return view('cash.transfers.create', compact('accounts'));
+        return view('dashboard.cash.transfer.create', compact('accounts'));
     }
 
     public function store(Request $request)
@@ -53,14 +62,15 @@ class CashTransferController extends Controller
                 'from_account_id' => $from->id,
                 'to_account_id' => $to->id,
                 'amount' => $data['amount'],
-                'notes' => $data['purpose'] . ($data['notes'] ? ' - ' . $data['notes'] : ''),
+                'notes' => $data['purpose'] . (($data['notes'] ?? null) ? ' - ' . $data['notes'] : ''),
                 'transfer_date' => $data['transfer_date'] ?? now(),
                 'created_by' => auth()->id(),
             ]);
 
-            $from->decrement('balance', $data['amount']);
-            $to->increment('balance', $data['amount']);
-
+            // Balance is adjusted exactly once per side, by CashTransaction's
+            // own created-event hook (see CashTransaction::booted()) — do
+            // not also mutate $from/$to->balance here, or the transfer is
+            // posted twice on both accounts.
             CashTransaction::create([
                 'cash_account_id' => $from->id,
                 'amount' => $data['amount'],

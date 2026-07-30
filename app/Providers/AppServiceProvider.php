@@ -4,6 +4,19 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 
+// Contracts / Services
+use App\Contracts\HolidayCalendar;
+use App\Services\CurriculumAwareTimetableConflictChecker;
+use App\Services\DatabaseHolidayCalendar;
+use App\Support\ClassConflictRule;
+use App\Support\CurriculumSubjectRule;
+use App\Support\CurriculumWeeklyHoursRule;
+use App\Support\DuplicateLessonConflictRule;
+use App\Support\RoomConflictRule;
+use App\Support\TeacherAssignmentRule;
+use App\Support\TeacherConflictRule;
+use App\Support\WorkingDayRule;
+
 // Models
 use App\Models\User;
 use App\Models\Student;
@@ -32,7 +45,32 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // D1 Phase 2: holiday infrastructure only — no call site consults
+        // this yet. See App\Contracts\HolidayCalendar's doc comment.
+        $this->app->bind(HolidayCalendar::class, DatabaseHolidayCalendar::class);
+
+        // The one conflict engine — every timetable UI resolves this
+        // instead of running its own conflict SQL. Order matters:
+        // WorkingDayRule runs first (a non-working day is an invalid
+        // target regardless of subject/teacher/conflict validity), then
+        // Curriculum/TeacherAssignment rules, then DuplicateLessonConflictRule
+        // before ClassConflictRule/TeacherConflictRule (see
+        // TimetableConflictChecker's doc comment). Batch 13: this is now
+        // the only conflict-checker binding — the base TimetableConflictChecker
+        // binding (used only by the since-removed legacy TimetableController)
+        // was removed; the class itself remains as this one's parent.
+        $this->app->bind(CurriculumAwareTimetableConflictChecker::class, function () {
+            return new CurriculumAwareTimetableConflictChecker([
+                new WorkingDayRule(),
+                new CurriculumSubjectRule(),
+                new CurriculumWeeklyHoursRule(),
+                new TeacherAssignmentRule(),
+                new DuplicateLessonConflictRule(),
+                new TeacherConflictRule(),
+                new ClassConflictRule(),
+                new RoomConflictRule(),
+            ]);
+        });
     }
 
     public function boot(): void

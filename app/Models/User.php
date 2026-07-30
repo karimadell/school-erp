@@ -15,7 +15,9 @@ class User extends Authenticatable implements FilamentUser
 {
     use HasFactory;
     use Notifiable;
-    use HasRoles;
+    use HasRoles {
+        hasPermissionTo as protected spatieHasPermissionTo;
+    }
 
     protected $fillable = [
         'name',
@@ -54,6 +56,29 @@ class User extends Authenticatable implements FilamentUser
             'teacher' => $this->hasAnyRole(['admin', 'teacher']),
             default => false,
         };
+    }
+
+    /**
+     * Alpha testing: 'admin' is Super Admin — a true, automatic bypass of
+     * every permission, not just whatever the seeder currently lists. Used
+     * by the hasPermissionTo() override below and by Gate::before in
+     * AuthServiceProvider.
+     */
+    public function isSuperAdmin(): bool
+    {
+        return $this->hasRole('admin');
+    }
+
+    /**
+     * Overrides Spatie's HasPermissions::hasPermissionTo(). hasAnyPermission()/
+     * hasAllPermissions() both funnel through this via checkPermissionTo(), so
+     * this single override also covers direct hasAnyPermission() calls made
+     * outside Laravel's Gate (e.g. TimetableGrid's defense-in-depth checks),
+     * not just $user->can().
+     */
+    public function hasPermissionTo($permission, $guardName = null): bool
+    {
+        return $this->isSuperAdmin() || $this->spatieHasPermissionTo($permission, $guardName);
     }
 
     public function canViewCashReports(): bool

@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Controllers\Dashboard\DashboardController;
+use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\EnrollmentController;
 use App\Http\Controllers\Dashboard\InvoiceController;
@@ -120,6 +121,7 @@ Route::middleware(['auth'])
         Route::resource('grades', GradeController::class);
         Route::resource('classes', ClassController::class);
         Route::resource('subjects', SubjectController::class);
+        Route::resource('curricula', CurriculumController::class)->except(['show']);
 
         Route::get('teachers/print', [TeacherController::class, 'print'])
             ->name('teachers.print');

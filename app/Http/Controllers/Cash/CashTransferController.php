@@ -11,6 +11,15 @@ use Illuminate\Support\Facades\DB;
 
 class CashTransferController extends Controller
 {
+    public function __construct()
+    {
+        // Every action here reads or moves money between cash accounts —
+        // gated identically to CashAccountController's own write actions
+        // (permission:manage cash), since this module has no separate
+        // read-only cash permission to fall back to.
+        $this->middleware('permission:manage cash');
+    }
+
     public function index()
     {
         $transfers = CashTransfer::with(['fromAccount', 'toAccount', 'creator'])

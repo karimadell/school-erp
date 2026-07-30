@@ -6,6 +6,7 @@ use App\Models\CashAccount;
 use App\Models\CashTransfer;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 /**
@@ -41,9 +42,18 @@ class CashTransferRuntimeTest extends TestCase
         return CashAccount::create(['name' => 'Account ' . uniqid(), 'type' => CashAccount::TYPE_CASH, 'balance' => $balance]);
     }
 
-    public function test_the_transfer_form_route_returns_200(): void
+    protected function cashManager(): User
     {
         $user = User::factory()->create();
+        Permission::firstOrCreate(['name' => 'manage cash']);
+        $user->givePermissionTo('manage cash');
+
+        return $user;
+    }
+
+    public function test_the_transfer_form_route_returns_200(): void
+    {
+        $user = $this->cashManager();
 
         $response = $this->actingAs($user)->get(route('dashboard.cash.transfer.form'));
 
@@ -52,7 +62,7 @@ class CashTransferRuntimeTest extends TestCase
 
     public function test_the_transfer_index_route_returns_200(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
 
         $response = $this->actingAs($user)->get(route('dashboard.cash.transfers'));
 
@@ -61,7 +71,7 @@ class CashTransferRuntimeTest extends TestCase
 
     public function test_transfer_submission_succeeds_when_notes_is_entirely_omitted_from_the_request(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
 
@@ -80,7 +90,7 @@ class CashTransferRuntimeTest extends TestCase
 
     public function test_the_transfer_is_persisted_with_the_intended_notes_value_when_notes_is_omitted(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
 
@@ -102,7 +112,7 @@ class CashTransferRuntimeTest extends TestCase
 
     public function test_end_to_end_a_submitted_transfer_is_visible_on_the_index_page_after_the_redirect(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
 
@@ -137,7 +147,7 @@ class CashTransferRuntimeTest extends TestCase
 
     public function test_the_transfer_form_renders_the_purpose_field_with_its_russian_label(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
 
         app()->setLocale('ru');
 
@@ -150,7 +160,7 @@ class CashTransferRuntimeTest extends TestCase
 
     public function test_a_browser_style_submission_using_only_the_fields_present_in_the_form_succeeds(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
 
@@ -176,7 +186,7 @@ class CashTransferRuntimeTest extends TestCase
 
     public function test_omitting_purpose_redirects_back_with_a_validation_error_and_creates_nothing(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
 

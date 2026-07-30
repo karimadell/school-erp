@@ -39,6 +39,15 @@ class CashBalanceArithmeticTest extends TestCase
         return $user;
     }
 
+    protected function cashManager(): User
+    {
+        $user = User::factory()->create();
+        Permission::firstOrCreate(['name' => 'manage cash']);
+        $user->givePermissionTo('manage cash');
+
+        return $user;
+    }
+
     protected function makeCashAccount(float $balance = 0): CashAccount
     {
         return CashAccount::create(['name' => 'Account ' . uniqid(), 'type' => CashAccount::TYPE_CASH, 'balance' => $balance]);
@@ -143,7 +152,7 @@ class CashBalanceArithmeticTest extends TestCase
 
     public function test_a_transfer_moves_exactly_the_transfer_amount_between_accounts(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 1000);
         $to = $this->makeCashAccount(balance: 200);
 
@@ -162,7 +171,7 @@ class CashBalanceArithmeticTest extends TestCase
 
     public function test_a_transfer_preserves_the_combined_total_of_both_accounts(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 1000);
         $to = $this->makeCashAccount(balance: 200);
         $combinedBefore = (float) $from->balance + (float) $to->balance;
@@ -182,7 +191,7 @@ class CashBalanceArithmeticTest extends TestCase
 
     public function test_a_transfer_is_posted_once_per_side_and_does_not_double_count(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 1000);
         $to = $this->makeCashAccount(balance: 0);
 
@@ -210,7 +219,7 @@ class CashBalanceArithmeticTest extends TestCase
 
     public function test_a_transfer_rejected_for_insufficient_balance_rolls_back_completely(): void
     {
-        $user = User::factory()->create();
+        $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 50);
         $to = $this->makeCashAccount(balance: 0);
 

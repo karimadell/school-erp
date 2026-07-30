@@ -3,13 +3,19 @@
 namespace Tests\Feature\Teacher;
 
 use App\Filament\Teacher\Pages\TeacherAttendance;
+use App\Models\AcademicYear;
 use App\Models\Attendance;
+use App\Models\Curriculum;
 use App\Models\Enrollment;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
+use App\Models\Subject;
+use App\Models\Teacher;
+use App\Models\TeacherAssignment;
 use App\Models\User;
+use App\Support\AcademicYearLock;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -18,7 +24,14 @@ class TeacherAttendanceTest extends TestCase
 {
     use RefreshDatabase;
 
-    protected function makeEnrollment(string $studentName = 'Test Student'): Enrollment
+    /**
+     * $sharedYear lets multiple enrollments in one test share the same
+     * academic year — AcademicYear::save() deactivates every other
+     * active year as soon as a new active one is saved, so creating a
+     * second year via a bare call would silently flip which year is
+     * "current" out from under an already-created assignment.
+     */
+    protected function makeEnrollment(string $studentName = 'Test Student', ?AcademicYear $sharedYear = null): Enrollment
     {
         $stage = Stage::create(['name' => 'Primary']);
         $grade = Grade::create(['name' => 'Grade 1', 'stage_id' => $stage->id]);
@@ -29,15 +42,68 @@ class TeacherAttendanceTest extends TestCase
             'name_ru' => 'Класс A',
         ]);
         $student = Student::create(['name' => $studentName]);
+        $year = $sharedYear ?? AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
 
         return Enrollment::create([
             'student_id' => $student->id,
+            'academic_year_id' => $year->id,
             'stage_id' => $stage->id,
             'grade_id' => $grade->id,
             'class_id' => $class->id,
             'status' => 'active',
         ]);
     }
+
+    /**
+     * Batch 8: links $user to a Teacher record and gives that teacher a
+     * real TeacherAssignment for the enrollment's class, for the given
+     * (or a freshly created) academic year. Every existing test in this
+     * file needs this now that TeacherAttendance enforces record-level
+     * scoping — without it, currentTeacher() resolves to null and every
+     * load/save is denied.
+     */
+    protected function linkTeacher(User $user, Enrollment $enrollment, ?int $academicYearId = null): Teacher
+    {
+        $teacher = Teacher::create([
+            'user_id' => $user->id,
+            'first_name' => 'Anna',
+            'last_name' => 'Ivanova',
+            'is_active' => true,
+        ]);
+
+        $subject = Subject::create(['code' => 'SUBJ-' . uniqid(), 'name_ar' => 'مادة', 'name_ru' => 'Предмет']);
+        $resolvedYearId = $academicYearId ?? $enrollment->academic_year_id;
+
+        // Batch 11 / C6: TeacherAssignment creation now also requires a
+        // matching Curriculum row (year + grade + subject) — unrelated
+        // to this file's own concern (teacher-portal attendance
+        // authorization).
+        Curriculum::firstOrCreate(
+            [
+                'academic_year_id' => $resolvedYearId,
+                'grade_id' => SchoolClass::find($enrollment->class_id)->grade_id,
+                'subject_id' => $subject->id,
+            ],
+            ['weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY]
+        );
+
+        TeacherAssignment::create([
+            'teacher_id' => $teacher->id,
+            'class_id' => $enrollment->class_id,
+            'subject_id' => $subject->id,
+            'academic_year_id' => $resolvedYearId,
+        ]);
+
+        return $teacher;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Pre-existing behavior (now exercised through an assigned teacher)
+    |--------------------------------------------------------------------------
+    */
 
     /**
      * Regression test: TeacherAttendance::saveAttendance() previously wrote
@@ -48,6 +114,7 @@ class TeacherAttendanceTest extends TestCase
     {
         $user = User::factory()->create();
         $enrollment = $this->makeEnrollment();
+        $this->linkTeacher($user, $enrollment);
 
         Livewire::actingAs($user)
             ->test(TeacherAttendance::class)
@@ -78,15 +145,20 @@ class TeacherAttendanceTest extends TestCase
 
         $studentA = Student::create(['name' => 'Student A']);
         $studentB = Student::create(['name' => 'Student B']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
 
         $enrollmentA = Enrollment::create([
-            'student_id' => $studentA->id, 'stage_id' => $stage->id,
+            'student_id' => $studentA->id, 'academic_year_id' => $year->id, 'stage_id' => $stage->id,
             'grade_id' => $grade->id, 'class_id' => $class->id, 'status' => 'active',
         ]);
         $enrollmentB = Enrollment::create([
-            'student_id' => $studentB->id, 'stage_id' => $stage->id,
+            'student_id' => $studentB->id, 'academic_year_id' => $year->id, 'stage_id' => $stage->id,
             'grade_id' => $grade->id, 'class_id' => $class->id, 'status' => 'active',
         ]);
+
+        $this->linkTeacher($user, $enrollmentA);
 
         Livewire::actingAs($user)
             ->test(TeacherAttendance::class)
@@ -109,6 +181,7 @@ class TeacherAttendanceTest extends TestCase
     {
         $user = User::factory()->create();
         $enrollment = $this->makeEnrollment();
+        $this->linkTeacher($user, $enrollment);
         $today = now()->toDateString();
 
         Livewire::actingAs($user)
@@ -127,6 +200,7 @@ class TeacherAttendanceTest extends TestCase
     {
         $user = User::factory()->create();
         $enrollment = $this->makeEnrollment();
+        $this->linkTeacher($user, $enrollment);
 
         $component = Livewire::actingAs($user)
             ->test(TeacherAttendance::class)
@@ -148,9 +222,38 @@ class TeacherAttendanceTest extends TestCase
     public function test_all_supported_statuses_can_be_saved(): void
     {
         $user = User::factory()->create();
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $teacher = null;
 
         foreach (['present', 'absent', 'late', 'excused'] as $status) {
-            $enrollment = $this->makeEnrollment("Student {$status}");
+            $enrollment = $this->makeEnrollment("Student {$status}", $year);
+
+            if (! $teacher) {
+                $teacher = $this->linkTeacher($user, $enrollment, $year->id);
+            } else {
+                $subjectId = Subject::first()?->id ?? Subject::create(['code' => 'X', 'name_ar' => 'a', 'name_ru' => 'a'])->id;
+                // Batch 11 / C6: TeacherAssignment creation now also
+                // requires a matching Curriculum row — each iteration's
+                // enrollment has its own fresh class/grade, so this must
+                // be re-resolved per iteration.
+                Curriculum::firstOrCreate(
+                    [
+                        'academic_year_id' => $year->id,
+                        'grade_id' => SchoolClass::find($enrollment->class_id)->grade_id,
+                        'subject_id' => $subjectId,
+                    ],
+                    ['weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY]
+                );
+
+                TeacherAssignment::create([
+                    'teacher_id' => $teacher->id,
+                    'class_id' => $enrollment->class_id,
+                    'subject_id' => $subjectId,
+                    'academic_year_id' => $year->id,
+                ]);
+            }
 
             Livewire::actingAs($user)
                 ->test(TeacherAttendance::class)
@@ -175,6 +278,7 @@ class TeacherAttendanceTest extends TestCase
     {
         $user = User::factory()->create();
         $enrollment = $this->makeEnrollment();
+        $this->linkTeacher($user, $enrollment);
 
         Livewire::actingAs($user)
             ->test(TeacherAttendance::class)
@@ -196,6 +300,7 @@ class TeacherAttendanceTest extends TestCase
     {
         $user = User::factory()->create();
         $enrollment = $this->makeEnrollment();
+        $this->linkTeacher($user, $enrollment);
 
         foreach (['ru', 'en', 'ar'] as $locale) {
             app()->setLocale($locale);
@@ -228,5 +333,142 @@ class TeacherAttendanceTest extends TestCase
                 $component->assertDontSee('Сохранить');
             }
         }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Batch 8: record-level access scoping — load-time enforcement
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_a_user_with_no_linked_teacher_record_cannot_load_any_class(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+        // No Teacher record is linked to $user at all.
+
+        Livewire::actingAs($user)
+            ->test(TeacherAttendance::class)
+            ->set('classId', $enrollment->class_id)
+            ->call('loadStudents');
+
+        $this->assertDatabaseMissing('attendances', ['enrollment_id' => $enrollment->id]);
+    }
+
+    public function test_a_teacher_not_assigned_to_the_class_cannot_load_its_students(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+
+        // Teacher exists and is assigned somewhere, but not to this class.
+        $otherEnrollment = $this->makeEnrollment('Unrelated Student');
+        $this->linkTeacher($user, $otherEnrollment);
+
+        $component = Livewire::actingAs($user)
+            ->test(TeacherAttendance::class)
+            ->set('classId', $enrollment->class_id)
+            ->call('loadStudents');
+
+        $this->assertSame([], $component->get('students'));
+    }
+
+    /**
+     * Year scoping: an assignment that exists only for a non-active
+     * academic year must not grant access to the current year's class.
+     */
+    public function test_an_assignment_from_a_different_academic_year_does_not_grant_access(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+
+        $pastYear = AcademicYear::create([
+            'name' => '2024 / 2025', 'start_date' => '2024-09-01', 'end_date' => '2025-05-31', 'is_active' => false,
+        ]);
+        AcademicYearLock::withoutLock(fn () => $this->linkTeacher($user, $enrollment, $pastYear->id));
+
+        $component = Livewire::actingAs($user)
+            ->test(TeacherAttendance::class)
+            ->set('classId', $enrollment->class_id)
+            ->call('loadStudents');
+
+        $this->assertSame([], $component->get('students'));
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Batch 8: record-level access scoping — save-time enforcement
+    |--------------------------------------------------------------------------
+    */
+
+    /**
+     * The class must be re-authorized at save time, not merely trusted
+     * because a prior loadStudents() call happened to succeed — classId
+     * is client-controlled Livewire state and can be changed between the
+     * two calls.
+     */
+    public function test_tampering_class_id_after_a_legitimate_load_blocks_the_save(): void
+    {
+        $user = User::factory()->create();
+        $assignedEnrollment = $this->makeEnrollment('Assigned Student');
+        $this->linkTeacher($user, $assignedEnrollment);
+
+        $foreignEnrollment = $this->makeEnrollment('Foreign Student');
+
+        $component = Livewire::actingAs($user)
+            ->test(TeacherAttendance::class)
+            ->set('classId', $assignedEnrollment->class_id)
+            ->call('loadStudents')
+            ->set("attendance.{$assignedEnrollment->id}", 'present');
+
+        // Tamper: switch classId to a class this teacher is not assigned
+        // to, then attempt to save.
+        $component->set('classId', $foreignEnrollment->class_id)
+            ->call('saveAttendance');
+
+        $this->assertDatabaseMissing('attendances', ['enrollment_id' => $assignedEnrollment->id]);
+    }
+
+    /**
+     * Even when classId itself is authorized, an individual attendance
+     * entry that targets an enrollment from a different class must be
+     * rejected — otherwise a tampered payload could smuggle in writes for
+     * unrelated classes while classId passes the outer check.
+     */
+    public function test_an_attendance_entry_for_an_enrollment_outside_the_authorized_class_is_not_saved(): void
+    {
+        $user = User::factory()->create();
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $assignedEnrollment = $this->makeEnrollment('Assigned Student', $year);
+        $this->linkTeacher($user, $assignedEnrollment, $year->id);
+
+        $foreignEnrollment = $this->makeEnrollment('Foreign Student', $year);
+
+        Livewire::actingAs($user)
+            ->test(TeacherAttendance::class)
+            ->set('classId', $assignedEnrollment->class_id)
+            ->call('loadStudents')
+            ->set("attendance.{$assignedEnrollment->id}", 'present')
+            ->set("attendance.{$foreignEnrollment->id}", 'absent')
+            ->call('saveAttendance');
+
+        $this->assertDatabaseHas('attendances', ['enrollment_id' => $assignedEnrollment->id, 'status' => 'present']);
+        $this->assertDatabaseMissing('attendances', ['enrollment_id' => $foreignEnrollment->id]);
+    }
+
+    public function test_calling_save_directly_without_ever_loading_is_still_denied(): void
+    {
+        $user = User::factory()->create();
+        $enrollment = $this->makeEnrollment();
+        // No teacher linked at all.
+
+        Livewire::actingAs($user)
+            ->test(TeacherAttendance::class)
+            ->set('classId', $enrollment->class_id)
+            ->set("attendance.{$enrollment->id}", 'present')
+            ->call('saveAttendance');
+
+        $this->assertDatabaseMissing('attendances', ['enrollment_id' => $enrollment->id]);
     }
 }

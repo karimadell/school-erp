@@ -15,6 +15,7 @@ class InvoiceItem extends Model
     protected $fillable = [
         'invoice_id',
         'fee_id',
+        'subscription_id',
         'description',
         'amount',
     ];
@@ -46,5 +47,10 @@ class InvoiceItem extends Model
     public function fee()
     {
         return $this->belongsTo(Fee::class);
+    }
+
+    public function subscription()
+    {
+        return $this->belongsTo(StudentServiceSubscription::class, 'subscription_id');
     }
 }

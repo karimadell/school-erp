@@ -19,7 +19,7 @@ class AcademicYearForm
                     ->required(),
                 DatePicker::make('end_date')
                     ->required(),
-                Toggle::make('is_current')
+                Toggle::make('is_active')
                     ->required(),
             ]);
     }

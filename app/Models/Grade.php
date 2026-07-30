@@ -43,4 +43,10 @@ class Grade extends Model
         );
     }
 
+    // Grade → Curricula
+    public function curricula()
+    {
+        return $this->hasMany(Curriculum::class);
+    }
+
 }

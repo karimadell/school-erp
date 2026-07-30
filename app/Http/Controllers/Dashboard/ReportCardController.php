@@ -12,6 +12,30 @@ class ReportCardController extends Controller
 {
     /*
     |--------------------------------------------------------------------------
+    | Report Cards — not implemented yet (blocked on Section 4 grading policy,
+    | see docs/OPEN_POLICY_DECISIONS.md). The `report-cards/*` routes used to
+    | call these methods with nothing defined here at all, a guaranteed fatal
+    | error. These stubs show a plain "not available yet" page instead.
+    |--------------------------------------------------------------------------
+    */
+
+    public function index()
+    {
+        return view('dashboard.report_cards.unavailable');
+    }
+
+    public function show($id)
+    {
+        return view('dashboard.report_cards.unavailable');
+    }
+
+    public function print($id)
+    {
+        return view('dashboard.report_cards.unavailable');
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | Restaurant Daily Summary
     |--------------------------------------------------------------------------
     */

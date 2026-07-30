@@ -12,6 +12,7 @@ class Invoice extends Model
 
     protected $fillable = [
         'student_id',
+        'academic_year_id',
         'customer_name',
         'total_amount',
         'discount_type',
@@ -23,6 +24,7 @@ class Invoice extends Model
         'payment_method',
         'cash_account_id',
         'paid_at',
+        'due_date',
         'note',
     ];
 
@@ -33,11 +35,17 @@ class Invoice extends Model
         'paid_amount' => 'decimal:2',
         'remaining_amount' => 'decimal:2',
         'paid_at' => 'datetime',
+        'due_date' => 'date',
     ];
 
     public function student()
     {
         return $this->belongsTo(Student::class);
+    }
+
+    public function academicYear()
+    {
+        return $this->belongsTo(AcademicYear::class);
     }
 
     public function cashAccount()
@@ -87,6 +95,20 @@ class Invoice extends Model
         }
 
         $this->save();
+    }
+
+    public function scopeOutstanding($query)
+    {
+        return $query->whereIn('status', [self::STATUS_UNPAID, self::STATUS_PARTIAL]);
+    }
+
+    public function scopeOverdue($query, $asOf = null)
+    {
+        $asOf = $asOf ?? now()->toDateString();
+
+        return $query->outstanding()
+            ->whereNotNull('due_date')
+            ->whereDate('due_date', '<', $asOf);
     }
 
     public function getNetAmountAttribute(): float

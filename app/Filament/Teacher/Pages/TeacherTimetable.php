@@ -13,11 +13,17 @@ class TeacherTimetable extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-calendar';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Преподаватель';
-
-    protected static ?string $navigationLabel = 'Расписание';
-
     protected string $view = 'filament.teacher.pages.teacher-timetable';
+
+    public static function getNavigationGroup(): string|UnitEnum|null
+    {
+        return __('teacher_portal.nav_group');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('teacher_portal.nav_timetable');
+    }
 
     public $lessons = [];
 
@@ -27,8 +33,12 @@ class TeacherTimetable extends Page
 
         if ($teacher) {
 
+            // Batch 8: eager-loaded 'class', a relation that doesn't
+            // exist on Timetable (it's named schoolClass()) — this page
+            // has never actually rendered successfully. Unrelated to
+            // this batch's scoping work, which was already correct.
             $this->lessons = Timetable::with([
-                'class',
+                'schoolClass',
                 'subject',
                 'day',
                 'period'

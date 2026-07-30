@@ -12,6 +12,11 @@ use Illuminate\Support\Facades\Schema;
 
 class FeeController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:manage fees');
+    }
+
     public function index()
     {
         $fees = Fee::query()

@@ -11,6 +11,11 @@ use Illuminate\Support\Facades\Schema;
 
 class FeePriceController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:manage fee prices');
+    }
+
     public function index()
     {
         $prices = FeePrice::with(['fee', 'grade'])

@@ -16,7 +16,9 @@ class DatabaseSeeder extends Seeder
             StageSeeder::class,
             GradeSeeder::class,
             AcademicYearSeeder::class,
+            QuarterSeeder::class,
             PeriodSeeder::class,
+            EnrollmentModeSeeder::class,
 
         ]);
     }

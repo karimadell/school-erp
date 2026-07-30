@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
+use App\Contracts\ResolvesAcademicYear;
 use Illuminate\Database\Eloquent\Model;
 
-class StudentGrade extends Model
+class StudentGrade extends Model implements ResolvesAcademicYear
 {
     protected $fillable = [
         'student_id',
@@ -43,6 +44,18 @@ class StudentGrade extends Model
     public function quarter()
     {
         return $this->belongsTo(Quarter::class);
+    }
+
+    /**
+     * Item 2, approved policy: prefers the grade's own quarter_id; falls
+     * back to the linked exam's quarter. If neither resolves to a year
+     * (both exam_id and quarter_id absent, or the exam itself has no
+     * quarter), this fails closed rather than being treated as exempt.
+     */
+    public function resolveAcademicYear(): ?AcademicYear
+    {
+        return Quarter::find($this->quarter_id)?->resolveAcademicYear()
+            ?? Exam::find($this->exam_id)?->resolveAcademicYear();
     }
 
     /*

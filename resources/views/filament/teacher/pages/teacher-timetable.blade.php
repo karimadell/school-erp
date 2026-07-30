@@ -3,8 +3,14 @@
 <div class="bg-white p-6 rounded shadow">
 
 <h2 class="text-xl font-bold mb-4">
-Расписание преподавателя
+{{ __('teacher_timetable.heading') }}
 </h2>
+
+@if(count($lessons) === 0)
+
+<p>{{ __('teacher_timetable.no_lessons') }}</p>
+
+@else
 
 <table class="w-full border">
 
@@ -12,10 +18,10 @@
 
 <tr class="bg-gray-100">
 
-<th class="border p-2">День</th>
-<th class="border p-2">Урок</th>
-<th class="border p-2">Предмет</th>
-<th class="border p-2">Класс</th>
+<th class="border p-2">{{ __('teacher_timetable.day') }}</th>
+<th class="border p-2">{{ __('teacher_timetable.period') }}</th>
+<th class="border p-2">{{ __('teacher_timetable.subject') }}</th>
+<th class="border p-2">{{ __('teacher_timetable.class_label') }}</th>
 
 </tr>
 
@@ -32,7 +38,7 @@
 </td>
 
 <td class="border p-2">
-{{ $lesson->period->name }}
+{{ $lesson->period->number }} ({{ $lesson->period->start_time }}–{{ $lesson->period->end_time }})
 </td>
 
 <td class="border p-2">
@@ -40,7 +46,7 @@
 </td>
 
 <td class="border p-2">
-{{ $lesson->class->name }}
+{{ $lesson->schoolClass->name }}
 </td>
 
 </tr>
@@ -50,6 +56,8 @@
 </tbody>
 
 </table>
+
+@endif
 
 </div>
 

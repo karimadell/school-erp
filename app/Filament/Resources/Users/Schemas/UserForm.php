@@ -23,7 +23,11 @@ class UserForm
             Forms\Components\TextInput::make('password')
                 ->label('Пароль')
                 ->password()
-                ->required(),
+                ->required(fn (string $operation): bool => $operation === 'create')
+                ->dehydrated(fn (?string $state): bool => filled($state))
+                ->helperText(fn (string $operation): ?string => $operation === 'edit'
+                    ? 'Оставьте пустым, чтобы не менять пароль.'
+                    : null),
 
             Forms\Components\Select::make('roles')
                 ->label('Роль')

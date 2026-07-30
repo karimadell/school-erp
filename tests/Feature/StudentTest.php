@@ -30,21 +30,42 @@ class StudentTest extends TestCase
         ]);
     }
 
+    /**
+     * Batch 6: 'manage students' was split into per-action permissions
+     * (view/create/update/delete students) so Reception can be granted
+     * create+view+update without delete. This fixture grants all four,
+     * matching the old 'manage students' scope for tests that don't care
+     * about the distinction.
+     */
     protected function authorizedUser(): User
     {
         $user = User::factory()->create();
 
-        // Matches the permission actually seeded in
-        // RolesAndPermissionsSeeder.php ('manage students').
-        Permission::findOrCreate('manage students', 'web');
-        $user->givePermissionTo('manage students');
+        foreach (['view students', 'create students', 'update students', 'delete students'] as $permission) {
+            Permission::findOrCreate($permission, 'web');
+        }
+
+        $user->givePermissionTo(['view students', 'create students', 'update students', 'delete students']);
 
         return $user;
     }
 
-    public function test_any_authenticated_user_can_view_the_index(): void
+    public function test_a_user_without_view_permission_cannot_view_the_index(): void
+    {
+        // Batch 6: deny by default — viewing the index now requires
+        // 'view students', replacing the old "any authenticated user" rule.
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->get(route('dashboard.students.index'));
+
+        $response->assertForbidden();
+    }
+
+    public function test_a_user_with_view_permission_can_view_the_index(): void
     {
         $user = User::factory()->create();
+        Permission::findOrCreate('view students', 'web');
+        $user->givePermissionTo('view students');
 
         $response = $this->actingAs($user)->get(route('dashboard.students.index'));
 
@@ -105,12 +126,35 @@ class StudentTest extends TestCase
             'first_name_ru' => 'Petr',
         ]);
 
-        // Revoke permission to confirm destroy is actually gated.
-        $user->revokePermissionTo('manage students');
+        // Revoke only delete — create/update/view remain, proving the
+        // permissions are independently enforced, not bundled together.
+        $user->revokePermissionTo('delete students');
 
         $response = $this->actingAs($user)->delete(route('dashboard.students.destroy', $student));
 
         $response->assertForbidden();
+        $this->assertDatabaseHas('students', ['id' => $student->id]);
+    }
+
+    public function test_a_user_with_create_and_view_but_not_delete_cannot_delete(): void
+    {
+        // Proves Reception's exact grant (create/view/update, no delete)
+        // is correctly enforced end-to-end.
+        $user = User::factory()->create();
+        foreach (['view students', 'create students', 'update students'] as $permission) {
+            Permission::findOrCreate($permission, 'web');
+        }
+        $user->givePermissionTo(['view students', 'create students', 'update students']);
+
+        $class = $this->makeClass();
+        $student = Student::create([
+            'class_id' => $class->id,
+            'last_name_ru' => 'Sidorov',
+            'first_name_ru' => 'Ivan',
+        ]);
+
+        $this->actingAs($user)->get(route('dashboard.students.index'))->assertOk();
+        $this->actingAs($user)->delete(route('dashboard.students.destroy', $student))->assertForbidden();
         $this->assertDatabaseHas('students', ['id' => $student->id]);
     }
 }

@@ -22,6 +22,12 @@ use Illuminate\View\View;
 
 class InvoiceController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware('permission:view invoices')->only(['index', 'show', 'print', 'pdf']);
+        $this->middleware('permission:manage invoices')->only(['create', 'store', 'pay', 'refund', 'generateMonthlyInvoices']);
+    }
+
     public function index(): View
     {
         $invoices = Invoice::with(['student', 'cashAccount', 'fees'])

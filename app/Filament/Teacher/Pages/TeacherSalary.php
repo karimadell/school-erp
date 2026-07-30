@@ -13,11 +13,17 @@ class TeacherSalary extends Page
 {
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-banknotes';
 
-    protected static string|UnitEnum|null $navigationGroup = 'Преподаватель';
-
-    protected static ?string $navigationLabel = 'Моя зарплата';
-
     protected string $view = 'filament.teacher.pages.teacher-salary';
+
+    public static function getNavigationGroup(): string|UnitEnum|null
+    {
+        return __('teacher_portal.nav_group');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('teacher_portal.nav_salary');
+    }
 
     public $salaries = [];
 

@@ -50,7 +50,13 @@ class Student extends Model
 
     public function currentEnrollment()
     {
-        return $this->hasOne(Enrollment::class)->where('is_active', true);
+        // The student's current placement is the enrollment linked to
+        // whichever AcademicYear is currently active — not whichever
+        // enrollment happens to have is_active = true. is_active on
+        // Enrollment describes only that record's own year and is never a
+        // cross-year "current" flag.
+        return $this->hasOne(Enrollment::class)
+            ->whereHas('academicYear', fn ($query) => $query->where('is_active', true));
     }
 
     public function attendances()

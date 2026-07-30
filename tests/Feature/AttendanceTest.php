@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\AcademicYear;
 use App\Models\Attendance;
 use App\Models\Enrollment;
+use App\Models\EnrollmentMode;
 use App\Models\Grade;
 use App\Models\Period;
 use App\Models\SchoolClass;
@@ -28,9 +30,13 @@ class AttendanceTest extends TestCase
             'name_ru' => 'Класс A',
         ]);
         $student = Student::forceCreate(['name' => $studentName]);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
 
         return Enrollment::create([
             'student_id' => $student->id,
+            'academic_year_id' => $year->id,
             'stage_id' => $stage->id,
             'grade_id' => $grade->id,
             'class_id' => $class->id,
@@ -347,5 +353,107 @@ class AttendanceTest extends TestCase
             $dashboard->assertOk();
             $dashboard->assertDontSee('attendance.', false);
         }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Batch 4: AttendanceController::take() restricts its roster to
+    | enrollments belonging to the currently active academic year only.
+    | No other behavior (e.g. enrollment mode) is filtered.
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_take_page_roster_only_includes_enrollments_from_the_active_academic_year(): void
+    {
+        $user = User::factory()->create();
+        $stage = Stage::create(['name' => 'Primary']);
+        $grade = Grade::create(['name' => 'Grade 1', 'stage_id' => $stage->id]);
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'A',
+            'name_ar' => 'فصل A',
+            'name_ru' => 'Класс A',
+        ]);
+
+        // Creating thisYear as active atomically deactivates lastYear
+        // (B3), so lastYear's enrollment ends up correctly scoped to a
+        // now-inactive year without any extra bookkeeping here.
+        $lastYear = AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => true,
+        ]);
+        $pastStudent = Student::forceCreate(['name' => 'Past Year Student']);
+        Enrollment::create([
+            'student_id' => $pastStudent->id,
+            'academic_year_id' => $lastYear->id,
+            'stage_id' => $stage->id,
+            'grade_id' => $grade->id,
+            'class_id' => $class->id,
+            'status' => 'active',
+        ]);
+
+        $thisYear = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $currentStudent = Student::forceCreate(['name' => 'Current Year Student']);
+        Enrollment::create([
+            'student_id' => $currentStudent->id,
+            'academic_year_id' => $thisYear->id,
+            'stage_id' => $stage->id,
+            'grade_id' => $grade->id,
+            'class_id' => $class->id,
+            'status' => 'active',
+        ]);
+
+        $response = $this->actingAs($user)->get(route('dashboard.attendance.create', [
+            'class_id' => $class->id,
+            'date' => '2026-11-01',
+            'type' => 'daily',
+        ]));
+
+        $response->assertOk();
+        $response->assertSee('Current Year Student');
+        $response->assertDontSee('Past Year Student');
+    }
+
+    public function test_take_page_roster_still_includes_distance_learning_students_no_additional_filtering(): void
+    {
+        // Confirms the active-year restriction introduces no other
+        // behavior: an enrollment mode of distance_learning does not, by
+        // itself, exclude a student from the daily roster.
+        $user = User::factory()->create();
+        $stage = Stage::create(['name' => 'Primary']);
+        $grade = Grade::create(['name' => 'Grade 1', 'stage_id' => $stage->id]);
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'A',
+            'name_ar' => 'فصل A',
+            'name_ru' => 'Класс A',
+        ]);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $distanceMode = EnrollmentMode::create([
+            'code' => EnrollmentMode::DISTANCE_LEARNING, 'name_ru' => 'Дистанционное обучение',
+        ]);
+        $student = Student::forceCreate(['name' => 'Distance Learning Student']);
+
+        Enrollment::create([
+            'student_id' => $student->id,
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $distanceMode->id,
+            'stage_id' => $stage->id,
+            'grade_id' => $grade->id,
+            'class_id' => $class->id,
+            'status' => 'active',
+        ]);
+
+        $response = $this->actingAs($user)->get(route('dashboard.attendance.create', [
+            'class_id' => $class->id,
+            'date' => '2026-11-01',
+            'type' => 'daily',
+        ]));
+
+        $response->assertOk();
+        $response->assertSee('Distance Learning Student');
     }
 }

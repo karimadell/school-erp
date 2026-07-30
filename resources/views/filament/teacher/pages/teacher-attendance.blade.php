@@ -12,7 +12,7 @@
 
 <option value="">---</option>
 
-@foreach(\App\Models\SchoolClass::all() as $class)
+@foreach($assignedClasses as $class)
 
 <option value="{{ $class->id }}">
 {{ $class->name }}

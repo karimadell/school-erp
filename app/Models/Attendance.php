@@ -2,9 +2,10 @@
 
 namespace App\Models;
 
+use App\Contracts\ResolvesAcademicYear;
 use Illuminate\Database\Eloquent\Model;
 
-class Attendance extends Model
+class Attendance extends Model implements ResolvesAcademicYear
 {
     protected $fillable = [
         'enrollment_id',
@@ -28,6 +29,11 @@ class Attendance extends Model
     public function period()
     {
         return $this->belongsTo(Period::class);
+    }
+
+    public function resolveAcademicYear(): ?AcademicYear
+    {
+        return Enrollment::find($this->enrollment_id)?->resolveAcademicYear();
     }
 
     /**

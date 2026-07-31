@@ -56,7 +56,7 @@ return [
     | لغة الاحتياط
     */
 
-    'fallback_locale' => 'en',
+    'fallback_locale' => 'ru',
 
     /*
     | Faker لبيانات الاختبار

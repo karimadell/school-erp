@@ -1,0 +1,21 @@
+{
+    "Not Found": "Страница не найдена",
+    "Forbidden": "Доступ запрещён",
+    "Server Error": "Ошибка сервера",
+    "Unauthorized": "Не авторизован",
+    "Payment Required": "Требуется оплата",
+    "Service Unavailable": "Сервис недоступен",
+    "Too Many Requests": "Слишком много запросов",
+    "Page Expired": "Срок действия страницы истёк",
+
+    "Email": "Email",
+    "Password": "Пароль",
+    "Remember me": "Запомнить меня",
+    "Log in": "Войти",
+    "Name": "Имя",
+    "Confirm Password": "Подтверждение пароля",
+    "Already registered?": "Уже зарегистрированы?",
+    "Register": "Зарегистрироваться",
+    "This is a secure area of the application. Please confirm your password before continuing.": "Это защищённый раздел приложения. Пожалуйста, подтвердите пароль перед продолжением.",
+    "Confirm": "Подтвердить"
+}

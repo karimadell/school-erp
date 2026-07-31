@@ -1,25 +1,53 @@
 <?php
 
-/**
- * Batch 9: backfills only the keys the Teacher Portal's
- * teacher-attendance.blade.php actually references — this file is
- * shared with the dashboard and admin Attendance surfaces (see
- * app/Http/Controllers/Dashboard/AttendanceController.php,
- * app/Filament/Resources/Attendances), which use additional keys of
- * their own (class, date, period, reports, take_attendance, etc.) not
- * added here. Completing those surfaces' localization is out of this
- * batch's scope (Teacher Portal only).
- */
 return [
-    'select_class' => 'Выберите класс',
-    'load' => 'Загрузить',
     'title' => 'Посещаемость',
-    'student' => 'Студент',
+    'take_attendance' => 'Отметить посещаемость',
+    'select_options' => 'Выберите параметры',
+
+    'class' => 'Класс',
+    'date' => 'Дата',
+    'type' => 'Тип',
+
+    'daily' => 'Дневной',
+    'period' => 'По урокам',
+
+    'start' => 'Начать',
+    'save' => 'Сохранить',
+
+    'student' => 'Ученик',
     'status' => 'Статус',
+
     'present' => 'Присутствует',
     'absent' => 'Отсутствует',
     'late' => 'Опоздал',
-    'excused' => 'Освобождён',
-    'save' => 'Сохранить',
-    'saved_success' => 'Посещаемость сохранена.',
+    'excused' => 'Уважительная причина',
+
+    'saved_success' => 'Посещаемость сохранена',
+
+    'reports' => 'Отчёты',
+    'class_report' => 'Отчёт по классу',
+    'student_report' => 'Отчёт по ученику',
+    'back' => 'Назад',
+    'no_students' => 'Нет учеников в этом классе',
+
+    'select_class' => 'Выберите класс',
+    'select_period' => 'Выберите урок',
+    'lesson' => 'Урок',
+    'all_types' => 'Все типы',
+
+    'filter' => 'Фильтр',
+    'records' => 'Записи',
+    'students' => 'Ученики',
+    'summary' => 'Сводка',
+    'total' => 'Итого',
+    'average_attendance' => 'Средняя посещаемость',
+    'no_data' => 'Нет данных',
+
+    'note' => 'Примечание',
+
+    'title_plural' => 'Посещаемость (записи)',
+    'enrollment' => 'Зачисление',
+    'load' => 'Загрузить',
+    'dashboard' => 'Панель посещаемости',
 ];

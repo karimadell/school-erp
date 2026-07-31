@@ -1,49 +1,124 @@
 <?php
 
 return [
+    'title' => 'Счета',
+    'create' => 'Создать счет',
+    'edit' => 'Редактировать счет',
+    'show' => 'Просмотр счета',
+    'print' => 'Печать',
+    'pdf' => 'PDF',
+    'back' => 'Назад',
 
-    'invoice' => 'Счет',
-
-    'invoices' => 'Счета',
-
-    'create_invoice' => 'Создать счет',
-
+    'invoice_number' => 'Счет №',
+    'student' => 'Ученик',
+    'customer_name' => 'Клиент',
+    'cash_account' => 'Касса',
+    'date' => 'Дата',
+    'paid_at' => 'Дата оплаты',
+    'status' => 'Статус',
+    'amount' => 'Сумма',
+    'total_amount' => 'Итого',
+    'services' => 'Услуги',
     'service' => 'Услуга',
 
-    'services' => 'Услуги',
-
-    'total' => 'Итого',
-
-    'discount' => 'Скидка',
-
-    'status' => 'Статус',
-
     'paid' => 'Оплачен',
-
     'unpaid' => 'Не оплачен',
+    'partial' => 'Частично оплачено',
+    'cancelled' => 'Отменен',
 
-    'print' => 'Печать счета',
+    'select_student' => 'Выберите ученика',
+    'new_student' => 'Новый ученик',
+    'academic_year' => 'Учебный год',
+    'select_cash_account' => 'Выберите кассу',
 
-    'download_pdf' => 'Скачать PDF',
+    'fees' => 'Услуги / платежи',
+    'food_period' => 'Питание',
+    'no_food' => 'Без питания',
+    'daily' => 'Дневной',
+    'weekly' => 'Недельный',
+    'monthly' => 'Месячный',
+    'yearly' => 'Годовой',
 
-    'student' => 'Студент',
-
-    'date' => 'Дата',
-
-    'amount' => 'Сумма',
-
+    'payment' => 'Оплата',
     'payment_method' => 'Способ оплаты',
+    'cash' => 'Наличные',
+    'bank' => 'Банк',
+    'card' => 'Карта',
+    'transfer' => 'Перевод',
 
-    'notes' => 'Заметки',
+    'paid_amount' => 'Оплачено',
+    'remaining_amount' => 'Остаток',
 
-    'add_service' => 'Добавить услугу',
+    'full_payment_if_empty' => 'Пусто = полная оплата',
+    'partial_payment_hint' => 'Если сумма меньше итога, счет будет частично оплачен',
 
-    'save_invoice' => 'Сохранить счет',
+    'save' => 'Сохранить',
+    'pay' => 'Оплатить',
+    'actions' => 'Действия',
+    'no_data' => 'Нет данных',
 
-    'invoice_details' => 'Детали счета',
+    'saved_and_paid' => 'Счет успешно сохранен и оплачен',
+    'select_or_create_student' => 'Выберите ученика или создайте нового ученика',
+    'subtitle' => 'Управление счетами',
+    'payment_history' => 'История платежей',
+    'reference' => 'Ссылка',
+    'refund' => 'Возврат',
+    'refunded' => 'Возврат выполнен',
+    'discount' => 'Скидка',
+'discount_type' => 'Тип скидки',
+'discount_value' => 'Размер скидки',
+'discount_amount' => 'Сумма скидки',
+'no_discount' => 'Без скидки',
+'fixed_discount' => 'Фиксированная сумма',
+'percent_discount' => 'Процент',
+'net_amount' => 'Итого после скидки',
+'student_name' => 'Имя ученика',
+'select_grade' => 'Выберите класс',
 
-    'created_successfully' => 'Счет успешно создан',
+'study_system' => 'Система обучения',
+'grade_group' => 'Группа классов',
+'payment_period' => 'Период оплаты',
 
-    'updated_successfully' => 'Счет успешно обновлен'
+'registration' => 'Регистрационный взнос',
+'food' => 'Питание',
+'transport' => 'Трансфер',
+'uniform' => 'Школьная форма',
+'extras' => 'Допы',
+
+'no_transport' => 'Без трансфера',
+
+'category' => 'Категория',
+'item' => 'Предмет',
+'size' => 'Размер',
+'details' => 'Детали',
+
+'receive_payment' => 'Принять оплату',
+'payment_amount' => 'Сумма оплаты',
+'payment_received' => 'Оплата принята',
+
+'refund_amount' => 'Сумма возврата',
+'already_paid' => 'Счёт уже полностью оплачен',
+'no_refundable_amount' => 'Нет суммы для возврата',
+'discount' => 'Скидка',
+'payment' => 'Оплата',
+'save' => 'Сохранить счёт',
+'total_amount' => 'Итого',
+'net_amount' => 'К оплате',
+'discount_amount' => 'Скидка',
+'remaining_amount' => 'Остаток',
+'no_discount' => 'Без скидки',
+'fixed_discount' => 'Фиксированная',
+'percent_discount' => 'Процент',
+'full_payment_if_empty' => 'Пусто = полная оплата',
+'food' => 'Питание',
+'transport' => 'Трансфер',
+'uniform' => 'Школьная форма',
+'extras' => 'Допы',
+'registration' => 'Регистрационный взнос',
+'no_food' => 'Без питания',
+'no_transport' => 'Без трансфера',
+'item' => 'Предмет',
+'size' => 'Размер',
+'select_cash_account' => 'Выберите кассу',
 
 ];

@@ -6,7 +6,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
-return Application::configure(basePath: dirname(__DIR__))
+$app = Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__ . '/../routes/web.php',
         api: __DIR__ . '/../routes/api.php',
@@ -52,3 +52,13 @@ return Application::configure(basePath: dirname(__DIR__))
         //
     })
     ->create();
+
+// Russian-first UI cleanup: all translation files (including the
+// vendor:published Filament chrome translations under lang/vendor/filament)
+// live under lang/, the Laravel 9+ default. Without this, Application's
+// default langPath resolution falls back to resources/lang instead, which
+// silently made every file under lang/ (including Filament's own published
+// `ru` strings) dead — never loaded, for any locale.
+$app->useLangPath(base_path('lang'));
+
+return $app;

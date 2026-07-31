@@ -62,9 +62,12 @@
                 ['label' => 'Финансовые отчёты', 'icon' => 'pie_chart', 'route' => 'dashboard.cash.reports', 'active' => 'dashboard.cash.reports'],
             ],
         ],
-        // Транспорт: every classic-dashboard transport route currently fatals
-        // (TransportRoute/TransportSubscription models don't exist) — the
-        // whole group stays hidden during Alpha.
+        [
+            'label' => 'Транспорт',
+            'items' => [
+                ['label' => 'Автобусы', 'icon' => 'school', 'href' => Route::has('filament.admin.resources.buses.index') ? route('filament.admin.resources.buses.index') : null],
+            ],
+        ],
         [
             'label' => 'Администрирование',
             'items' => [

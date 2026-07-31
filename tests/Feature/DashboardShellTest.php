@@ -55,9 +55,21 @@ class DashboardShellTest extends TestCase
 
         $response->assertOk();
 
-        foreach (['Экзамены', 'Транспорт', 'Родители', 'Документы', 'Сотрудники', 'Резервные копии', 'Настройки школы'] as $hidden) {
+        foreach (['Экзамены', 'Родители', 'Документы', 'Сотрудники', 'Резервные копии', 'Настройки школы'] as $hidden) {
             $response->assertDontSee($hidden);
         }
+    }
+
+    public function test_sidebar_links_to_the_safe_buses_module_without_exposing_classic_transport(): void
+    {
+        $this->assertTrue(\Route::has('filament.admin.resources.buses.index'));
+
+        $response = $this->actingAs($this->admin())->get(route('dashboard.index'));
+
+        $response->assertOk();
+        $response->assertSee('Автобусы');
+        $response->assertSee(route('filament.admin.resources.buses.index'), false);
+        $response->assertDontSee(route('dashboard.transport.index'), false);
     }
 
     public function test_shell_is_right_to_left_under_arabic_locale(): void

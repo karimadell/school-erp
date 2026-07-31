@@ -71,21 +71,21 @@ class TimetableGridGenerateTest extends TestCase
         return Grade::create(['name' => 'Grade ' . uniqid(), 'stage_id' => $stage->id]);
     }
 
-    protected function makeClass(Grade $grade): SchoolClass
+    protected function makeClass(Grade $grade, bool $active = true): SchoolClass
     {
         return SchoolClass::create([
-            'grade_id' => $grade->id, 'code' => 'C-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a',
+            'grade_id' => $grade->id, 'code' => 'C-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => $active,
         ]);
     }
 
-    protected function makeSubject(): Subject
+    protected function makeSubject(bool $active = true): Subject
     {
-        return Subject::create(['code' => 'S-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a']);
+        return Subject::create(['code' => 'S-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => $active]);
     }
 
-    protected function makeTeacher(): Teacher
+    protected function makeTeacher(bool $active = true): Teacher
     {
-        return Teacher::create(['first_name' => 'A', 'last_name' => 'B-' . uniqid(), 'is_active' => true]);
+        return Teacher::create(['first_name' => 'A', 'last_name' => 'B-' . uniqid(), 'is_active' => $active]);
     }
 
     protected function makeDays(): \Illuminate\Support\Collection
@@ -114,6 +114,53 @@ class TimetableGridGenerateTest extends TestCase
         $grid->periods = $periods;
 
         return $grid;
+    }
+
+    protected function makeCurriculum(
+        AcademicYear $year,
+        Grade $grade,
+        Subject $subject,
+        int $weeklyHours,
+        bool $active = true,
+    ): Curriculum {
+        return Curriculum::create([
+            'academic_year_id' => $year->id,
+            'grade_id' => $grade->id,
+            'subject_id' => $subject->id,
+            'weekly_hours' => $weeklyHours,
+            'type' => Curriculum::TYPE_MANDATORY,
+            'is_active' => $active,
+        ]);
+    }
+
+    protected function makeAssignment(
+        AcademicYear $year,
+        SchoolClass $class,
+        Subject $subject,
+        Teacher $teacher,
+    ): TeacherAssignment {
+        return TeacherAssignment::create([
+            'teacher_id' => $teacher->id,
+            'class_id' => $class->id,
+            'subject_id' => $subject->id,
+            'academic_year_id' => $year->id,
+        ]);
+    }
+
+    protected function makeLesson(
+        SchoolClass $class,
+        Subject $subject,
+        Teacher $teacher,
+        Day $day,
+        Period $period,
+    ): Timetable {
+        return Timetable::create([
+            'class_id' => $class->id,
+            'subject_id' => $subject->id,
+            'teacher_id' => $teacher->id,
+            'day_id' => $day->id,
+            'period_id' => $period->id,
+        ]);
     }
 
     public function test_weekly_hours_come_from_curriculum_not_a_subject_column(): void
@@ -271,13 +318,15 @@ class TimetableGridGenerateTest extends TestCase
         $this->assertSame([$assigned->id], $teacherIds->values()->all());
     }
 
-    public function test_no_active_academic_year_generates_no_lessons(): void
+    public function test_missing_active_academic_year_preserves_the_existing_timetable_and_reports_failure(): void
     {
         $year = $this->makeYear(active: false);
         $grade = $this->makeGrade();
         $class = $this->makeClass($grade);
         $subject = $this->makeSubject();
         $teacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(6);
 
         \App\Support\AcademicYearLock::withoutLock(function () use ($year, $grade, $subject, $teacher, $class) {
             Curriculum::create([
@@ -290,9 +339,207 @@ class TimetableGridGenerateTest extends TestCase
             ]);
         });
 
-        $grid = $this->makeGrid($class, $this->makeDays(), $this->makePeriods(6));
+        $existing = $this->makeLesson($class, $subject, $teacher, $days->first(), $periods->first());
+
+        $grid = $this->makeGrid($class, $days, $periods);
         $grid->generateTimetable();
 
-        $this->assertSame(0, Timetable::where('class_id', $class->id)->count());
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        Notification::assertNotified(__('timetable.generation_no_active_year'));
+        Notification::assertNotNotified(__('timetable.generated_success'));
+    }
+
+    public function test_successful_generation_replaces_only_the_current_class_with_a_complete_timetable(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $currentClass = $this->makeClass($grade);
+        $otherClass = $this->makeClass($grade);
+        $oldSubject = $this->makeSubject();
+        $newSubject = $this->makeSubject();
+        $oldTeacher = $this->makeTeacher();
+        $newTeacher = $this->makeTeacher();
+        $otherTeacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(3);
+
+        $this->makeCurriculum($year, $grade, $newSubject, 3);
+        $this->makeAssignment($year, $currentClass, $newSubject, $newTeacher);
+
+        $oldCurrentLesson = $this->makeLesson($currentClass, $oldSubject, $oldTeacher, $days->first(), $periods->first());
+        $otherLesson = $this->makeLesson($otherClass, $oldSubject, $otherTeacher, $days->get(1), $periods->first());
+
+        $this->makeGrid($currentClass, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseMissing('timetables', ['id' => $oldCurrentLesson->id]);
+        $this->assertDatabaseHas('timetables', ['id' => $otherLesson->id]);
+        $this->assertSame(3, Timetable::where('class_id', $currentClass->id)->where('subject_id', $newSubject->id)->count());
+        $this->assertSame(1, Timetable::where('class_id', $otherClass->id)->count());
+        Notification::assertNotified(__('timetable.generated_success'));
+    }
+
+    public function test_missing_curriculum_preserves_the_existing_timetable(): void
+    {
+        $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade);
+        $subject = $this->makeSubject();
+        $teacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(2);
+        $existing = $this->makeLesson($class, $subject, $teacher, $days->first(), $periods->first());
+
+        $this->makeGrid($class, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        Notification::assertNotified(__('timetable.generation_no_curriculum'));
+        Notification::assertNotNotified(__('timetable.generated_success'));
+    }
+
+    public function test_missing_assigned_teacher_preserves_the_existing_timetable(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade);
+        $subject = $this->makeSubject();
+        $oldSubject = $this->makeSubject();
+        $oldTeacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(2);
+        $this->makeCurriculum($year, $grade, $subject, 1);
+        $existing = $this->makeLesson($class, $oldSubject, $oldTeacher, $days->first(), $periods->first());
+
+        $this->makeGrid($class, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        Notification::assertNotified(__('timetable.generation_missing_teacher'));
+        Notification::assertNotNotified(__('timetable.generated_success'));
+    }
+
+    public function test_insufficient_capacity_preserves_the_existing_timetable(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade);
+        $subject = $this->makeSubject();
+        $teacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(1);
+        TimetableSetting::current()->update(['non_working_days' => ['mon', 'tue', 'wed', 'thu', 'fri', 'sat']]);
+        $this->makeCurriculum($year, $grade, $subject, 2);
+        $this->makeAssignment($year, $class, $subject, $teacher);
+        $existing = $this->makeLesson($class, $subject, $teacher, $days->get(1), $periods->first());
+
+        $this->makeGrid($class, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        Notification::assertNotified(__('timetable.generation_insufficient_slots'));
+        Notification::assertNotNotified(__('timetable.generated_success'));
+    }
+
+    public function test_incomplete_checker_validated_placement_rolls_back_the_replacement(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $currentClass = $this->makeClass($grade);
+        $otherClass = $this->makeClass($grade);
+        $subject = $this->makeSubject();
+        $oldSubject = $this->makeSubject();
+        $teacher = $this->makeTeacher();
+        $oldTeacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(1);
+        TimetableSetting::current()->update(['non_working_days' => ['tue', 'wed', 'thu', 'fri', 'sat']]);
+        $this->makeCurriculum($year, $grade, $subject, 2);
+        $this->makeAssignment($year, $currentClass, $subject, $teacher);
+
+        $existing = $this->makeLesson($currentClass, $oldSubject, $oldTeacher, $days->get(2), $periods->first());
+        $this->makeLesson($otherClass, $subject, $teacher, $days->get(0), $periods->first());
+        $this->makeLesson($otherClass, $subject, $teacher, $days->get(1), $periods->first());
+
+        $this->makeGrid($currentClass, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        $this->assertSame(0, Timetable::where('class_id', $currentClass->id)->where('subject_id', $subject->id)->count());
+        Notification::assertNotified(__('timetable.generation_incomplete'));
+        Notification::assertNotNotified(__('timetable.generated_success'));
+    }
+
+    public function test_inactive_class_preserves_its_existing_timetable(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade, active: false);
+        $subject = $this->makeSubject();
+        $teacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(1);
+        $this->makeCurriculum($year, $grade, $subject, 1);
+        $this->makeAssignment($year, $class, $subject, $teacher);
+        $existing = $this->makeLesson($class, $subject, $teacher, $days->first(), $periods->first());
+
+        $this->makeGrid($class, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        Notification::assertNotified(__('timetable.generation_inactive_class'));
+    }
+
+    public function test_inactive_curriculum_is_rejected_without_replacing_the_timetable(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade);
+        $subject = $this->makeSubject();
+        $teacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(1);
+        $this->makeCurriculum($year, $grade, $subject, 1, active: false);
+        $existing = $this->makeLesson($class, $subject, $teacher, $days->first(), $periods->first());
+
+        $this->makeGrid($class, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        Notification::assertNotified(__('timetable.generation_no_curriculum'));
+    }
+
+    public function test_inactive_subject_is_rejected_without_replacing_the_timetable(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade);
+        $subject = $this->makeSubject(active: false);
+        $oldSubject = $this->makeSubject();
+        $teacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(1);
+        $this->makeCurriculum($year, $grade, $subject, 1);
+        $existing = $this->makeLesson($class, $oldSubject, $teacher, $days->first(), $periods->first());
+
+        $this->makeGrid($class, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        Notification::assertNotified(__('timetable.generation_inactive_subject'));
+    }
+
+    public function test_inactive_assigned_teacher_is_rejected_without_replacing_the_timetable(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade);
+        $subject = $this->makeSubject();
+        $oldSubject = $this->makeSubject();
+        $teacher = $this->makeTeacher(active: false);
+        $oldTeacher = $this->makeTeacher();
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(1);
+        $this->makeCurriculum($year, $grade, $subject, 1);
+        $this->makeAssignment($year, $class, $subject, $teacher);
+        $existing = $this->makeLesson($class, $oldSubject, $oldTeacher, $days->first(), $periods->first());
+
+        $this->makeGrid($class, $days, $periods)->generateTimetable();
+
+        $this->assertDatabaseHas('timetables', ['id' => $existing->id]);
+        $this->assertDatabaseMissing('timetables', ['class_id' => $class->id, 'teacher_id' => $teacher->id]);
+        Notification::assertNotified(__('timetable.generation_missing_teacher'));
     }
 }

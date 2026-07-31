@@ -18,6 +18,8 @@ use App\Services\CurriculumAwareTimetableConflictChecker;
 use App\Support\CurriculumContext;
 use App\Support\TimetableSlot;
 use App\Support\WorkingDays;
+use Illuminate\Support\Facades\DB;
+use Throwable;
 
 class TimetableGrid extends Page
 {
@@ -272,103 +274,162 @@ class TimetableGrid extends Page
 
         $activeYearId = AcademicYear::where('is_active', true)->value('id');
 
-        $classes = SchoolClass::all();
+        if (! $activeYearId) {
+            $this->notifyGenerationFailure('timetable.generation_no_active_year');
+
+            return;
+        }
+
+        $class = SchoolClass::find($this->classId);
+
+        if (! $class || ! $class->is_active || ! $class->grade_id) {
+            $this->notifyGenerationFailure('timetable.generation_inactive_class');
+
+            return;
+        }
 
         $workingDays = app(WorkingDays::class)->workingDays($this->days);
+        $periods = collect($this->periods);
 
-        foreach($classes as $class){
+        $curricula = Curriculum::with('subject')
+            ->where('academic_year_id', $activeYearId)
+            ->where('grade_id', $class->grade_id)
+            ->where('is_active', true)
+            ->get();
 
-            // حذف الجدول القديم
-            Timetable::where('class_id',$class->id)->delete();
+        if ($curricula->isEmpty()) {
+            $this->notifyGenerationFailure('timetable.generation_no_curriculum');
 
-            $curricula = Curriculum::with('subject')
-                ->where('academic_year_id', $activeYearId)
-                ->where('grade_id', $class->grade_id)
+            return;
+        }
+
+        if ($curricula->contains(fn (Curriculum $curriculum) => ! $curriculum->subject?->is_active)) {
+            $this->notifyGenerationFailure('timetable.generation_inactive_subject');
+
+            return;
+        }
+
+        $teachersBySubject = collect();
+
+        foreach ($curricula as $curriculum) {
+            $teachers = Teacher::where('is_active', true)
+                ->whereHas('assignments', function ($query) use ($activeYearId, $class, $curriculum) {
+                    $query->where('academic_year_id', $activeYearId)
+                        ->where('class_id', $class->id)
+                        ->where('subject_id', $curriculum->subject_id);
+                })
                 ->get();
 
-            $pool = [];
+            if ($teachers->isEmpty()) {
+                $this->notifyGenerationFailure('timetable.generation_missing_teacher');
 
-            foreach($curricula as $curriculum){
-
-                $subject = $curriculum->subject;
-                $hours = (int)$curriculum->weekly_hours;
-
-                for($i=0;$i<$hours;$i++){
-                    $pool[] = $subject;
-                }
+                return;
             }
 
-            shuffle($pool);
+            $teachersBySubject->put($curriculum->subject_id, $teachers);
+        }
 
-            $lastSubjectId = null;
+        $requiredHours = (int) $curricula->sum('weekly_hours');
+        $availableSlots = $workingDays->count() * $periods->count();
 
-            foreach($workingDays as $day){
+        if ($requiredHours > $availableSlots) {
+            $this->notifyGenerationFailure('timetable.generation_insufficient_slots');
 
-                $usedToday = [];
+            return;
+        }
 
-                foreach($this->periods as $period){
+        $pool = [];
 
-                    if(empty($pool)){
-                        continue;
-                    }
+        foreach ($curricula as $curriculum) {
+            for ($i = 0; $i < (int) $curriculum->weekly_hours; $i++) {
+                $pool[] = $curriculum->subject;
+            }
+        }
 
-                    $availableSubjects = collect($pool)
-                        ->where('id','!=',$lastSubjectId)
-                        ->whereNotIn('id',$usedToday);
+        shuffle($pool);
 
-                    if($availableSubjects->isEmpty()){
-                        $availableSubjects = collect($pool);
-                    }
+        try {
+            DB::transaction(function () use ($class, $workingDays, $periods, $teachersBySubject, &$pool) {
+                Timetable::where('class_id', $class->id)->delete();
 
-                    $subject = $availableSubjects->random();
+                $lastSubjectId = null;
 
-                    $teacher = Teacher::whereHas('currentAssignments', function($q) use($class,$subject){
+                foreach ($workingDays as $day) {
+                    $usedToday = [];
 
-                            $q->where('class_id',$class->id)
-                              ->where('subject_id',$subject->id);
+                    foreach ($periods as $period) {
+                        if (empty($pool)) {
+                            break 2;
+                        }
 
-                        })
-                        ->whereDoesntHave('timetables',function($q) use($day,$period){
+                        $preferredSubjects = collect($pool)
+                            ->where('id', '!=', $lastSubjectId)
+                            ->whereNotIn('id', $usedToday);
 
-                            $q->where('day_id',$day->id)
-                              ->where('period_id',$period->id);
+                        $candidateSubjects = $preferredSubjects
+                            ->concat($pool)
+                            ->unique('id');
 
-                        })
-                        ->inRandomOrder()
-                        ->first();
+                        foreach ($candidateSubjects as $subject) {
+                            foreach ($teachersBySubject->get($subject->id)->shuffle() as $teacher) {
+                                $slot = new TimetableSlot(
+                                    classId: $class->id,
+                                    dayId: $day->id,
+                                    periodId: $period->id,
+                                    teacherId: $teacher->id,
+                                    subjectId: $subject->id,
+                                );
 
-                    if(!$teacher){
-                        continue;
-                    }
+                                if (app(CurriculumAwareTimetableConflictChecker::class)->check($slot)->hasConflict()) {
+                                    continue;
+                                }
 
-                    Timetable::create([
-                        'class_id'=>$class->id,
-                        'day_id'=>$day->id,
-                        'period_id'=>$period->id,
-                        'subject_id'=>$subject->id,
-                        'teacher_id'=>$teacher->id
-                    ]);
+                                Timetable::create([
+                                    'class_id' => $class->id,
+                                    'day_id' => $day->id,
+                                    'period_id' => $period->id,
+                                    'subject_id' => $subject->id,
+                                    'teacher_id' => $teacher->id,
+                                ]);
 
-                    $lastSubjectId = $subject->id;
-                    $usedToday[] = $subject->id;
+                                $lastSubjectId = $subject->id;
+                                $usedToday[] = $subject->id;
 
-                    foreach($pool as $index=>$poolSubject){
+                                foreach ($pool as $index => $poolSubject) {
+                                    if ($poolSubject->id === $subject->id) {
+                                        unset($pool[$index]);
+                                        $pool = array_values($pool);
+                                        break;
+                                    }
+                                }
 
-                        if($poolSubject->id === $subject->id){
-
-                            unset($pool[$index]);
-                            $pool = array_values($pool);
-                            break;
-
+                                break 2;
+                            }
                         }
                     }
                 }
-            }
+
+                if (! empty($pool)) {
+                    throw new \RuntimeException('Unable to place every required curriculum lesson.');
+                }
+            });
+        } catch (Throwable) {
+            $this->notifyGenerationFailure('timetable.generation_incomplete');
+
+            return;
         }
 
         Notification::make()
             ->title(__('timetable.generated_success'))
             ->success()
+            ->send();
+    }
+
+    protected function notifyGenerationFailure(string $translationKey): void
+    {
+        Notification::make()
+            ->title(__($translationKey))
+            ->danger()
             ->send();
     }
 }

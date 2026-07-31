@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Modern UI v2: Preflight is disabled project-wide (tailwind.config.js) so
+ * it doesn't fight with Bootstrap's Reboot on the dashboard/* pages. The
+ * auth pages (layouts/guest.blade.php) load neither Bootstrap nor Preflight
+ * though, so box-sizing/margin resets they were implicitly relying on are
+ * restored here explicitly, scoped to this stylesheet only.
+ */
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+}
+
 /* Sidebar */
 
 .sidebar{

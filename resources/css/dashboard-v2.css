@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Modern UI v2. Preflight is disabled globally (tailwind.config.js) so the
+ * legacy Bootstrap-based dashboard/* views this batch doesn't touch are
+ * unaffected. Everything below only ever applies where these utility
+ * classes are explicitly used — the new shell and the redesigned
+ * dashboard home page.
+ */
+
+@layer base {
+    .ui2-scope {
+        font-family: 'Inter', 'Cairo', system-ui, sans-serif;
+    }
+
+    [dir="rtl"] .ui2-scope {
+        font-family: 'Cairo', 'Inter', system-ui, sans-serif;
+    }
+}
+
+@layer components {
+    /* ---- Shell / sidebar ---- */
+
+    .ui2-sidebar {
+        @apply fixed inset-y-0 start-0 z-30 flex h-screen w-64 -translate-x-full flex-col overflow-y-auto bg-slate-900 transition-transform duration-200 lg:sticky lg:top-0 lg:w-64 lg:translate-x-0;
+    }
+
+    [dir="rtl"] .ui2-sidebar {
+        @apply translate-x-full lg:translate-x-0;
+    }
+
+    .ui2-shell.is-mobile-open .ui2-sidebar {
+        @apply translate-x-0;
+    }
+
+    .ui2-shell.is-collapsed .ui2-sidebar {
+        @apply lg:w-[76px];
+    }
+
+    .ui2-shell.is-collapsed .ui2-sidebar-hide-when-collapsed {
+        @apply lg:hidden;
+    }
+
+    .ui2-shell.is-collapsed .ui2-sidebar-link {
+        @apply lg:justify-center;
+    }
+
+    .ui2-sidebar-backdrop {
+        @apply fixed inset-0 z-20 hidden bg-slate-900/50 lg:hidden;
+    }
+
+    .ui2-shell.is-mobile-open .ui2-sidebar-backdrop {
+        @apply block;
+    }
+
+    .ui2-sidebar-link {
+        @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-300 transition-colors hover:bg-white/5 hover:text-white;
+    }
+
+    .ui2-sidebar-link.is-active {
+        @apply bg-indigo-600 text-white hover:bg-indigo-600;
+    }
+
+    /* ---- Shared components ---- */
+
+    .ui2-card {
+        @apply rounded-2xl border border-slate-200 bg-white p-6 shadow-sm;
+    }
+
+    .ui2-btn {
+        @apply inline-flex items-center justify-center gap-2 rounded-lg border border-transparent px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600;
+    }
+
+    .ui2-btn-icon {
+        @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600;
+    }
+
+    .ui2-label {
+        @apply mb-1.5 block text-sm font-medium text-slate-700;
+    }
+
+    .ui2-input {
+        @apply block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500;
+    }
+
+    .ui2-input.is-invalid {
+        @apply border-red-400 focus:border-red-500 focus:ring-red-500;
+    }
+}

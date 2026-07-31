@@ -54,7 +54,7 @@ class TimetableGrid extends Page
         $this->classId = $record;
 
         $this->days = Day::orderBy('order')->get();
-        $this->periods = Period::orderBy('order')->get();
+        $this->periods = Period::orderBy('number')->get();
 
         $this->subjects = $this->curriculumSubjectsForClass();
     }

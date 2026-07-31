@@ -18,7 +18,7 @@ class="bg-green-600 text-white px-4 py-2 rounded mb-4"
 @foreach($days as $day)
 
 <th class="border p-2">
-{{ $day->name_ru }}
+{{ $day->name }}
 </th>
 
 @endforeach

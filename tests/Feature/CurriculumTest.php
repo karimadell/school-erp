@@ -85,6 +85,41 @@ class CurriculumTest extends TestCase
         ]);
     }
 
+    public function test_curriculum_metadata_is_stored_cast_and_defaults_are_applied(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $subject = $this->makeSubject();
+
+        $defaulted = Curriculum::create([
+            'academic_year_id' => $year->id,
+            'grade_id' => $grade->id,
+            'subject_id' => $subject->id,
+            'weekly_hours' => 4,
+            'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+
+        $this->assertSame(Curriculum::ASSESSMENT_GRADE, $defaulted->fresh()->assessment_type);
+        $this->assertTrue($defaulted->fresh()->is_active);
+        $this->assertNull($defaulted->fresh()->report_order);
+
+        $metadata = Curriculum::create([
+            'academic_year_id' => $year->id,
+            'grade_id' => $grade->id,
+            'subject_id' => $this->makeSubject()->id,
+            'weekly_hours' => 2,
+            'type' => Curriculum::TYPE_ELECTIVE,
+            'assessment_type' => Curriculum::ASSESSMENT_PASS_FAIL,
+            'report_order' => 999,
+            'is_active' => false,
+            'notes' => 'Примечание',
+        ]);
+
+        $this->assertFalse($metadata->fresh()->is_active);
+        $this->assertSame(999, $metadata->fresh()->report_order);
+        $this->assertSame('Примечание', $metadata->fresh()->notes);
+    }
+
     public function test_relations_resolve_correctly(): void
     {
         $year = $this->makeYear();
@@ -262,6 +297,35 @@ class CurriculumTest extends TestCase
             'subject_id' => $subject->id,
             'weekly_hours' => 3,
             'type' => 'mandatory',
+        ]);
+    }
+
+    public function test_filament_can_create_an_inactive_curriculum_row(): void
+    {
+        $user = $this->userWithRole('admin');
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $subject = $this->makeSubject();
+
+        Livewire::actingAs($user)
+            ->test(CreateCurriculum::class)
+            ->fillForm([
+                'academic_year_id' => $year->id,
+                'grade_id' => $grade->id,
+                'subject_id' => $subject->id,
+                'weekly_hours' => 3,
+                'type' => Curriculum::TYPE_MANDATORY,
+                'assessment_type' => Curriculum::ASSESSMENT_GRADE,
+                'is_active' => false,
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertDatabaseHas('curricula', [
+            'academic_year_id' => $year->id,
+            'grade_id' => $grade->id,
+            'subject_id' => $subject->id,
+            'is_active' => false,
         ]);
     }
 

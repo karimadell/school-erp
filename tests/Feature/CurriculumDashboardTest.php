@@ -63,6 +63,10 @@ class CurriculumDashboardTest extends TestCase
             'subject_id' => $this->makeSubject()->id,
             'weekly_hours' => 3,
             'type' => Curriculum::TYPE_MANDATORY,
+            'assessment_type' => Curriculum::ASSESSMENT_GRADE,
+            'report_order' => null,
+            'is_active' => true,
+            'notes' => null,
         ], $overrides));
     }
 
@@ -173,6 +177,8 @@ class CurriculumDashboardTest extends TestCase
                 'subject_id' => $subject->id,
                 'weekly_hours' => 4,
                 'type' => Curriculum::TYPE_MANDATORY,
+                'assessment_type' => Curriculum::ASSESSMENT_GRADE,
+                'is_active' => true,
             ])
             ->assertRedirect(route('dashboard.curricula.index'));
 
@@ -186,12 +192,20 @@ class CurriculumDashboardTest extends TestCase
                 'subject_id' => $subject->id,
                 'weekly_hours' => 6,
                 'type' => Curriculum::TYPE_ELECTIVE,
+                'assessment_type' => Curriculum::ASSESSMENT_PASS_FAIL,
+                'report_order' => 10,
+                'is_active' => false,
+                'notes' => 'Обновлено',
             ])
             ->assertRedirect(route('dashboard.curricula.index'));
 
         $fresh = $entry->fresh();
         $this->assertSame(6, $fresh->weekly_hours);
         $this->assertSame(Curriculum::TYPE_ELECTIVE, $fresh->type);
+        $this->assertSame(Curriculum::ASSESSMENT_PASS_FAIL, $fresh->assessment_type);
+        $this->assertSame(10, $fresh->report_order);
+        $this->assertFalse($fresh->is_active);
+        $this->assertSame('Обновлено', $fresh->notes);
 
         $this->actingAs($admin)
             ->delete(route('dashboard.curricula.destroy', $entry))
@@ -212,7 +226,10 @@ class CurriculumDashboardTest extends TestCase
 
         $this->actingAs($admin)
             ->post(route('dashboard.curricula.store'), [])
-            ->assertSessionHasErrors(['academic_year_id', 'grade_id', 'subject_id', 'weekly_hours', 'type']);
+            ->assertSessionHasErrors([
+                'academic_year_id', 'grade_id', 'subject_id', 'weekly_hours', 'type',
+                'assessment_type', 'is_active',
+            ]);
 
         $this->assertDatabaseCount('curricula', 0);
     }
@@ -283,6 +300,8 @@ class CurriculumDashboardTest extends TestCase
                 'subject_id' => $entry->subject_id,
                 'weekly_hours' => 7,
                 'type' => Curriculum::TYPE_MANDATORY,
+                'assessment_type' => Curriculum::ASSESSMENT_GRADE,
+                'is_active' => true,
             ])
             ->assertSessionDoesntHaveErrors();
 
@@ -315,6 +334,22 @@ class CurriculumDashboardTest extends TestCase
             ->get(route('dashboard.curricula.index'))
             ->assertSuccessful()
             ->assertSee('Grade 5');
+    }
+
+    public function test_index_does_not_render_a_translation_key_for_an_invalid_assessment_type(): void
+    {
+        $admin = $this->userWithRole('admin');
+        $entry = $this->makeCurriculum();
+        $entry->setAttribute('assessment_type', 'unexpected');
+
+        $this->actingAs($admin);
+        $this->view('dashboard.curricula.index', [
+            'curricula' => new \Illuminate\Pagination\LengthAwarePaginator([$entry], 1, 15),
+            'academicYears' => collect(),
+            'grades' => collect(),
+        ])
+            ->assertSee('—')
+            ->assertDontSee('curriculum.assessment_unexpected');
     }
 
     public function test_index_filters_by_academic_year(): void
@@ -399,7 +434,89 @@ class CurriculumDashboardTest extends TestCase
         $this->actingAs($admin)
             ->get(route('dashboard.curricula.edit', $entry))
             ->assertSuccessful()
-            ->assertSee($entry->weekly_hours);
+            ->assertSee($entry->weekly_hours)
+            ->assertSee('name="assessment_type"', false)
+            ->assertSee('name="report_order"', false)
+            ->assertSee('name="is_active"', false)
+            ->assertSee('name="notes"', false);
+    }
+
+    public function test_create_form_renders_russian_metadata_fields_and_options(): void
+    {
+        $admin = $this->userWithRole('admin');
+
+        $this->actingAs($admin)
+            ->get(route('dashboard.curricula.create'))
+            ->assertSuccessful()
+            ->assertSee('Форма аттестации')
+            ->assertSee('Оценка')
+            ->assertSee('Зачёт')
+            ->assertSee('Без оценивания')
+            ->assertSee('Порядок в табеле')
+            ->assertSee('Примечания');
+    }
+
+    public function test_metadata_validation_boundaries_and_invalid_values(): void
+    {
+        $admin = $this->userWithRole('admin');
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+
+        foreach ([1, 999, null] as $index => $reportOrder) {
+            $subject = $this->makeSubject("Valid {$index}");
+            $this->actingAs($admin)
+                ->post(route('dashboard.curricula.store'), [
+                    'academic_year_id' => $year->id,
+                    'grade_id' => $grade->id,
+                    'subject_id' => $subject->id,
+                    'weekly_hours' => 2,
+                    'type' => Curriculum::TYPE_MANDATORY,
+                    'assessment_type' => Curriculum::ASSESSMENT_GRADE,
+                    'report_order' => $reportOrder,
+                    'is_active' => true,
+                ])
+                ->assertSessionDoesntHaveErrors();
+        }
+
+        foreach ([0, 1000] as $index => $reportOrder) {
+            $this->actingAs($admin)
+                ->post(route('dashboard.curricula.store'), [
+                    'academic_year_id' => $year->id,
+                    'grade_id' => $grade->id,
+                    'subject_id' => $this->makeSubject("Invalid order {$index}")->id,
+                    'weekly_hours' => 2,
+                    'type' => Curriculum::TYPE_MANDATORY,
+                    'assessment_type' => Curriculum::ASSESSMENT_GRADE,
+                    'report_order' => $reportOrder,
+                    'is_active' => true,
+                ])
+                ->assertSessionHasErrors('report_order');
+        }
+
+        $this->actingAs($admin)
+            ->post(route('dashboard.curricula.store'), [
+                'academic_year_id' => $year->id,
+                'grade_id' => $grade->id,
+                'subject_id' => $this->makeSubject('Invalid assessment')->id,
+                'weekly_hours' => 2,
+                'type' => Curriculum::TYPE_MANDATORY,
+                'assessment_type' => 'invalid',
+                'is_active' => true,
+            ])
+            ->assertSessionHasErrors('assessment_type');
+
+        $this->actingAs($admin)
+            ->post(route('dashboard.curricula.store'), [
+                'academic_year_id' => $year->id,
+                'grade_id' => $grade->id,
+                'subject_id' => $this->makeSubject('Long notes')->id,
+                'weekly_hours' => 2,
+                'type' => Curriculum::TYPE_MANDATORY,
+                'assessment_type' => Curriculum::ASSESSMENT_GRADE,
+                'is_active' => true,
+                'notes' => str_repeat('a', 2001),
+            ])
+            ->assertSessionHasErrors('notes');
     }
 
     /*

@@ -41,6 +41,14 @@ class UpdateCurriculumRequest extends FormRequest
                 Curriculum::TYPE_ELECTIVE,
                 Curriculum::TYPE_OPTIONAL_ENRICHMENT,
             ])],
+            'assessment_type' => ['required', Rule::in([
+                Curriculum::ASSESSMENT_GRADE,
+                Curriculum::ASSESSMENT_PASS_FAIL,
+                Curriculum::ASSESSMENT_UNGRADED,
+            ])],
+            'report_order' => ['nullable', 'integer', 'between:1,999'],
+            'is_active' => ['required', 'boolean'],
+            'notes' => ['nullable', 'string', 'max:2000'],
         ];
     }
 

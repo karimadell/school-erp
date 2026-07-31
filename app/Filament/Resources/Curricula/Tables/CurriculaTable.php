@@ -6,6 +6,7 @@ use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 
@@ -41,6 +42,15 @@ class CurriculaTable
                         default => $state,
                     })
                     ->sortable(),
+
+                TextColumn::make('assessment_type')
+                    ->label(__('curriculum.assessment_type'))
+                    ->formatStateUsing(fn (string $state) => __('curriculum.assessment_' . $state))
+                    ->sortable(),
+
+                IconColumn::make('is_active')
+                    ->label(__('curriculum.is_active'))
+                    ->boolean(),
 
                 TextColumn::make('created_at')
                     ->dateTime()

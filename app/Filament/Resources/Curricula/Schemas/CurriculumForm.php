@@ -4,6 +4,8 @@ namespace App\Filament\Resources\Curricula\Schemas;
 
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\Toggle;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 use Illuminate\Validation\Rules\Unique;
@@ -59,6 +61,30 @@ class CurriculumForm
                     'optional_enrichment' => __('curriculum.type_optional_enrichment'),
                 ])
                 ->required(),
+
+            Select::make('assessment_type')
+                ->label(__('curriculum.assessment_type'))
+                ->options([
+                    'grade' => __('curriculum.assessment_grade'),
+                    'pass_fail' => __('curriculum.assessment_pass_fail'),
+                    'ungraded' => __('curriculum.assessment_ungraded'),
+                ])
+                ->default('grade')
+                ->required(),
+
+            TextInput::make('report_order')
+                ->label(__('curriculum.report_order'))
+                ->numeric()
+                ->minValue(1)
+                ->maxValue(999),
+
+            Toggle::make('is_active')
+                ->label(__('curriculum.is_active'))
+                ->default(true),
+
+            Textarea::make('notes')
+                ->label(__('curriculum.notes'))
+                ->maxLength(2000),
 
         ]);
     }

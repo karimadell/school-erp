@@ -19,16 +19,26 @@ class Curriculum extends Model
     public const TYPE_ELECTIVE = 'elective';
     public const TYPE_OPTIONAL_ENRICHMENT = 'optional_enrichment';
 
+    public const ASSESSMENT_GRADE = 'grade';
+    public const ASSESSMENT_PASS_FAIL = 'pass_fail';
+    public const ASSESSMENT_UNGRADED = 'ungraded';
+
     protected $fillable = [
         'academic_year_id',
         'grade_id',
         'subject_id',
         'weekly_hours',
         'type',
+        'assessment_type',
+        'report_order',
+        'is_active',
+        'notes',
     ];
 
     protected $casts = [
         'weekly_hours' => 'integer',
+        'report_order' => 'integer',
+        'is_active' => 'boolean',
     ];
 
     public function academicYear()

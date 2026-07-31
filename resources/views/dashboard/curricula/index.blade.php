@@ -78,6 +78,8 @@
                         <th class="px-6 py-3 text-start font-medium">{{ __('curriculum.subject') }}</th>
                         <th class="px-6 py-3 text-start font-medium">{{ __('curriculum.weekly_hours') }}</th>
                         <th class="px-6 py-3 text-start font-medium">{{ __('curriculum.type') }}</th>
+                        <th class="px-6 py-3 text-start font-medium">{{ __('curriculum.assessment_type') }}</th>
+                        <th class="px-6 py-3 text-start font-medium">{{ __('curriculum.is_active') }}</th>
                         <th class="px-6 py-3 text-end font-medium">{{ __('curriculum.actions') }}</th>
                     </tr>
                 </thead>
@@ -91,6 +93,19 @@
                             <td class="px-6 py-3">
                                 <span class="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
                                     {{ __('curriculum.type_' . $entry->type) }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-3 text-slate-700">
+                                {{ match ($entry->assessment_type) {
+                                    'grade', null => __('curriculum.assessment_grade'),
+                                    'pass_fail' => __('curriculum.assessment_pass_fail'),
+                                    'ungraded' => __('curriculum.assessment_ungraded'),
+                                    default => '—',
+                                } }}
+                            </td>
+                            <td class="px-6 py-3">
+                                <span class="rounded-full px-2.5 py-0.5 text-xs font-medium {{ $entry->is_active ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-600' }}">
+                                    {{ $entry->is_active ? __('curriculum.active') : __('curriculum.inactive') }}
                                 </span>
                             </td>
                             <td class="px-6 py-3">
@@ -118,7 +133,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="6" class="px-6 py-10 text-center text-sm text-slate-500">
+                            <td colspan="8" class="px-6 py-10 text-center text-sm text-slate-500">
                                 {{ __('curriculum.no_data') }}
                             </td>
                         </tr>

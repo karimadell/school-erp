@@ -107,6 +107,51 @@
                     @enderror
                 </div>
 
+                <div>
+                    <label for="assessment_type" class="ui2-label">
+                        {{ __('curriculum.assessment_type') }} <span class="text-red-500">*</span>
+                    </label>
+                    <select id="assessment_type" name="assessment_type"
+                            class="ui2-input @error('assessment_type') is-invalid @enderror" required>
+                        <option value="grade" @selected(old('assessment_type', 'grade') === 'grade')>{{ __('curriculum.assessment_grade') }}</option>
+                        <option value="pass_fail" @selected(old('assessment_type') === 'pass_fail')>{{ __('curriculum.assessment_pass_fail') }}</option>
+                        <option value="ungraded" @selected(old('assessment_type') === 'ungraded')>{{ __('curriculum.assessment_ungraded') }}</option>
+                    </select>
+                    @error('assessment_type')
+                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+
+                <div>
+                    <label for="report_order" class="ui2-label">{{ __('curriculum.report_order') }}</label>
+                    <input type="number" id="report_order" name="report_order" min="1" max="999"
+                           value="{{ old('report_order') }}"
+                           class="ui2-input @error('report_order') is-invalid @enderror">
+                    @error('report_order')
+                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+
+                <div class="sm:col-span-2">
+                    <input type="hidden" name="is_active" value="0">
+                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" name="is_active" value="1" @checked(old('is_active', '1') == '1')>
+                        {{ __('curriculum.active') }}
+                    </label>
+                    @error('is_active')
+                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+
+                <div class="sm:col-span-2">
+                    <label for="notes" class="ui2-label">{{ __('curriculum.notes') }}</label>
+                    <textarea id="notes" name="notes" rows="4" maxlength="2000"
+                              class="ui2-input @error('notes') is-invalid @enderror">{{ old('notes') }}</textarea>
+                    @error('notes')
+                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+
             </div>
 
             <div class="mt-6 flex gap-2">

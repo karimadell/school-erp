@@ -9,6 +9,8 @@ class Stage extends Model
     protected $fillable = [
         'name',
         'description',
+        'order',
+        'is_active',
     ];
 
     /*

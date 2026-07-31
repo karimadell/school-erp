@@ -59,10 +59,27 @@ class StageTest extends TestCase
 
         $response = $this->actingAs($user)->post(route('dashboard.stages.store'), [
             'name' => 'Primary',
+            'order' => 7,
         ]);
 
         $response->assertRedirect(route('dashboard.stages.index'));
-        $this->assertDatabaseHas('stages', ['name' => 'Primary']);
+        $this->assertDatabaseHas('stages', [
+            'name' => 'Primary',
+            'order' => 7,
+        ]);
+    }
+
+    public function test_stage_persists_is_active_false(): void
+    {
+        $stage = Stage::create([
+            'name' => 'Inactive Stage',
+            'is_active' => false,
+        ]);
+
+        $this->assertDatabaseHas('stages', [
+            'id' => $stage->id,
+            'is_active' => false,
+        ]);
     }
 
     public function test_authorized_user_can_update_a_stage(): void

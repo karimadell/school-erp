@@ -93,9 +93,6 @@ Route::middleware(['auth'])
 
         Route::resource('students', StudentController::class);
 
-        Route::get('students/{id}/financial', [StudentController::class, 'financial'])
-            ->name('students.financial');
-
         Route::get('enrollments', [EnrollmentController::class, 'index'])
             ->name('enrollments.index');
 

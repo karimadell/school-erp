@@ -111,10 +111,24 @@ class StudentController extends Controller
 
     public function show($id)
     {
-        $student = Student::with(['class', 'grades.subject', 'grades.exam'])
+        $student = Student::with([
+            'class',
+            'currentEnrollment.academicYear',
+            'currentEnrollment.stage',
+            'currentEnrollment.grade',
+            'currentEnrollment.schoolClass',
+            'enrollments.academicYear',
+            'enrollments.stage',
+            'enrollments.grade',
+            'enrollments.schoolClass',
+            'grades.subject',
+            'grades.exam',
+        ])
             ->findOrFail($id);
 
-        return view('dashboard.students.show', compact('student'));
+        $currentEnrollment = $student->currentEnrollment;
+
+        return view('dashboard.students.show', compact('student', 'currentEnrollment'));
     }
 
     public function edit($id)

@@ -2,12 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Models\AcademicYear;
+use App\Models\Enrollment;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Route;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
@@ -70,6 +73,53 @@ class StudentTest extends TestCase
         $response = $this->actingAs($user)->get(route('dashboard.students.index'));
 
         $response->assertOk();
+    }
+
+    public function test_show_page_renders_with_a_current_enrollment(): void
+    {
+        $user = $this->authorizedUser();
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Enrolled Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027',
+            'start_date' => '2026-09-01',
+            'end_date' => '2027-05-31',
+            'is_active' => true,
+        ]);
+
+        Enrollment::create([
+            'student_id' => $student->id,
+            'academic_year_id' => $year->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'enrollment_date' => '2026-09-01',
+            'status' => 'active',
+            'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($user)->get(route('dashboard.students.show', $student));
+
+        $response->assertOk();
+        $response->assertViewHas('currentEnrollment', function ($currentEnrollment) use ($year) {
+            return $currentEnrollment?->academic_year_id === $year->id;
+        });
+    }
+
+    public function test_show_page_renders_without_a_current_enrollment(): void
+    {
+        $user = $this->authorizedUser();
+        $student = Student::forceCreate(['name' => 'Unenrolled Student']);
+
+        $response = $this->actingAs($user)->get(route('dashboard.students.show', $student));
+
+        $response->assertOk();
+        $response->assertViewHas('currentEnrollment', null);
+    }
+
+    public function test_financial_route_is_not_registered(): void
+    {
+        $this->assertFalse(Route::has('dashboard.students.financial'));
     }
 
     public function test_unauthorized_user_cannot_open_create_page(): void

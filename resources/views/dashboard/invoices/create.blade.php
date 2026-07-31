@@ -309,7 +309,7 @@
                                             id="uniform-size"
                                             class="form-select">
                                         <option value="">Не выбрано</option>
-                                        @@@foreach(['8','10','12','14','16','XS','S','M','L','XL','XXL'] as $size)
+                                        @foreach(['8','10','12','14','16','XS','S','M','L','XL','XXL'] as $size)
                                             <option value="{{ $size }}">{{ $size }}</option>
                                         @endforeach
                                     </select>

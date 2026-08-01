@@ -29,6 +29,10 @@ class TeacherAssignmentResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Учителя и сотрудники';
 
+    protected static ?string $navigationLabel = 'Назначения учителей';
+
+    protected static ?int $navigationSort = 20;
+
     protected static ?string $modelLabel = 'Назначение';
 
     protected static ?string $pluralModelLabel = 'Назначения учителей';

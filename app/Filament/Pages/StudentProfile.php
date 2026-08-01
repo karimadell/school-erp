@@ -11,7 +11,9 @@ class StudentProfile extends Page
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-user';
 
     protected static string|\UnitEnum|null $navigationGroup = 'Ученики';
-    protected static ?string $navigationLabel = 'Профиль студента';
+    protected static ?string $navigationLabel = 'Профиль ученика';
+
+    protected static ?int $navigationSort = 20;
 
 
     protected string $view = 'filament.pages.student-profile';

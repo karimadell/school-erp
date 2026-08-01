@@ -22,6 +22,10 @@ class ExpenseResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Финансы';
 
+    protected static ?string $navigationLabel = 'Расходы';
+
+    protected static ?int $navigationSort = 40;
+
     protected static ?string $recordTitleAttribute = 'title';
 
     public static function form(Schema $schema): Schema

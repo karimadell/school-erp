@@ -18,6 +18,8 @@ class TeacherResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Учителя и сотрудники';
 
+    protected static ?int $navigationSort = 10;
+
     protected static ?string $modelLabel = 'Учитель';
 
     protected static ?string $pluralModelLabel = 'Учителя';

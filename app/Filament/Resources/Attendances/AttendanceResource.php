@@ -35,6 +35,8 @@ class AttendanceResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = 'Учебный процесс';
 
+    protected static ?int $navigationSort = 50;
+
     public static function getNavigationLabel(): string
     {
         return __('attendance.title');

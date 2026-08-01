@@ -20,6 +20,8 @@ class ClassResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
 
+    protected static ?int $navigationSort = 20;
+
     protected static ?string $modelLabel = 'Класс';
 
     protected static ?string $pluralModelLabel = 'Классы';

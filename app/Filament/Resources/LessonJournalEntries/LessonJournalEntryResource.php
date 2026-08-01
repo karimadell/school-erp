@@ -28,6 +28,10 @@ class LessonJournalEntryResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
 
+    protected static ?string $navigationLabel = 'Журнал уроков';
+
+    protected static ?int $navigationSort = 40;
+
     protected static ?string $modelLabel = 'Запись журнала';
 
     protected static ?string $pluralModelLabel = 'Журнал уроков';

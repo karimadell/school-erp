@@ -26,7 +26,9 @@ class TeacherSalaryResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = 'Учителя и сотрудники';
 
-    protected static ?string $navigationLabel = 'Teacher Salaries';
+    protected static ?string $navigationLabel = 'Зарплаты учителей';
+
+    protected static ?int $navigationSort = 30;
 
     public static function form(Schema $schema): Schema
     {

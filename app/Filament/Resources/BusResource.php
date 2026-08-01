@@ -12,6 +12,8 @@ use App\Filament\Resources\BusResource\Pages;
 
 class BusResource extends Resource
 {
+    protected static bool $isDiscovered = false;
+
     protected static ?string $model = Bus::class;
 
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-truck';

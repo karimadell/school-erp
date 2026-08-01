@@ -20,6 +20,8 @@ class StudentResource extends Resource
 
     protected static ?string $navigationLabel = 'Студенты';
 
+    protected static ?int $navigationSort = 10;
+
     protected static ?string $modelLabel = 'Студент';
 
     protected static ?string $pluralModelLabel = 'Студенты';

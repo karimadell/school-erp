@@ -17,6 +17,8 @@ class ReportCard extends Page
 
     protected static string|UnitEnum|null $navigationGroup = 'Учебный процесс';
 
+    protected static ?int $navigationSort = 70;
+
     protected string $view = 'filament.pages.report-card';
 
     public $studentId = null;

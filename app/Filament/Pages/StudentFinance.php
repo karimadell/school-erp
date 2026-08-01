@@ -13,6 +13,8 @@ class StudentFinance extends Page
 
     protected static ?string $navigationLabel = 'Финансы студентов';
 
+    protected static ?int $navigationSort = 80;
+
     protected static string|UnitEnum|null $navigationGroup = 'Финансы';
 
     protected string $view = 'filament.pages.student-finance';

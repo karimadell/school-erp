@@ -19,11 +19,13 @@
 @if($student)
 
 <button
-wire:click="downloadPdf"
-class="bg-green-600 text-white px-4 py-2 rounded"
+type="button"
+class="cursor-not-allowed rounded bg-gray-200 px-4 py-2 text-gray-500"
+disabled
+title="Формирование PDF пока недоступно"
 >
 
-Download PDF
+PDF пока недоступен
 
 </button>
 

@@ -15,7 +15,9 @@ class FinanceMonthlyReport extends Page
 
     protected static string|UnitEnum|null $navigationGroup = 'Финансы';
 
-    protected static ?string $navigationLabel = 'Отчет доходы / расходы';
+    protected static ?string $navigationLabel = 'Доходы и расходы по месяцам';
+
+    protected static ?int $navigationSort = 60;
 
     protected string $view = 'filament.pages.finance-monthly-report';
 

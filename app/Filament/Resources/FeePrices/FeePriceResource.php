@@ -21,9 +21,11 @@ class FeePriceResource extends Resource
 
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-currency-dollar';
 
-    protected static string|\UnitEnum|null $navigationGroup = 'Finance';
+    protected static string|\UnitEnum|null $navigationGroup = 'Финансы';
 
-    protected static ?string $navigationLabel = 'Fee Prices';
+    protected static ?string $navigationLabel = 'Тарифы';
+
+    protected static ?int $navigationSort = 20;
 
     protected static ?string $recordTitleAttribute = 'name';
 

@@ -62,6 +62,15 @@ class AdminPanelProvider extends PanelProvider
                 for: 'App\\Filament\\Pages'
             )
 
+            ->navigationGroups([
+                'Учебный процесс',
+                'Ученики',
+                'Учителя и сотрудники',
+                'Финансы',
+                'Транспорт',
+                'Администрирование',
+            ])
+
             ->pages([
                 Dashboard::class,
             ])

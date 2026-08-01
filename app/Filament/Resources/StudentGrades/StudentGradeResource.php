@@ -34,6 +34,8 @@ class StudentGradeResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = 'Учебный процесс';
 
+    protected static ?int $navigationSort = 60;
+
     public static function form(Schema $schema): Schema
     {
         return StudentGradeForm::configure($schema);

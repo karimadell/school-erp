@@ -26,6 +26,10 @@ class CurriculumResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
 
+    protected static ?string $navigationLabel = 'Учебные планы';
+
+    protected static ?int $navigationSort = 30;
+
     public static function getModelLabel(): string
     {
         return __('curriculum.title_singular');

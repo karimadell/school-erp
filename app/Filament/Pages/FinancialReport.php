@@ -15,7 +15,9 @@ class FinancialReport extends Page
 
     protected static string|UnitEnum|null $navigationGroup = 'Финансы';
 
-    protected static ?string $navigationLabel = 'Финансовый отчет';
+    protected static ?string $navigationLabel = 'Финансовый отчёт';
+
+    protected static ?int $navigationSort = 50;
 
     protected static ?string $title = 'Финансовый отчет';
 

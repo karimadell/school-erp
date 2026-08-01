@@ -18,6 +18,10 @@ class AcademicYearResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
 
+    protected static ?string $navigationLabel = 'Учебные годы';
+
+    protected static ?int $navigationSort = 10;
+
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-calendar';
 
     protected static ?string $modelLabel = 'Учебный год';

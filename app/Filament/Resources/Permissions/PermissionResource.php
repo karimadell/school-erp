@@ -28,6 +28,8 @@ class PermissionResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = 'Администрирование';
 
+    protected static ?int $navigationSort = 30;
+
     public static function form(Schema $schema): Schema
     {
         return PermissionForm::configure($schema);

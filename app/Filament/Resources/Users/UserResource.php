@@ -28,6 +28,8 @@ class UserResource extends Resource
 
     protected static string|UnitEnum|null $navigationGroup = 'Администрирование';
 
+    protected static ?int $navigationSort = 10;
+
     public static function form(Schema $schema): Schema
     {
         return UserForm::configure($schema);

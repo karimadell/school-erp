@@ -24,6 +24,10 @@ class FeeResource extends Resource
 
     protected static \UnitEnum|string|null $navigationGroup = 'Финансы';
 
+    protected static ?string $navigationLabel = 'Услуги и сборы';
+
+    protected static ?int $navigationSort = 10;
+
     protected static ?string $recordTitleAttribute = 'Fee';
 
     public static function form(Schema $schema): Schema

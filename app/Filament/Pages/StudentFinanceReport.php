@@ -15,7 +15,9 @@ class StudentFinanceReport extends Page
 
     protected static string|UnitEnum|null $navigationGroup = 'Финансы';
 
-    protected static ?string $navigationLabel = 'Финансы студента';
+    protected static ?string $navigationLabel = 'Финансовый отчёт ученика';
+
+    protected static ?int $navigationSort = 90;
 
     protected string $view = 'filament.pages.student-finance-report';
 

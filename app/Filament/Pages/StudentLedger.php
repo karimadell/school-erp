@@ -12,7 +12,9 @@ class StudentLedger extends Page
 {
     protected static BackedEnum|string|null $navigationIcon = 'heroicon-o-document-text';
 
-    protected static ?string $navigationLabel = 'كشف حساب الطالب';
+    protected static ?string $navigationLabel = 'Финансы ученика';
+
+    protected static ?int $navigationSort = 70;
 
     protected static string|UnitEnum|null $navigationGroup = 'Финансы';
 

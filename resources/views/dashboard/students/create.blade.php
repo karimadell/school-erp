@@ -87,13 +87,7 @@
                                    value="{{ old('patronymic_ru') }}">
                         </div>
 
-                        <div class="col-md-6">
-                            <label class="form-label">{{ __('students.name_ar') }}</label>
-                            <input type="text" name="name_ar" class="form-control"
-                                   value="{{ old('name_ar') }}">
-                        </div>
-
-                        <div class="col-md-6">
+                        <div class="col-md-12">
                             <label class="form-label">{{ __('students.class') }}</label>
                             <select name="class_id" class="form-select" required>
                                 <option value="">{{ __('students.select_class') }}</option>

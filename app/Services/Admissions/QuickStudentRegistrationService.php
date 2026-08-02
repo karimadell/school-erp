@@ -55,8 +55,9 @@ class QuickStudentRegistrationService
             }
 
             $student = Student::create([
-                'name' => $data['student_name_ru'],
-                'name_en' => $data['student_name_en'] ?? null,
+                'last_name_ru' => $data['student_last_name_ru'],
+                'first_name_ru' => $data['student_first_name_ru'],
+                'patronymic_ru' => $data['student_patronymic_ru'] ?? null,
                 'phone' => $data['phone'],
                 'class_id' => $class->id,
                 'status' => Student::STATUS_PRE_REGISTERED,

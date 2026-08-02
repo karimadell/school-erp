@@ -60,7 +60,8 @@ class QuickStudentRegistrationTest extends TestCase
     private function payload(array $services, array $overrides = []): array
     {
         return array_replace([
-            'student_name_ru' => 'Иван Иванов', 'phone' => '01012345678',
+            'student_last_name_ru' => '  Иванов  ', 'student_first_name_ru' => ' Иван   Иван ',
+            'student_patronymic_ru' => ' Иванович ', 'phone' => '01012345678',
             'academic_year_id' => $this->year->id, 'stage_id' => $this->stage->id,
             'grade_id' => $this->grade->id, 'class_id' => $this->class->id, 'enrollment_mode_id' => $this->mode->id,
             'registration_date' => '2026-08-02', 'services' => $services,
@@ -77,13 +78,13 @@ class QuickStudentRegistrationTest extends TestCase
     {
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             $this->service($this->registrationFee),
-        ], ['student_name_en' => 'Ivan Ivanov']));
+        ]));
 
         $student = Student::sole();
         $invoice = Invoice::sole();
         $response->assertRedirect(route('dashboard.quick-registration.summary', $invoice));
         $this->assertSame(Student::STATUS_PRE_REGISTERED, $student->status);
-        $this->assertSame('Ivan Ivanov', $student->name_en);
+        $this->assertSame('Иванов Иван Иван Иванович', $student->full_name);
         $this->assertTrue($student->has_incomplete_profile);
         $this->assertSame('2026-08-02', Enrollment::sole()->enrollment_date->toDateString());
         $this->assertSame('1000.00', $invoice->total_amount);
@@ -187,8 +188,8 @@ class QuickStudentRegistrationTest extends TestCase
     public function test_validation_messages_are_russian(): void
     {
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), []);
-        $response->assertSessionHasErrors(['student_name_ru', 'phone', 'services']);
-        $this->assertSame('Укажите имя ученика на русском языке.', session('errors')->first('student_name_ru'));
+        $response->assertSessionHasErrors(['student_last_name_ru', 'student_first_name_ru', 'phone', 'services']);
+        $this->assertSame('Укажите фамилию ученика.', session('errors')->first('student_last_name_ru'));
     }
 
     public function test_teacher_reception_and_no_role_are_denied(): void

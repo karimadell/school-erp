@@ -38,13 +38,19 @@ class StudentResource extends Resource
                 ->preload()
                 ->required(),
 
-            Forms\Components\TextInput::make('first_name')
-                ->label('Имя')
+            Forms\Components\TextInput::make('last_name_ru')
+                ->label('Фамилия')
+                ->maxLength(100)
                 ->required(),
 
-            Forms\Components\TextInput::make('last_name')
-                ->label('Фамилия')
+            Forms\Components\TextInput::make('first_name_ru')
+                ->label('Имя')
+                ->maxLength(100)
                 ->required(),
+
+            Forms\Components\TextInput::make('patronymic_ru')
+                ->label('Отчество')
+                ->maxLength(100),
 
             Forms\Components\TextInput::make('phone')
                 ->label('Телефон'),
@@ -76,15 +82,9 @@ class StudentResource extends Resource
         return $table
             ->columns([
 
-                Tables\Columns\TextColumn::make('first_name')
-                    ->label('Имя')
-                    ->searchable()
-                    ->sortable(),
-
-                Tables\Columns\TextColumn::make('last_name')
-                    ->label('Фамилия')
-                    ->searchable()
-                    ->sortable(),
+                Tables\Columns\TextColumn::make('full_name')
+                    ->label('ФИО')
+                    ->searchable(['last_name_ru', 'first_name_ru', 'patronymic_ru', 'name']),
 
                 Tables\Columns\TextColumn::make('class.name_ru')
                     ->label('Класс')
@@ -98,7 +98,7 @@ class StudentResource extends Resource
                     ->boolean(),
 
             ])
-            ->defaultSort('last_name');
+            ->defaultSort('last_name_ru');
     }
 
 

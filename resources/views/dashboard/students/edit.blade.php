@@ -58,14 +58,7 @@
                            class="form-control">
                 </div>
 
-                <div class="col-md-6">
-                    <label>{{ __('students.name_ar') }}</label>
-                    <input type="text" name="name_ar"
-                           value="{{ old('name_ar', $student->name_ar) }}"
-                           class="form-control">
-                </div>
-
-                <div class="col-md-6">
+                <div class="col-md-12">
                     <label>{{ __('students.class') }}</label>
                     <select name="class_id" class="form-select">
                         <option value="">{{ __('students.select_class') }}</option>

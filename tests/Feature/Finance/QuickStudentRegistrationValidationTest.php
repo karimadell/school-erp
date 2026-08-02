@@ -42,7 +42,8 @@ class QuickStudentRegistrationValidationTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_replace_recursive([
-            'student_name_ru' => 'Иван Иванов', 'phone' => '+20 101 234 5678',
+            'student_last_name_ru' => 'Иванов', 'student_first_name_ru' => 'Иван',
+            'student_patronymic_ru' => null, 'phone' => '+20 101 234 5678',
             'academic_year_id' => $this->year->id, 'stage_id' => $this->stage->id,
             'grade_id' => $this->grade->id, 'class_id' => $this->class->id,
             'enrollment_mode_id' => $this->mode->id, 'registration_date' => '2026-08-02',

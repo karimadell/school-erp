@@ -25,8 +25,9 @@
         <section class="card shadow-sm mb-4">
             <div class="card-header fw-bold">1. Минимальные данные ученика</div>
             <div class="card-body row g-3">
-                <div class="col-md-6"><label class="form-label">Имя ученика на русском языке *</label><input name="student_name_ru" value="{{ old('student_name_ru') }}" class="form-control" required></div>
-                <div class="col-md-6"><label class="form-label">Имя ученика на английском языке</label><input name="student_name_en" value="{{ old('student_name_en') }}" class="form-control"></div>
+                <div class="col-md-4"><label class="form-label">Фамилия *</label><input name="student_last_name_ru" value="{{ old('student_last_name_ru') }}" class="form-control" required></div>
+                <div class="col-md-4"><label class="form-label">Имя *</label><input name="student_first_name_ru" value="{{ old('student_first_name_ru') }}" class="form-control" required></div>
+                <div class="col-md-4"><label class="form-label">Отчество</label><input name="student_patronymic_ru" value="{{ old('student_patronymic_ru') }}" class="form-control"></div>
                 <div class="col-md-4"><label class="form-label">Телефон *</label><input name="phone" value="{{ old('phone') }}" class="form-control" required></div>
                 <div class="col-md-4"><label class="form-label">Дата регистрации *</label><input type="date" name="registration_date" value="{{ old('registration_date', now()->toDateString()) }}" class="form-control" required></div>
                 <div class="col-md-4"><label class="form-label">Учебный год *</label><select name="academic_year_id" class="form-select" required><option value="">Выберите учебный год</option>@foreach($academicYears as $year)<option value="{{ $year->id }}" @selected((string) old('academic_year_id', $defaultAcademicYearId) === (string) $year->id)>{{ $year->name }}</option>@endforeach</select></div>

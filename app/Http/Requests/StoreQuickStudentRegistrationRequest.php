@@ -21,6 +21,11 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $this->merge([
+            'student_last_name_ru' => \App\Models\Student::normalizeRussianNamePart($this->input('student_last_name_ru')),
+            'student_first_name_ru' => \App\Models\Student::normalizeRussianNamePart($this->input('student_first_name_ru')),
+            'student_patronymic_ru' => \App\Models\Student::normalizeRussianNamePart($this->input('student_patronymic_ru')),
+        ]);
         $services = collect($this->input('services', []))->map(function ($service) {
             $service = is_array($service) ? $service : [];
             $service['quantity'] ??= 1;
@@ -35,8 +40,9 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'student_name_ru' => ['required', 'string', 'max:255'],
-            'student_name_en' => ['nullable', 'string', 'max:255'],
+            'student_last_name_ru' => ['required', 'string', 'max:100'],
+            'student_first_name_ru' => ['required', 'string', 'max:100'],
+            'student_patronymic_ru' => ['nullable', 'string', 'max:100'],
             'phone' => ['required', 'string', 'max:20', 'regex:/^\+?[0-9\s\-()]{7,20}$/'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
@@ -149,7 +155,8 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'student_name_ru.required' => 'Укажите имя ученика на русском языке.',
+            'student_last_name_ru.required' => 'Укажите фамилию ученика.',
+            'student_first_name_ru.required' => 'Укажите имя ученика.',
             'phone.required' => 'Укажите номер телефона.',
             'phone.regex' => 'Укажите корректный номер телефона.',
             'academic_year_id.required' => 'Выберите учебный год.',

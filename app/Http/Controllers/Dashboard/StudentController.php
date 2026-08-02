@@ -28,8 +28,7 @@ class StudentController extends Controller
                     $sub->where('first_name_ru', 'like', "%{$q}%")
                         ->orWhere('last_name_ru', 'like', "%{$q}%")
                         ->orWhere('patronymic_ru', 'like', "%{$q}%")
-                        ->orWhere('first_name', 'like', "%{$q}%")
-                        ->orWhere('last_name', 'like', "%{$q}%");
+                        ->orWhere('name', 'like', "%{$q}%");
                 });
             })
             ->when($request->filled('gender'), function ($query) use ($request) {
@@ -58,9 +57,6 @@ class StudentController extends Controller
             'first_name_ru' => 'required|string|max:255',
             'patronymic_ru' => 'nullable|string|max:255',
 
-            'first_name' => 'nullable|string|max:255',
-            'last_name' => 'nullable|string|max:255',
-
             'birth_date' => 'nullable|date',
             'gender' => 'nullable|in:male,female',
 
@@ -71,6 +67,9 @@ class StudentController extends Controller
 
             'photo' => 'nullable|image|max:2048',
             'documents.*' => 'nullable|file|max:4096',
+        ], [
+            'last_name_ru.required' => 'Укажите фамилию ученика.',
+            'first_name_ru.required' => 'Укажите имя ученика.',
         ]);
 
         $data = $request->only([
@@ -78,8 +77,6 @@ class StudentController extends Controller
             'last_name_ru',
             'first_name_ru',
             'patronymic_ru',
-            'first_name',
-            'last_name',
             'birth_date',
             'gender',
             'phone',
@@ -150,9 +147,6 @@ class StudentController extends Controller
             'first_name_ru' => 'required|string|max:255',
             'patronymic_ru' => 'nullable|string|max:255',
 
-            'first_name' => 'nullable|string|max:255',
-            'last_name' => 'nullable|string|max:255',
-
             'birth_date' => 'nullable|date',
             'gender' => 'nullable|in:male,female',
 
@@ -163,6 +157,9 @@ class StudentController extends Controller
 
             'photo' => 'nullable|image|max:2048',
             'documents.*' => 'nullable|file|max:4096',
+        ], [
+            'last_name_ru.required' => 'Укажите фамилию ученика.',
+            'first_name_ru.required' => 'Укажите имя ученика.',
         ]);
 
         $data = $request->only([
@@ -170,8 +167,6 @@ class StudentController extends Controller
             'last_name_ru',
             'first_name_ru',
             'patronymic_ru',
-            'first_name',
-            'last_name',
             'birth_date',
             'gender',
             'phone',

@@ -9,14 +9,20 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
-use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 class StudentTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        (new RolesAndPermissionsSeeder)->run();
+    }
 
     protected function makeClass(): SchoolClass
     {
@@ -43,17 +49,12 @@ class StudentTest extends TestCase
     protected function authorizedUser(): User
     {
         $user = User::factory()->create();
-
-        foreach (['view students', 'create students', 'update students', 'delete students'] as $permission) {
-            Permission::findOrCreate($permission, 'web');
-        }
-
-        $user->givePermissionTo(['view students', 'create students', 'update students', 'delete students']);
+        $user->assignRole('admin');
 
         return $user;
     }
 
-    public function test_a_user_without_view_permission_cannot_view_the_index(): void
+    public function test_a_user_without_an_administrative_role_cannot_view_the_index(): void
     {
         // Batch 6: deny by default — viewing the index now requires
         // 'view students', replacing the old "any authenticated user" rule.
@@ -61,14 +62,13 @@ class StudentTest extends TestCase
 
         $response = $this->actingAs($user)->get(route('dashboard.students.index'));
 
-        $response->assertForbidden();
+        $response->assertRedirect('/login');
     }
 
     public function test_a_user_with_view_permission_can_view_the_index(): void
     {
         $user = User::factory()->create();
-        Permission::findOrCreate('view students', 'web');
-        $user->givePermissionTo('view students');
+        $user->assignRole('accountant');
 
         $response = $this->actingAs($user)->get(route('dashboard.students.index'));
 
@@ -125,6 +125,7 @@ class StudentTest extends TestCase
     public function test_unauthorized_user_cannot_open_create_page(): void
     {
         $user = User::factory()->create();
+        $user->assignRole('accountant');
 
         $response = $this->actingAs($user)->get(route('dashboard.students.create'));
 
@@ -134,6 +135,7 @@ class StudentTest extends TestCase
     public function test_unauthorized_user_cannot_store_a_student(): void
     {
         $user = User::factory()->create();
+        $user->assignRole('accountant');
         $class = $this->makeClass();
 
         $response = $this->actingAs($user)->post(route('dashboard.students.store'), [
@@ -167,7 +169,8 @@ class StudentTest extends TestCase
 
     public function test_unauthorized_user_cannot_delete_a_student(): void
     {
-        $user = $this->authorizedUser();
+        $user = User::factory()->create();
+        $user->assignRole('reception');
         $class = $this->makeClass();
 
         $student = Student::create([
@@ -175,10 +178,6 @@ class StudentTest extends TestCase
             'last_name_ru' => 'Petrov',
             'first_name_ru' => 'Petr',
         ]);
-
-        // Revoke only delete — create/update/view remain, proving the
-        // permissions are independently enforced, not bundled together.
-        $user->revokePermissionTo('delete students');
 
         $response = $this->actingAs($user)->delete(route('dashboard.students.destroy', $student));
 
@@ -191,10 +190,7 @@ class StudentTest extends TestCase
         // Proves Reception's exact grant (create/view/update, no delete)
         // is correctly enforced end-to-end.
         $user = User::factory()->create();
-        foreach (['view students', 'create students', 'update students'] as $permission) {
-            Permission::findOrCreate($permission, 'web');
-        }
-        $user->givePermissionTo(['view students', 'create students', 'update students']);
+        $user->assignRole('reception');
 
         $class = $this->makeClass();
         $student = Student::create([

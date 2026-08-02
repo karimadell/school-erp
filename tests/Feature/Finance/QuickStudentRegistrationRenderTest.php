@@ -46,6 +46,10 @@ class QuickStudentRegistrationRenderTest extends TestCase
             ->assertSeeInOrder(['2 класс', '10 класс'])
             ->assertSee('2026/2027')->assertSee('Очное обучение')->assertSee('Регистрационный взнос')
             ->assertSee('Обучение')->assertSee('Транспорт')->assertSee('Питание')->assertSee('Школьная форма')
-            ->assertSee('Общая стоимость')->assertSee('Создать ученика и счёт')->assertSee('EGP');
+            ->assertSee('Общая стоимость')->assertSee('Создать ученика и счёт')->assertSee('EGP')
+            ->assertSee('name="student_last_name_ru"', false)
+            ->assertSee('name="student_first_name_ru"', false)
+            ->assertSee('name="student_patronymic_ru"', false)
+            ->assertDontSee('student_name_en')->assertDontSee('name_ar');
     }
 }

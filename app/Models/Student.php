@@ -12,7 +12,6 @@ class Student extends Model
 
     protected $fillable = [
         'name',
-        'name_en',
         'status',
         'academic_year',
         
@@ -37,6 +36,38 @@ class Student extends Model
         'birth_date' => 'date',
         'documents' => 'array',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (Student $student): void {
+            foreach (['last_name_ru', 'first_name_ru', 'patronymic_ru'] as $field) {
+                if ($student->{$field} !== null) {
+                    $student->{$field} = self::normalizeRussianNamePart($student->{$field});
+                }
+            }
+
+            if (filled($student->last_name_ru) && filled($student->first_name_ru)) {
+                $student->name = $student->russianFullName();
+            }
+        });
+    }
+
+    public static function normalizeRussianNamePart(?string $value): ?string
+    {
+        $normalized = preg_replace('/\s+/u', ' ', trim((string) $value));
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    public function russianFullName(): string
+    {
+        $structured = collect([$this->last_name_ru, $this->first_name_ru, $this->patronymic_ru])
+            ->map(fn ($part) => self::normalizeRussianNamePart($part))
+            ->filter()
+            ->implode(' ');
+
+        return $structured !== '' ? $structured : trim((string) $this->name);
+    }
 
     public function class()
     {
@@ -88,30 +119,20 @@ class Student extends Model
 
     public function getFullNameAttribute()
     {
-        if (! empty($this->name)) {
-            return $this->name;
-        }
-
-        $parts = array_filter([
-            $this->last_name_ru ?: $this->last_name,
-            $this->first_name_ru ?: $this->first_name,
-            $this->patronymic_ru,
-        ]);
-
-        return implode(' ', $parts);
+        return $this->russianFullName();
     }
 
     public function getShortNameAttribute()
     {
-        if (! empty($this->name)) {
-            return $this->name;
+        if (! filled($this->last_name_ru) || ! filled($this->first_name_ru)) {
+            return trim((string) $this->name);
         }
 
-        $last = $this->last_name_ru ?: $this->last_name;
+        $last = $this->last_name_ru;
 
         $firstInitial = $this->first_name_ru
             ? mb_substr($this->first_name_ru, 0, 1) . '.'
-            : ($this->first_name ? mb_substr($this->first_name, 0, 1) . '.' : '');
+            : '';
 
         $patronymicInitial = $this->patronymic_ru
             ? mb_substr($this->patronymic_ru, 0, 1) . '.'
@@ -127,10 +148,14 @@ class Student extends Model
 
     public function getProfileCompletionPercentageAttribute(): int
     {
-        $fields = ['name', 'phone', 'birth_date', 'gender', 'nationality', 'address', 'email', 'documents'];
-        $completed = collect($fields)->filter(fn (string $field) => filled($this->{$field}))->count();
+        $requiredParts = [
+            filled($this->last_name_ru) && filled($this->first_name_ru) || filled($this->name),
+            filled($this->phone), filled($this->birth_date), filled($this->gender),
+            filled($this->nationality), filled($this->address), filled($this->email), filled($this->documents),
+        ];
+        $completed = collect($requiredParts)->filter()->count();
 
-        return (int) round(($completed / count($fields)) * 100);
+        return (int) round(($completed / count($requiredParts)) * 100);
     }
 
     public function getHasIncompleteProfileAttribute(): bool

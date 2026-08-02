@@ -39,7 +39,8 @@ class QuickStudentServiceAllocationTest extends TestCase
         $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
         $this->account = CashAccount::create(['name' => 'Главная касса', 'type' => 'cash']);
         $this->base = [
-            'student_name_ru' => 'Анна Петрова', 'student_name_en' => 'Anna Petrova', 'phone' => '01012345678',
+            'student_last_name_ru' => 'Петрова', 'student_first_name_ru' => 'Анна',
+            'student_patronymic_ru' => null, 'phone' => '01012345678',
             'academic_year_id' => $year->id, 'stage_id' => $stage->id, 'grade_id' => $grade->id,
             'class_id' => $class->id, 'enrollment_mode_id' => $mode->id, 'registration_date' => '2026-08-02',
         ];

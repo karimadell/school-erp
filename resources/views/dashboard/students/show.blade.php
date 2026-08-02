@@ -154,16 +154,6 @@
                             <div>{{ $student->patronymic_ru ?? '-' }}</div>
                         </div>
 
-                        <div class="col-md-6">
-                            <strong>{{ __('students.first_name_ar') }}</strong>
-                            <div>{{ $student->first_name ?? '-' }}</div>
-                        </div>
-
-                        <div class="col-md-6">
-                            <strong>{{ __('students.last_name_ar') }}</strong>
-                            <div>{{ $student->last_name ?? '-' }}</div>
-                        </div>
-
                     </div>
                 </div>
             </div>

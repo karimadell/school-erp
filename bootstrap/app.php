@@ -40,6 +40,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
 
             // ✅ permission middleware (your custom one)
             'permission' => \App\Http\Middleware\CheckPermission::class,
+            'administrative' => \App\Http\Middleware\EnsureAdministrativePortalAccess::class,
 
             // Spatie's role-check middleware, used by routes/web.php's
             // admin group (role:admin) — was previously unregistered,

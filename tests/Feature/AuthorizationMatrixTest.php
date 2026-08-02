@@ -63,12 +63,20 @@ class AuthorizationMatrixTest extends TestCase
         $this->assertFalse($user->canAccessPanel(\Filament\Facades\Filament::getPanel('admin')));
     }
 
-    public function test_only_admin_and_teacher_roles_can_access_the_teacher_panel(): void
+    public function test_only_an_active_linked_teacher_can_access_the_teacher_panel(): void
     {
         $teacherPanel = \Filament\Facades\Filament::getPanel('teacher');
 
-        $this->assertTrue($this->userWithRole('admin')->canAccessPanel($teacherPanel));
-        $this->assertTrue($this->userWithRole('teacher')->canAccessPanel($teacherPanel));
+        $teacher = $this->userWithRole('teacher');
+        \App\Models\Teacher::create([
+            'user_id' => $teacher->id,
+            'first_name' => 'Anna',
+            'last_name' => 'Ivanova',
+            'is_active' => true,
+        ]);
+
+        $this->assertTrue($teacher->canAccessPanel($teacherPanel));
+        $this->assertFalse($this->userWithRole('admin')->canAccessPanel($teacherPanel));
 
         foreach (['school-admin', 'accountant', 'reception', 'principal'] as $role) {
             $this->assertFalse(
@@ -76,6 +84,17 @@ class AuthorizationMatrixTest extends TestCase
                 "Role [{$role}] should NOT be able to access the teacher panel."
             );
         }
+    }
+
+    public function test_disabled_and_unlinked_users_cannot_access_panels(): void
+    {
+        $admin = $this->userWithRole('admin');
+        $admin->update(['is_active' => false]);
+
+        $teacher = $this->userWithRole('teacher');
+
+        $this->assertFalse($admin->canAccessPanel(\Filament\Facades\Filament::getPanel('admin')));
+        $this->assertFalse($teacher->canAccessPanel(\Filament\Facades\Filament::getPanel('teacher')));
     }
 
     /*

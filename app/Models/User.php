@@ -5,6 +5,7 @@ namespace App\Models;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -23,6 +24,7 @@ class User extends Authenticatable implements FilamentUser
         'name',
         'email',
         'password',
+        'is_active',
     ];
 
     protected $hidden = [
@@ -34,7 +36,13 @@ class User extends Authenticatable implements FilamentUser
     {
         return [
             'password' => 'hashed',
+            'is_active' => 'boolean',
         ];
+    }
+
+    public function teacher(): HasOne
+    {
+        return $this->hasOne(Teacher::class);
     }
 
     /*
@@ -47,15 +55,43 @@ class User extends Authenticatable implements FilamentUser
      * Batch 6: closes the previously-open gap where any authenticated
      * user, regardless of role, could reach both panels. Deny by default —
      * only the listed roles for each panel are admitted. The Teacher
-     * Portal is teacher- (and admin-, for oversight) only.
+     * Portal additionally requires an active, uniquely linked teacher.
      */
     public function canAccessPanel(Panel $panel): bool
     {
+        if (! $this->isActive()) {
+            return false;
+        }
+
         return match ($panel->getId()) {
-            'admin' => $this->hasAnyRole(['admin', 'school-admin', 'accountant', 'reception', 'principal']),
-            'teacher' => $this->hasAnyRole(['admin', 'teacher']),
+            'admin' => $this->canAccessAdministrativePortal(),
+            'teacher' => $this->hasRole('teacher')
+                && ! $this->hasAnyRole($this->administrativeRoles())
+                && $this->teacher()->where('is_active', true)->exists(),
             default => false,
         };
+    }
+
+    public function canAccessAdministrativePortal(): bool
+    {
+        return $this->isActive() && $this->hasAnyRole($this->administrativeRoles());
+    }
+
+    public function isActive(): bool
+    {
+        if (array_key_exists('is_active', $this->getAttributes())) {
+            return $this->is_active === true;
+        }
+
+        return $this->newQuery()->whereKey($this->getKey())->value('is_active') === true;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function administrativeRoles(): array
+    {
+        return ['admin', 'school-admin', 'accountant', 'reception', 'principal'];
     }
 
     /**

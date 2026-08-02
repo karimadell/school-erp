@@ -39,7 +39,7 @@ Route::get('/', function () {
     return redirect('/dashboard');
 });
 
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth', 'administrative'])->group(function () {
     Route::get('/dashboard/cash-reports', [CashReportController::class, 'index'])
         ->name('cash.reports.index');
 
@@ -75,7 +75,7 @@ Route::middleware(['auth'])->group(function () {
 // while real GET/HEAD traffic to /dashboard is still handled exclusively by
 // dashboard.index below.
 Route::match(['OPTIONS'], '/dashboard', [DashboardController::class, 'index'])
-    ->middleware('auth')
+    ->middleware(['auth', 'administrative'])
     ->name('dashboard');
 
 Route::middleware('auth')->group(function () {
@@ -84,7 +84,7 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-Route::middleware(['auth'])
+Route::middleware(['auth', 'administrative'])
     ->prefix('dashboard')
     ->name('dashboard.')
     ->group(function () {

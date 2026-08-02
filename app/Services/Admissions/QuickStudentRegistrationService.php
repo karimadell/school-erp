@@ -6,15 +6,21 @@ use App\Models\AcademicYear;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\Enrollment;
+use App\Models\EnrollmentMode;
 use App\Models\Fee;
+use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoicePayment;
+use App\Models\MealPlan;
 use App\Models\MealSubscription;
+use App\Models\SchoolClass;
+use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -32,10 +38,27 @@ class QuickStudentRegistrationService
             if (! $year->is_active) {
                 throw ValidationException::withMessages(['academic_year_id' => 'Выбранный учебный год больше не активен.']);
             }
+            $registrationDate = Carbon::parse($data['registration_date']);
+            if ($registrationDate->lt($year->start_date) || $registrationDate->gt($year->end_date)) {
+                throw ValidationException::withMessages(['registration_date' => 'Дата регистрации должна находиться в пределах учебного года.']);
+            }
+
+            $stage = Stage::query()->lockForUpdate()->findOrFail($data['stage_id']);
+            $grade = Grade::query()->lockForUpdate()->findOrFail($data['grade_id']);
+            $class = SchoolClass::query()->lockForUpdate()->findOrFail($data['class_id']);
+            $mode = EnrollmentMode::query()->lockForUpdate()->findOrFail($data['enrollment_mode_id']);
+            if (! $stage->is_active || $grade->stage_id !== $stage->id || $class->grade_id !== $grade->id || ! $class->is_active) {
+                throw ValidationException::withMessages(['class_id' => 'Ступень, параллель или класс изменились. Обновите страницу и повторите попытку.']);
+            }
+            if (! $mode->is_active) {
+                throw ValidationException::withMessages(['enrollment_mode_id' => 'Выбранная форма обучения больше не активна.']);
+            }
 
             $student = Student::create([
                 'name' => $data['student_name_ru'],
+                'name_en' => $data['student_name_en'] ?? null,
                 'phone' => $data['phone'],
+                'class_id' => $class->id,
                 'status' => Student::STATUS_PRE_REGISTERED,
             ]);
 
@@ -45,44 +68,94 @@ class QuickStudentRegistrationService
                 'enrollment_mode_id' => $data['enrollment_mode_id'],
                 'stage_id' => $data['stage_id'],
                 'grade_id' => $data['grade_id'],
-                'class_id' => null,
+                'class_id' => $class->id,
                 'academic_year' => $year->name,
                 'enrollment_date' => $data['registration_date'],
                 'enrolled_at' => $data['registration_date'],
                 'status' => 'active',
                 'is_active' => true,
-                'notes' => 'Быстрая предварительная регистрация. Личное дело не завершено.',
+                'notes' => collect([
+                    'Быстрая предварительная регистрация. Личное дело не завершено.',
+                    $data['notes'] ?? null,
+                ])->filter()->implode("\n"),
             ]);
 
-            $items = collect($data['services'])->map(function (array $service) {
-                $fee = Fee::query()->findOrFail($service['fee_id']);
+            $normalizedServices = collect($data['services'])->map(function (array $service) use ($grade) {
+                $fee = Fee::query()->lockForUpdate()->findOrFail($service['fee_id']);
+                $product = null;
+                $route = null;
+                $mealPlan = null;
+
+                if ($fee->category === Fee::CATEGORY_UNIFORM) {
+                    $product = DB::table('uniform_products')->where('is_active', true)->lockForUpdate()->find($service['uniform_product_id']);
+                    if (! $product) {
+                        throw ValidationException::withMessages(['services' => 'Выбранное изделие школьной формы больше не доступно.']);
+                    }
+                }
+                if ($fee->category === Fee::CATEGORY_TRANSPORT) {
+                    $route = DB::table('transport_routes')->lockForUpdate()->find($service['transport_route_id']);
+                    if (! $route) {
+                        throw ValidationException::withMessages(['services' => 'Выбранный транспортный маршрут больше не доступен.']);
+                    }
+                }
+                if ($fee->category === Fee::CATEGORY_FOOD) {
+                    $mealPlan = MealPlan::query()->where('is_active', true)->lockForUpdate()->find($service['meal_plan_id']);
+                    if (! $mealPlan) {
+                        throw ValidationException::withMessages(['services' => 'Выбранный план питания больше не доступен.']);
+                    }
+                }
 
                 return array_merge($service, [
+                    '_fee_category' => $fee->category,
                     'quantity' => (int) $service['quantity'],
-                    'item' => $fee->category === Fee::CATEGORY_UNIFORM ? $service['item'] : null,
-                    'size' => $fee->category === Fee::CATEGORY_UNIFORM ? $service['size'] : null,
-                    'option_type' => $fee->category === Fee::CATEGORY_TRANSPORT ? 'area' : null,
-                    'option_value' => $fee->category === Fee::CATEGORY_TRANSPORT ? $service['transport_area'] : null,
+                    'grade_id' => in_array($fee->category, [
+                        Fee::CATEGORY_TUITION,
+                        Fee::CATEGORY_TUITION_REGULAR,
+                        Fee::CATEGORY_TUITION_FAMILY,
+                        Fee::CATEGORY_TUITION_EXTERNAL,
+                    ], true) && blank($service['grade_group'] ?? null) ? $grade->id : null,
+                    'item' => $product?->name_ru,
+                    'size' => $product?->size,
+                    'transport_route_name' => $route?->name,
+                    'meal_plan_name' => $mealPlan?->name_ru,
+                    'option_type' => match ($fee->category) {
+                        Fee::CATEGORY_TRANSPORT => 'zone',
+                        Fee::CATEGORY_FOOD => 'meal_plan',
+                        default => null,
+                    },
+                    'option_value' => match ($fee->category) {
+                        Fee::CATEGORY_TRANSPORT => $service['transport_area'] ?? null,
+                        Fee::CATEGORY_FOOD => isset($service['meal_plan_id']) ? (string) $service['meal_plan_id'] : null,
+                        default => null,
+                    },
                 ]);
-            })->all();
+            });
+            $items = $normalizedServices->all();
 
-            $paidNow = collect($data['services'])->reduce(
+            $paidNow = $normalizedServices->reduce(
                 fn (string $sum, array $service) => bcadd($sum, (string) $service['paid_now'], 2),
                 '0.00'
             );
             $calculation = $this->calculator->calculate(
                 items: $items,
-                initialPaymentAmount: $paidNow,
+                initialPaymentAmount: '0.00',
                 pricingDate: $data['registration_date'],
             );
 
+            $allocatedPaid = '0.00';
+            $allocatedRemaining = '0.00';
             foreach ($calculation['line_items'] as $index => $line) {
-                if (bccomp((string) $data['services'][$index]['paid_now'], $line['amount'], 2) > 0) {
+                if (bccomp((string) $normalizedServices[$index]['paid_now'], $line['amount'], 2) > 0) {
                     throw ValidationException::withMessages([
                         "services.{$index}.paid_now" => 'Оплата по услуге не может превышать её рассчитанную стоимость.',
                     ]);
                 }
             }
+            $calculation = $this->calculator->calculate(
+                items: $items,
+                initialPaymentAmount: $paidNow,
+                pricingDate: $data['registration_date'],
+            );
 
             $invoice = Invoice::create([
                 'student_id' => $student->id,
@@ -105,7 +178,7 @@ class QuickStudentRegistrationService
             $invoice->save();
 
             foreach ($calculation['line_items'] as $index => $line) {
-                $selection = $data['services'][$index];
+                $selection = $normalizedServices[$index];
                 $fee = Fee::query()->lockForUpdate()->findOrFail($line['fee_id']);
 
                 if ($fee->category === Fee::CATEGORY_REGISTRATION) {
@@ -134,8 +207,10 @@ class QuickStudentRegistrationService
                     ]);
                 }
 
-                $linePaid = number_format((float) $selection['paid_now'], 2, '.', '');
+                $linePaid = bcadd((string) $selection['paid_now'], '0', 2);
                 $lineRemaining = bcsub($line['amount'], $linePaid, 2);
+                $allocatedPaid = bcadd($allocatedPaid, $linePaid, 2);
+                $allocatedRemaining = bcadd($allocatedRemaining, $lineRemaining, 2);
                 InvoiceItem::create([
                     'invoice_id' => $invoice->id,
                     'fee_id' => $fee->id,
@@ -158,6 +233,11 @@ class QuickStudentRegistrationService
                 ]);
             }
 
+            if (bccomp($allocatedPaid, $calculation['paid_amount'], 2) !== 0
+                || bccomp($allocatedRemaining, $calculation['remaining_amount'], 2) !== 0) {
+                throw ValidationException::withMessages(['services' => 'Распределение оплаты по услугам не совпадает с итогом счёта.']);
+            }
+
             if (bccomp($paidNow, '0.00', 2) > 0) {
                 $account = CashAccount::query()->lockForUpdate()->findOrFail($data['cash_account_id']);
                 CashTransaction::create([
@@ -174,6 +254,7 @@ class QuickStudentRegistrationService
                     'payment_method' => $data['payment_method'],
                     'paid_at' => now(),
                     'reference' => "Быстрая регистрация {$invoice->invoice_number}",
+                    'notes' => $data['payment_note'] ?? null,
                     'created_by' => $actor->id,
                 ]);
             }
@@ -185,18 +266,43 @@ class QuickStudentRegistrationService
     private function metadata(Fee $fee, array $selection): array
     {
         return array_filter(match ($fee->category) {
-            Fee::CATEGORY_UNIFORM => ['item' => $selection['item'], 'size' => $selection['size']],
-            Fee::CATEGORY_TRANSPORT => [
-                'area' => $selection['transport_area'], 'route' => $selection['transport_route'],
-                'stop' => $selection['transport_stop'],
+            Fee::CATEGORY_UNIFORM => [
+                'uniform_product_id' => $selection['uniform_product_id'],
+                'item' => $selection['item'], 'size' => $selection['size'],
             ],
-            Fee::CATEGORY_FOOD => ['meal_plan_id' => $selection['meal_plan_id']],
+            Fee::CATEGORY_TRANSPORT => [
+                'area' => $selection['transport_area'],
+                'route_id' => $selection['transport_route_id'],
+                'route' => $selection['transport_route_name'],
+                'stop' => $selection['transport_stop'] ?? null,
+            ],
+            Fee::CATEGORY_FOOD => [
+                'meal_plan_id' => $selection['meal_plan_id'],
+                'meal_plan' => $selection['meal_plan_name'],
+            ],
+            Fee::CATEGORY_TUITION,
+            Fee::CATEGORY_TUITION_REGULAR,
+            Fee::CATEGORY_TUITION_FAMILY,
+            Fee::CATEGORY_TUITION_EXTERNAL => [
+                'grade_group' => $selection['grade_group'] ?? null,
+                'payment_period' => $selection['payment_period'] ?? null,
+                'first_last_month' => (bool) ($selection['first_last_month'] ?? false),
+            ],
             default => [],
         }, fn ($value) => filled($value));
     }
 
     private function description(string $name, array $metadata): string
     {
-        return $metadata === [] ? $name : $name.' — '.collect($metadata)->map(fn ($value, $key) => "{$key}: {$value}")->implode(', ');
+        $labels = [
+            'item' => 'изделие', 'size' => 'размер', 'area' => 'зона', 'route' => 'маршрут',
+            'stop' => 'остановка', 'meal_plan' => 'план питания', 'grade_group' => 'группа классов',
+            'payment_period' => 'период оплаты', 'first_last_month' => 'первый и последний месяц',
+        ];
+        $visible = collect($metadata)->only(array_keys($labels));
+
+        return $visible->isEmpty() ? $name : $name.' — '.$visible
+            ->map(fn ($value, $key) => $labels[$key].': '.($value === true ? 'да' : $value))
+            ->implode(', ');
     }
 }

@@ -129,7 +129,7 @@ class InvoiceCalculationService
             ->whereDate('start_date', '<=', $date)
             ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $date));
 
-        foreach (['grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'] as $field) {
+        foreach (['grade_id', 'grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'] as $field) {
             if (filled($selection[$field] ?? null)) {
                 $query->where($field, $selection[$field]);
             }

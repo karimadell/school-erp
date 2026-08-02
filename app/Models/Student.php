@@ -12,6 +12,7 @@ class Student extends Model
 
     protected $fillable = [
         'name',
+        'name_en',
         'status',
         'academic_year',
         

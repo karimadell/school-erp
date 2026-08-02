@@ -12,6 +12,7 @@ use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoicePayment;
+use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentServiceSubscription;
@@ -20,6 +21,7 @@ use App\Services\Finance\InvoiceCalculationService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class QuickStudentRegistrationTest extends TestCase
@@ -30,6 +32,7 @@ class QuickStudentRegistrationTest extends TestCase
     private AcademicYear $year;
     private Stage $stage;
     private Grade $grade;
+    private SchoolClass $class;
     private EnrollmentMode $mode;
     private CashAccount $account;
     private Fee $registrationFee;
@@ -43,6 +46,7 @@ class QuickStudentRegistrationTest extends TestCase
         $this->year = AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
         $this->stage = Stage::create(['name' => 'Начальная школа']);
         $this->grade = Grade::create(['name' => '1 класс', 'stage_id' => $this->stage->id]);
+        $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => '1-А', 'name_ar' => '1-A', 'name_ru' => '1-А', 'is_active' => true]);
         $this->mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
         $this->account = CashAccount::create(['name' => 'Касса', 'type' => 'cash']);
         $this->registrationFee = $this->fee('Регистрационный взнос', Fee::CATEGORY_REGISTRATION, '1000.00');
@@ -58,7 +62,7 @@ class QuickStudentRegistrationTest extends TestCase
         return array_replace([
             'student_name_ru' => 'Иван Иванов', 'phone' => '01012345678',
             'academic_year_id' => $this->year->id, 'stage_id' => $this->stage->id,
-            'grade_id' => $this->grade->id, 'enrollment_mode_id' => $this->mode->id,
+            'grade_id' => $this->grade->id, 'class_id' => $this->class->id, 'enrollment_mode_id' => $this->mode->id,
             'registration_date' => '2026-08-02', 'services' => $services,
             'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
         ], $overrides);
@@ -73,17 +77,18 @@ class QuickStudentRegistrationTest extends TestCase
     {
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             $this->service($this->registrationFee),
-        ]));
+        ], ['student_name_en' => 'Ivan Ivanov']));
 
         $student = Student::sole();
         $invoice = Invoice::sole();
         $response->assertRedirect(route('dashboard.quick-registration.summary', $invoice));
         $this->assertSame(Student::STATUS_PRE_REGISTERED, $student->status);
+        $this->assertSame('Ivan Ivanov', $student->name_en);
         $this->assertTrue($student->has_incomplete_profile);
         $this->assertSame('2026-08-02', Enrollment::sole()->enrollment_date->toDateString());
         $this->assertSame('1000.00', $invoice->total_amount);
         $this->get(route('dashboard.quick-registration.summary', $invoice))->assertOk()
-            ->assertSee('Личное дело не завершено')->assertSee('Продолжить оформление личного дела');
+            ->assertSee('Данные ученика заполнены не полностью.')->assertSee('Завершить заполнение данных ученика');
     }
 
     public function test_registration_fee_can_only_appear_once_per_year(): void
@@ -136,24 +141,29 @@ class QuickStudentRegistrationTest extends TestCase
     public function test_uniform_quantity_and_metadata_are_snapshotted(): void
     {
         $uniform = $this->fee('Футболка', Fee::CATEGORY_UNIFORM, '200.00');
+        $productId = DB::table('uniform_products')->insertGetId([
+            'name_ru' => 'Футболка', 'category' => 'shirt', 'size' => 'M', 'price' => 999,
+            'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
+        ]);
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            $this->service($uniform, '100.00', ['quantity' => 2, 'item' => 'Футболка', 'size' => 'M']),
+            $this->service($uniform, '100.00', ['quantity' => 2, 'uniform_product_id' => $productId]),
         ]))->assertSessionHasNoErrors();
         $item = InvoiceItem::sole();
         $this->assertSame(2, $item->quantity);
         $this->assertSame('200.00', $item->unit_price);
         $this->assertSame('400.00', $item->amount);
-        $this->assertSame(['item' => 'Футболка', 'size' => 'M'], $item->metadata);
+        $this->assertSame(['uniform_product_id' => $productId, 'item' => 'Футболка', 'size' => 'M'], $item->metadata);
     }
 
     public function test_transport_metadata_is_preserved_on_item_and_subscription(): void
     {
         $transport = $this->fee('Транспорт', Fee::CATEGORY_TRANSPORT, '500.00');
-        $metadata = ['transport_area' => 'Мубарак 6', 'transport_route' => 'Маршрут 2', 'transport_stop' => 'Школа'];
+        $routeId = DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 2', 'created_at' => now(), 'updated_at' => now()]);
+        $metadata = ['transport_area' => 'Мубарак 6', 'transport_route_id' => $routeId, 'transport_stop' => 'Школа'];
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             $this->service($transport, '0.00', $metadata),
         ]))->assertSessionHasNoErrors();
-        $expected = ['area' => 'Мубарак 6', 'route' => 'Маршрут 2', 'stop' => 'Школа'];
+        $expected = ['area' => 'Мубарак 6', 'route_id' => $routeId, 'route' => 'Маршрут 2', 'stop' => 'Школа'];
         $this->assertSame($expected, InvoiceItem::sole()->metadata);
         $this->assertSame($expected, StudentServiceSubscription::sole()->metadata);
     }

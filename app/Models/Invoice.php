@@ -118,20 +118,19 @@ class Invoice extends Model
 
     public function refreshPaymentStatus(): void
     {
-        $net = max((float) $this->total_amount, 0);
-
-        $paid = min((float) $this->paid_amount, $net);
-        $remaining = max($net - $paid, 0);
+        $net = bcadd((string) $this->total_amount, '0', 2);
+        $paid = bcadd((string) $this->payments()->reorder()->sum('amount'), '0', 2);
+        $remaining = bcsub($net, $paid, 2);
 
         $this->paid_amount = $paid;
         $this->remaining_amount = $remaining;
 
-        if ($paid <= 0) {
+        if (bccomp($paid, '0.00', 2) <= 0) {
             $this->status = self::STATUS_UNPAID;
             $this->paid_at = null;
-        } elseif ($remaining > 0) {
+        } elseif (bccomp($remaining, '0.00', 2) > 0) {
             $this->status = self::STATUS_PARTIAL;
-            $this->paid_at ??= now();
+            $this->paid_at = null;
         } else {
             $this->status = self::STATUS_PAID;
             $this->paid_at ??= now();

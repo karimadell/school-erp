@@ -28,6 +28,7 @@ class CashAccount extends Model
         'type',
         'parent_id',
         'balance',
+        'is_active',
     ];
 
     /*
@@ -38,6 +39,7 @@ class CashAccount extends Model
 
     protected $casts = [
         'balance' => 'decimal:2',
+        'is_active' => 'boolean',
     ];
 
     /*

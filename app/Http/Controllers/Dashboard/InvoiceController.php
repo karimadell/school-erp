@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreInvoiceRequest;
-use App\Models\Account;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\Fee;
@@ -12,17 +11,17 @@ use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\InvoiceItem;
-use App\Models\JournalEntry;
-use App\Models\JournalItem;
 use App\Models\Student;
 use App\Models\AcademicYear;
 use App\Models\Enrollment;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\InvoicePaymentService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -66,11 +65,12 @@ class InvoiceController extends Controller
     public function store(
         StoreInvoiceRequest $request,
         InvoiceCalculationService $calculator,
+        InvoicePaymentService $payments,
     ): RedirectResponse
     {
         $data = $request->validated();
         $actorId = $request->user()->id;
-        $invoice = DB::transaction(function () use ($data, $calculator, $actorId) {
+        $invoice = DB::transaction(function () use ($data, $calculator, $payments, $actorId, $request) {
             $student = Student::query()->lockForUpdate()->findOrFail($data['student_id']);
             $academicYear = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
             $enrollmentExists = Enrollment::query()
@@ -104,16 +104,12 @@ class InvoiceController extends Controller
                 'discount_type' => $data['discount_type'] ?? null,
                 'discount_value' => $data['discount_value'] ?? '0.00',
                 'discount_amount' => $calculation['discount_amount'],
-                'paid_amount' => $calculation['paid_amount'],
-                'remaining_amount' => $calculation['remaining_amount'],
-                'status' => $calculation['status'],
-                'cash_account_id' => bccomp($calculation['paid_amount'], '0.00', 2) > 0
-                    ? $data['cash_account_id']
-                    : null,
-                'payment_method' => bccomp($calculation['paid_amount'], '0.00', 2) > 0
-                    ? $data['payment_method']
-                    : null,
-                'paid_at' => $calculation['status'] === Invoice::STATUS_PAID ? now() : null,
+                'paid_amount' => '0.00',
+                'remaining_amount' => $calculation['total_amount'],
+                'status' => Invoice::STATUS_UNPAID,
+                'cash_account_id' => null,
+                'payment_method' => null,
+                'paid_at' => null,
                 'due_date' => $data['due_date'],
                 'created_by' => $actorId,
             ];
@@ -146,13 +142,14 @@ class InvoiceController extends Controller
             }
 
             if (bccomp($calculation['paid_amount'], '0.00', 2) > 0) {
-                $this->recordInvoicePayment(
-                    invoice: $invoice,
+                $payments->record(
+                    invoiceId: $invoice->id,
                     cashAccountId: (int) $data['cash_account_id'],
                     paymentMethod: $data['payment_method'],
                     amount: $calculation['paid_amount'],
-                    referenceType: 'invoice',
-                    description: 'Invoice #' . $invoice->id
+                    idempotencyKey: (string) Str::uuid(),
+                    actor: $request->user(),
+                    reference: 'Первоначальная оплата по счёту '.$invoice->display_number,
                 );
             }
 
@@ -251,35 +248,24 @@ class InvoiceController extends Controller
         return $pdf->download('invoice-' . $invoice->id . '.pdf');
     }
 
-    public function pay(Request $request, Invoice $invoice): RedirectResponse
+    public function pay(Request $request, Invoice $invoice, InvoicePaymentService $payments): RedirectResponse
     {
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01'],
             'cash_account_id' => ['required', 'exists:cash_accounts,id'],
             'payment_method' => ['required', 'in:cash,bank,card,transfer'],
+            'idempotency_key' => ['required', 'uuid'],
         ]);
 
-        if ($invoice->status === Invoice::STATUS_PAID) {
-            return back()->withErrors(['amount' => __('invoices.already_paid')]);
-        }
-
-        $paymentAmount = min((float) $data['amount'], (float) $invoice->remaining_amount);
-
-        DB::transaction(function () use ($invoice, $data, $paymentAmount) {
-            $invoice->paid_amount = (float) $invoice->paid_amount + $paymentAmount;
-            $invoice->payment_method = $data['payment_method'];
-            $invoice->cash_account_id = $data['cash_account_id'];
-            $invoice->refreshPaymentStatus();
-
-            $this->recordInvoicePayment(
-                invoice: $invoice,
-                cashAccountId: (int) $data['cash_account_id'],
-                paymentMethod: $data['payment_method'],
-                amount: $paymentAmount,
-                referenceType: 'invoice_payment',
-                description: 'Invoice payment #' . $invoice->id
-            );
-        });
+        $payments->record(
+            invoiceId: $invoice->id,
+            cashAccountId: (int) $data['cash_account_id'],
+            paymentMethod: $data['payment_method'],
+            amount: (string) $data['amount'],
+            idempotencyKey: $data['idempotency_key'],
+            actor: $request->user(),
+            reference: 'Оплата по счёту '.$invoice->display_number,
+        );
 
         return back()->with('success', __('invoices.payment_received'));
     }
@@ -326,69 +312,6 @@ class InvoiceController extends Controller
         });
 
         return back()->with('success', __('invoices.refunded'));
-    }
-
-    private function recordInvoicePayment(
-        Invoice $invoice,
-        int $cashAccountId,
-        string $paymentMethod,
-        string|float $amount,
-        string $referenceType,
-        string $description
-    ): void {
-        $cashAccount = CashAccount::lockForUpdate()->findOrFail($cashAccountId);
-
-        // Balance is adjusted exactly once, by CashTransaction's own
-        // created-event hook (see CashTransaction::booted()) — do not
-        // also mutate $cashAccount->balance here, or the payment is
-        // posted twice.
-        CashTransaction::create([
-            'cash_account_id' => $cashAccount->id,
-            'amount' => $amount,
-            'type' => 'in',
-            'description' => $description . ' - ' . $paymentMethod,
-        ]);
-
-        InvoicePayment::create([
-            'invoice_id' => $invoice->id,
-            'cash_account_id' => $cashAccount->id,
-            'amount' => $amount,
-            'payment_method' => $paymentMethod,
-            'paid_at' => now(),
-            'reference' => $description,
-            'created_by' => auth()->id(),
-        ]);
-
-        if (Schema::hasColumn('cash_accounts', 'account_id') && ! empty($cashAccount->account_id)) {
-            $entry = JournalEntry::create([
-                'entry_number' => 'JE-' . time() . '-' . $invoice->id,
-                'entry_date' => now(),
-                'reference_type' => $referenceType,
-                'reference_id' => $invoice->id,
-                'description' => $description,
-                'created_by' => auth()->id(),
-            ]);
-
-            JournalItem::create([
-                'journal_entry_id' => $entry->id,
-                'account_id' => $cashAccount->account_id,
-                'debit' => $amount,
-                'credit' => 0,
-                'description' => 'Cash received',
-            ]);
-
-            $revenueAccount = Account::where('code', '4000')->first();
-
-            if ($revenueAccount) {
-                JournalItem::create([
-                    'journal_entry_id' => $entry->id,
-                    'account_id' => $revenueAccount->id,
-                    'debit' => 0,
-                    'credit' => $amount,
-                    'description' => 'Invoice revenue',
-                ]);
-            }
-        }
     }
 
     public function generateMonthlyInvoices(): void

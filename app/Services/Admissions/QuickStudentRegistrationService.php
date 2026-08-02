@@ -3,15 +3,12 @@
 namespace App\Services\Admissions;
 
 use App\Models\AcademicYear;
-use App\Models\CashAccount;
-use App\Models\CashTransaction;
 use App\Models\Enrollment;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
-use App\Models\InvoicePayment;
 use App\Models\MealPlan;
 use App\Models\MealSubscription;
 use App\Models\SchoolClass;
@@ -20,13 +17,18 @@ use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\InvoicePaymentService;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class QuickStudentRegistrationService
 {
-    public function __construct(private InvoiceCalculationService $calculator)
+    public function __construct(
+        private InvoiceCalculationService $calculator,
+        private InvoicePaymentService $payments,
+    )
     {
     }
 
@@ -166,12 +168,12 @@ class QuickStudentRegistrationService
                 'subtotal_amount' => $calculation['subtotal'],
                 'total_amount' => $calculation['total_amount'],
                 'discount_amount' => '0.00',
-                'paid_amount' => $calculation['paid_amount'],
-                'remaining_amount' => $calculation['remaining_amount'],
-                'status' => $calculation['status'],
-                'cash_account_id' => bccomp($paidNow, '0.00', 2) > 0 ? $data['cash_account_id'] : null,
-                'payment_method' => bccomp($paidNow, '0.00', 2) > 0 ? $data['payment_method'] : null,
-                'paid_at' => $calculation['status'] === Invoice::STATUS_PAID ? now() : null,
+                'paid_amount' => '0.00',
+                'remaining_amount' => $calculation['total_amount'],
+                'status' => Invoice::STATUS_UNPAID,
+                'cash_account_id' => null,
+                'payment_method' => null,
+                'paid_at' => null,
                 'due_date' => $year->end_date,
                 'created_by' => $actor->id,
             ]);
@@ -240,24 +242,16 @@ class QuickStudentRegistrationService
             }
 
             if (bccomp($paidNow, '0.00', 2) > 0) {
-                $account = CashAccount::query()->lockForUpdate()->findOrFail($data['cash_account_id']);
-                CashTransaction::create([
-                    'cash_account_id' => $account->id,
-                    'amount' => $paidNow,
-                    'type' => CashTransaction::TYPE_IN,
-                    'category' => CashTransaction::CATEGORY_INCOME,
-                    'description' => "Первоначальная оплата по счёту {$invoice->invoice_number}",
-                ]);
-                InvoicePayment::create([
-                    'invoice_id' => $invoice->id,
-                    'cash_account_id' => $account->id,
-                    'amount' => $paidNow,
-                    'payment_method' => $data['payment_method'],
-                    'paid_at' => now(),
-                    'reference' => "Быстрая регистрация {$invoice->invoice_number}",
-                    'notes' => $data['payment_note'] ?? null,
-                    'created_by' => $actor->id,
-                ]);
+                $this->payments->record(
+                    invoiceId: $invoice->id,
+                    cashAccountId: (int) $data['cash_account_id'],
+                    amount: $paidNow,
+                    paymentMethod: $data['payment_method'],
+                    idempotencyKey: (string) Str::uuid(),
+                    actor: $actor,
+                    reference: "Быстрая регистрация {$invoice->invoice_number}",
+                    notes: $data['payment_note'] ?? null,
+                );
             }
 
             return compact('student', 'enrollment', 'invoice');

@@ -448,6 +448,7 @@
                       action="{{ route('dashboard.invoices.pay', $invoice) }}">
 
                     @csrf
+                    <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::uuid() }}">
 
                     <div class="row g-3">
 

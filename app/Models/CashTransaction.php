@@ -46,6 +46,7 @@ class CashTransaction extends Model
     protected $fillable = [
         'cash_account_id',
         'invoice_id',
+        'invoice_payment_id',
         'amount',
         'type',
         'category', // 🔥 جديد
@@ -77,6 +78,11 @@ class CashTransaction extends Model
     public function invoice()
     {
         return $this->belongsTo(Invoice::class);
+    }
+
+    public function invoicePayment()
+    {
+        return $this->belongsTo(InvoicePayment::class);
     }
 
     /*

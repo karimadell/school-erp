@@ -240,7 +240,8 @@ Route::middleware(['auth', 'administrative'])
         | Invoices
         |--------------------------------------------------------------------------
         */
-        Route::resource('invoices', InvoiceController::class);
+        Route::resource('invoices', InvoiceController::class)
+            ->only(['index', 'create', 'store', 'show']);
 
         Route::post('invoices/{invoice}/pay', [InvoiceController::class, 'pay'])
             ->name('invoices.pay');

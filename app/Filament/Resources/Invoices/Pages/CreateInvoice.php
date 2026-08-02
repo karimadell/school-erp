@@ -8,4 +8,9 @@ use Filament\Resources\Pages\CreateRecord;
 class CreateInvoice extends CreateRecord
 {
     protected static string $resource = InvoiceResource::class;
+
+    public static function canAccess(array $parameters = []): bool
+    {
+        return false;
+    }
 }

@@ -2,9 +2,6 @@
 
 namespace App\Filament\Resources\Invoices\Tables;
 
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteBulkAction;
-use Filament\Actions\EditAction;
 use Filament\Actions\ViewAction;
 use Filament\Actions\Action;
 use Filament\Tables\Columns\TextColumn;
@@ -32,7 +29,7 @@ class InvoicesTable
 
                 TextColumn::make('total_amount')
                     ->label('Сумма')
-                    ->money('RUB')
+                    ->money('EGP')
                     ->sortable(),
 
                 TextColumn::make('status')
@@ -62,22 +59,14 @@ class InvoicesTable
 
                 ViewAction::make(),
 
-                EditAction::make(),
-
                 Action::make('print')
                     ->label('Печать')
                     ->icon('heroicon-o-printer')
-                    ->url(fn ($record) => route('invoice.print', $record->id))
+                    ->url(fn ($record) => route('dashboard.invoices.print', $record))
                     ->openUrlInNewTab(),
 
             ])
 
-            ->toolbarActions([
-
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-
-            ]);
+            ->toolbarActions([]);
     }
 }

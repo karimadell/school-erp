@@ -80,52 +80,27 @@
                             @endforeach
                         </select>
 
-                        <hr>
-
-                        <h6 class="fw-bold mb-3">➕ Новый ученик</h6>
-
-                        <div class="row g-3">
-                            <div class="col-md-4">
-                                <input type="text"
-                                       name="new_student[name]"
-                                       class="form-control"
-                                       placeholder="Имя ученика"
-                                       value="{{ old('new_student.name') }}">
-                            </div>
-
-                            <div class="col-md-4">
-                                <input type="text"
-                                       name="new_student[phone]"
-                                       class="form-control"
-                                       placeholder="Телефон"
-                                       value="{{ old('new_student.phone') }}">
-                            </div>
-
-                            <div class="col-md-4">
-                                <input type="text"
-                                       name="new_student[academic_year]"
-                                       class="form-control"
-                                       placeholder="2025-2026"
-                                       value="{{ old('new_student.academic_year', '2025-2026') }}">
-                            </div>
-
-                            <div class="col-md-4">
-                                <select name="new_student[grade_id]" class="form-select">
-                                    <option value="">{{ __('invoices.select_grade') ?? 'Выберите класс' }}</option>
-                                    @foreach($grades as $grade)
-                                        <option value="{{ $grade->id }}" @selected(old('new_student.grade_id') == $grade->id)>
-                                            {{ $grade->name_ru ?? $grade->name ?? 'Grade #' . $grade->id }}
+                        <div class="row g-3 mt-1">
+                            <div class="col-md-6">
+                                <label class="form-label">Учебный год</label>
+                                <select name="academic_year_id" class="form-select" required>
+                                    <option value="">Выберите учебный год</option>
+                                    @foreach($academicYears as $academicYear)
+                                        <option value="{{ $academicYear->id }}" @selected(old('academic_year_id') == $academicYear->id)>
+                                            {{ $academicYear->name }}
                                         </option>
                                     @endforeach
                                 </select>
                             </div>
 
-                            <div class="col-md-8">
-                                <input type="text"
-                                       name="invoice_note"
-                                       class="form-control"
-                                       placeholder="Примечание"
-                                       value="{{ old('invoice_note') }}">
+                            <div class="col-md-6">
+                                <label class="form-label">Срок оплаты</label>
+                                <input type="date" name="due_date" class="form-control" value="{{ old('due_date') }}" required>
+                            </div>
+
+                            <div class="col-12">
+                                <label class="form-label">Примечание</label>
+                                <input type="text" name="notes" class="form-control" value="{{ old('notes') }}">
                             </div>
                         </div>
                     </div>
@@ -378,7 +353,7 @@
                             <h5 class="fw-bold mb-3">💳 {{ __('invoices.payment') }}</h5>
 
                             <label class="form-label">{{ __('invoices.payment_method') }}</label>
-                            <select name="payment_method" class="form-select mb-3" required>
+                            <select name="payment_method" class="form-select mb-3">
                                 <option value="cash">{{ __('invoices.cash') }}</option>
                                 <option value="bank">{{ __('invoices.bank') }}</option>
                                 <option value="card">{{ __('invoices.card') }}</option>
@@ -386,7 +361,7 @@
                             </select>
 
                             <label class="form-label">{{ __('invoices.cash_account') }}</label>
-                            <select name="cash_account_id" class="form-select mb-3" required>
+                            <select name="cash_account_id" class="form-select mb-3">
                                 <option value="">{{ __('invoices.select_cash_account') }}</option>
                                 @foreach($cashAccounts as $acc)
                                     <option value="{{ $acc->id }}">{{ $acc->name }}</option>
@@ -395,12 +370,12 @@
 
                             <label class="form-label">{{ __('invoices.paid_amount') }}</label>
                             <input type="number"
-                                   id="paid_amount"
-                                   name="paid_amount"
+                                   id="initial_payment_amount"
+                                   name="initial_payment_amount"
                                    class="form-control"
                                    min="0"
                                    step="0.01"
-                                   placeholder="{{ __('invoices.full_payment_if_empty') }}">
+                                   placeholder="0.00">
                         </div>
                     </div>
 
@@ -408,24 +383,24 @@
                         <div class="card-body">
                             <div class="d-flex justify-content-between mb-2">
                                 <span>{{ __('invoices.total_amount') }}</span>
-                                <strong><span id="total">0.00</span></strong>
+                                <strong><span id="total">0.00</span> EGP</strong>
                             </div>
 
                             <div class="d-flex justify-content-between mb-2 text-warning">
                                 <span>{{ __('invoices.discount_amount') }}</span>
-                                <strong><span id="discount">0.00</span></strong>
+                                <strong><span id="discount">0.00</span> EGP</strong>
                             </div>
 
                             <hr>
 
                             <div class="d-flex justify-content-between fs-5 mb-2">
                                 <span>{{ __('invoices.net_amount') }}</span>
-                                <strong><span id="net">0.00</span></strong>
+                                <strong><span id="net">0.00</span> EGP</strong>
                             </div>
 
                             <div class="d-flex justify-content-between text-danger">
                                 <span>{{ __('invoices.remaining_amount') }}</span>
-                                <strong><span id="remaining">0.00</span></strong>
+                                <strong><span id="remaining">0.00</span> EGP</strong>
                             </div>
 
                             <button class="btn btn-primary btn-lg w-100 mt-4">
@@ -653,8 +628,8 @@
 
         const net = Math.max(total - discount, 0);
 
-        const paidInput = document.getElementById('paid_amount')?.value;
-        let paid = paidInput === '' ? net : Number(paidInput || 0);
+        const paidInput = document.getElementById('initial_payment_amount')?.value;
+        let paid = paidInput === '' ? 0 : Number(paidInput || 0);
         paid = Math.min(paid, net);
 
         const remaining = Math.max(net - paid, 0);

@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Student;
 use App\Models\Invoice;
-use App\Models\CashTransaction;
 use Barryvdh\DomPDF\Facade\Pdf;
 
 class DebtController extends Controller
@@ -60,34 +59,7 @@ class DebtController extends Controller
 
     public function pay(Request $request, $invoiceId)
     {
-        $request->validate([
-            'amount' => 'required|numeric|min:0.01'
-        ]);
-
-        $invoice = Invoice::findOrFail($invoiceId);
-        $paid = $request->amount;
-
-        // ================= تسجيل في الخزنة =================
-        CashTransaction::create([
-            'cash_account_id' => 1, // مؤقت (هنخليه ديناميك بعد كدا)
-            'type' => 'in',
-            'amount' => $paid,
-            'notes' => 'Debt payment - Student ID: ' . $invoice->student_id
-        ]);
-
-        // ================= تحديث الفاتورة =================
-        if ($paid >= $invoice->amount) {
-            $invoice->update([
-                'status' => 'paid',
-                'amount' => 0
-            ]);
-        } else {
-            $invoice->update([
-                'amount' => $invoice->amount - $paid
-            ]);
-        }
-
-        return back()->with('success', 'Payment recorded + added to cash');
+        abort(410, 'Устаревшая форма оплаты отключена. Используйте безопасную форму оплаты счёта.');
     }
 
     public function receipt($invoiceId)

@@ -23,7 +23,9 @@ class Stage extends Model
     public function grades()
     {
         return $this->hasMany(Grade::class)
-            ->orderBy('order');
+            ->orderByRaw('CASE WHEN level IS NULL THEN 1 ELSE 0 END')
+            ->orderBy('level')
+            ->orderBy('id');
     }
 
     // Stage → Classes (through grades)

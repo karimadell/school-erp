@@ -29,6 +29,9 @@ class QuickStudentRegistrationController extends Controller
     public function create(): View
     {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
+        $modes = EnrollmentMode::where('is_active', true)->orderBy('name_ru')->orderBy('id')->get();
+        $fees = Fee::with(['prices' => fn ($query) => $query->active()->current()->orderByDesc('start_date')])
+            ->active()->orderBy('category')->orderBy('name_ru')->get();
 
         return view('dashboard.quick-registration.create', [
             'academicYears' => $academicYears,
@@ -38,10 +41,11 @@ class QuickStudentRegistrationController extends Controller
                 'grades.classes' => fn ($query) => $query->where('is_active', true)->orderBy('code'),
             ])
                 ->where('is_active', true)->orderBy('order')->get(),
-            'modes' => EnrollmentMode::where('is_active', true)->orderBy('id')->get(),
-            'fees' => Fee::with('prices')->active()->orderBy('category')->orderBy('name_ru')->get(),
+            'modes' => $modes,
+            'defaultEnrollmentModeId' => $modes->count() === 1 ? $modes->first()->id : null,
+            'fees' => $fees,
             'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
-            'cashAccounts' => CashAccount::orderBy('name')->get(),
+            'cashAccounts' => CashAccount::where('is_active', true)->orderBy('name')->get(),
             'transportRoutes' => DB::table('transport_routes')->orderBy('name')->get(),
             'uniformProducts' => DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get(),
         ]);

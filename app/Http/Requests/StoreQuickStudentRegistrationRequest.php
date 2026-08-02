@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Models\AcademicYear;
+use App\Models\CashAccount;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\Grade;
@@ -59,7 +60,7 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'services.*.size' => ['nullable', 'string', 'max:50'],
             'services.*.uniform_product_id' => ['nullable', 'integer', 'exists:uniform_products,id'],
             'services.*.grade_group' => ['nullable', 'string', 'max:100'],
-            'services.*.payment_period' => ['nullable', Rule::in(['once', 'monthly', 'quarterly', 'term', 'yearly', 'package'])],
+            'services.*.payment_period' => ['nullable', Rule::in(['once', 'daily', 'monthly', 'quarterly', 'term', 'yearly', 'package'])],
             'services.*.first_last_month' => ['nullable', 'boolean'],
             'services.*.transport_area' => ['nullable', 'string', 'max:150'],
             'services.*.transport_route_id' => ['nullable', 'integer', 'exists:transport_routes,id'],
@@ -89,6 +90,9 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
+            if (! AcademicYear::where('is_active', true)->exists()) {
+                $validator->errors()->add('academic_year_id', 'Нет активного учебного года.');
+            }
             $year = AcademicYear::find($this->integer('academic_year_id'));
             if ($year && ! $year->is_active) {
                 $validator->errors()->add('academic_year_id', 'Для быстрого оформления можно выбрать только активный учебный год.');
@@ -100,6 +104,9 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 }
             }
 
+            if (! EnrollmentMode::where('is_active', true)->exists()) {
+                $validator->errors()->add('enrollment_mode_id', 'Формы обучения не настроены.');
+            }
             $mode = EnrollmentMode::find($this->integer('enrollment_mode_id'));
             if ($mode && ! $mode->is_active) {
                 $validator->errors()->add('enrollment_mode_id', 'Выбранная форма обучения не активна.');
@@ -147,6 +154,10 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 }
                 if (! $this->filled('payment_method')) {
                     $validator->errors()->add('payment_method', 'Для оплаты выберите способ оплаты.');
+                }
+                $cashAccount = CashAccount::find($this->integer('cash_account_id'));
+                if ($cashAccount && ! $cashAccount->is_active) {
+                    $validator->errors()->add('cash_account_id', 'Выбранная касса неактивна.');
                 }
             }
         }];

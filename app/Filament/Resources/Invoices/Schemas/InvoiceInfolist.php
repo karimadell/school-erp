@@ -11,12 +11,22 @@ class InvoiceInfolist
     {
         return $schema
             ->components([
+                TextEntry::make('invoice_number')
+                    ->label('Номер счёта')
+                    ->placeholder('—'),
+                TextEntry::make('currency')
+                    ->label('Валюта')
+                    ->default('EGP'),
                 TextEntry::make('student_id')
                     ->numeric(),
                 TextEntry::make('customer_name')
                     ->placeholder('-'),
+                TextEntry::make('subtotal_amount')
+                    ->label('Сумма услуг')
+                    ->money('EGP'),
                 TextEntry::make('total_amount')
-                    ->numeric(),
+                    ->label('Итого')
+                    ->money('EGP'),
                 TextEntry::make('status')
                     ->badge(),
                 TextEntry::make('cash_account_id')

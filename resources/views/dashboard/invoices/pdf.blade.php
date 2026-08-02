@@ -93,7 +93,7 @@
 <body>
 
 @php
-    $invoiceNumber = 'INV-' . $invoice->created_at?->format('Y') . '-' . str_pad($invoice->id, 4, '0', STR_PAD_LEFT);
+    $invoiceNumber = $invoice->display_number;
 
     $statusText = match ($invoice->status) {
         'paid' => 'Оплачен',
@@ -166,7 +166,6 @@
     $studentName = $invoice->student?->name ?? $invoice->customer_name ?? '—';
     $studentPhone = $invoice->student?->phone ?? '—';
     $studentGrade = $invoice->student?->grade?->name_ru ?? $invoice->student?->grade?->name ?? '—';
-    $netAmount = ($invoice->total_amount ?? 0) - ($invoice->discount_amount ?? 0);
 @endphp
 
 <table class="header">
@@ -288,24 +287,24 @@
 
 <table class="summary-table">
     <tr>
-        <td>Итого:</td>
-        <td class="right">{{ number_format($invoice->total_amount ?? 0, 2) }}</td>
+        <td>Сумма услуг:</td>
+        <td class="right">{{ number_format($invoice->subtotal_amount ?? 0, 2) }} EGP</td>
     </tr>
     <tr>
         <td>Скидка:</td>
-        <td class="right">{{ number_format($invoice->discount_amount ?? 0, 2) }}</td>
+        <td class="right">{{ number_format($invoice->discount_amount ?? 0, 2) }} EGP</td>
+    </tr>
+    <tr>
+        <td>Итого:</td>
+        <td class="right">{{ number_format($invoice->total_amount ?? 0, 2) }} EGP</td>
     </tr>
     <tr>
         <td>Оплачено:</td>
-        <td class="right">{{ number_format($invoice->paid_amount ?? 0, 2) }}</td>
+        <td class="right">{{ number_format($invoice->paid_amount ?? 0, 2) }} EGP</td>
     </tr>
     <tr>
         <td>Остаток:</td>
-        <td class="right">{{ number_format($invoice->remaining_amount ?? 0, 2) }}</td>
-    </tr>
-    <tr>
-        <td class="bold">К оплате:</td>
-        <td class="right bold">{{ number_format($netAmount, 2) }}</td>
+        <td class="right">{{ number_format($invoice->remaining_amount ?? 0, 2) }} EGP</td>
     </tr>
 </table>
 

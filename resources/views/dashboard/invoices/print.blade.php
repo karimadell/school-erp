@@ -4,7 +4,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Счёт № {{ $invoice->id }}</title>
+    <title>Счёт № {{ $invoice->display_number }}</title>
 
     <style>
         *{
@@ -350,11 +350,7 @@
 
     $logoPath = public_path('images/logo.png');
 
-    $invoiceNumber =
-        'INV-' .
-        $invoice->created_at?->format('Y') .
-        '-' .
-        str_pad($invoice->id, 4, '0', STR_PAD_LEFT);
+    $invoiceNumber = $invoice->display_number;
 
     $statusText = match ($invoice->status) {
         'paid' => 'Оплачен',
@@ -443,13 +439,6 @@
         $invoice->note ??
         '—';
 
-    $netAmount = max(
-        (float)($invoice->total_amount ?? 0)
-        -
-        (float)($invoice->discount_amount ?? 0),
-        0
-    );
-
 @endphp
 
 <div class="page">
@@ -528,6 +517,11 @@
                 </tr>
 
                 <tr>
+                    <td>Валюта:</td>
+                    <td>EGP</td>
+                </tr>
+
+                <tr>
                     <td>Способ оплаты:</td>
                     <td>{{ $paymentMethodText }}</td>
                 </tr>
@@ -584,6 +578,14 @@
 
         </tr>
 
+    </table>
+
+    <table class="summary">
+        <tr><td>Сумма услуг:</td><td>{{ number_format($invoice->subtotal_amount ?? 0, 2) }} EGP</td></tr>
+        <tr><td>Скидка:</td><td>{{ number_format($invoice->discount_amount ?? 0, 2) }} EGP</td></tr>
+        <tr class="grand"><td>Итого:</td><td>{{ number_format($invoice->total_amount ?? 0, 2) }} EGP</td></tr>
+        <tr><td>Оплачено:</td><td>{{ number_format($invoice->paid_amount ?? 0, 2) }} EGP</td></tr>
+        <tr><td>Остаток:</td><td>{{ number_format($invoice->remaining_amount ?? 0, 2) }} EGP</td></tr>
     </table>
 
 </div>

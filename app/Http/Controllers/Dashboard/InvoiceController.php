@@ -69,7 +69,8 @@ class InvoiceController extends Controller
     ): RedirectResponse
     {
         $data = $request->validated();
-        $invoice = DB::transaction(function () use ($data, $calculator) {
+        $actorId = $request->user()->id;
+        $invoice = DB::transaction(function () use ($data, $calculator, $actorId) {
             $student = Student::query()->lockForUpdate()->findOrFail($data['student_id']);
             $academicYear = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
             $enrollmentExists = Enrollment::query()
@@ -93,19 +94,12 @@ class InvoiceController extends Controller
                 pricingDate: now()->toDateString(),
             );
 
-            $cashAccountId = $data['cash_account_id']
-                ?? CashAccount::query()->orderBy('id')->lockForUpdate()->value('id');
-
-            if (! $cashAccountId) {
-                throw ValidationException::withMessages([
-                    'cash_account_id' => 'В системе не настроена касса. Обратитесь к администратору.',
-                ]);
-            }
-
             $invoiceData = [
                 'student_id' => $student->id,
                 'academic_year_id' => $data['academic_year_id'],
                 'customer_name' => $student->full_name,
+                'currency' => InvoiceCalculationService::CURRENCY,
+                'subtotal_amount' => $calculation['subtotal'],
                 'total_amount' => $calculation['total_amount'],
                 'discount_type' => $data['discount_type'] ?? null,
                 'discount_value' => $data['discount_value'] ?? '0.00',
@@ -113,18 +107,15 @@ class InvoiceController extends Controller
                 'paid_amount' => $calculation['paid_amount'],
                 'remaining_amount' => $calculation['remaining_amount'],
                 'status' => $calculation['status'],
-                // cash_account_id is currently NOT NULL. For an unpaid
-                // invoice this is only the designated receiving account;
-                // no payment or cash transaction is created.
-                'cash_account_id' => $cashAccountId,
-                // The current schema keeps payment_method NOT NULL. Until
-                // F1B makes it nullable, "pending" explicitly means that no
-                // payment method has been selected for this unpaid invoice.
+                'cash_account_id' => bccomp($calculation['paid_amount'], '0.00', 2) > 0
+                    ? $data['cash_account_id']
+                    : null,
                 'payment_method' => bccomp($calculation['paid_amount'], '0.00', 2) > 0
                     ? $data['payment_method']
-                    : 'pending',
+                    : null,
                 'paid_at' => $calculation['status'] === Invoice::STATUS_PAID ? now() : null,
                 'due_date' => $data['due_date'],
+                'created_by' => $actorId,
             ];
 
             if (Schema::hasColumn('invoices', 'note')) {
@@ -132,6 +123,8 @@ class InvoiceController extends Controller
             }
 
             $invoice = Invoice::create($invoiceData);
+            $invoice->invoice_number = Invoice::numberFor($invoice->id, $invoice->created_at->format('Y'));
+            $invoice->save();
 
             foreach ($calculation['line_items'] as $line) {
                 InvoiceItem::create([

@@ -9,7 +9,7 @@
 
         <div>
             <h3 class="fw-bold mb-1">
-                🧾 {{ __('invoices.invoice_number') }} #{{ $invoice->id }}
+                🧾 Номер счёта: {{ $invoice->display_number }}
             </h3>
 
             <small class="text-muted">
@@ -45,13 +45,10 @@
                     $cleanPhone = '20' . substr($cleanPhone, 1);
                 }
 
-                $netAmount = max(
-                    (float) ($invoice->total_amount ?? 0) - (float) ($invoice->discount_amount ?? 0),
-                    0
-                );
+                $netAmount = max((float) ($invoice->total_amount ?? 0), 0);
 
                 $whatsappMessage = urlencode(
-                    "🧾 Счёт №{$invoice->id}\n" .
+                    "🧾 Счёт №{$invoice->display_number}\n" .
                     "Ученик: {$studentName}\n" .
                     "Итого: " . number_format($invoice->total_amount ?? 0, 2) . "\n" .
                     "Скидка: " . number_format($invoice->discount_amount ?? 0, 2) . "\n" .
@@ -87,51 +84,64 @@
     {{-- SUMMARY --}}
     <div class="row g-3 mb-4">
 
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card shadow-sm border-0">
                 <div class="card-body">
-                    <div class="text-muted">{{ __('invoices.total_amount') }}</div>
+                    <div class="text-muted">Сумма услуг</div>
                     <h4 class="mb-0">
-                        {{ number_format($invoice->total_amount, 2) }}
+                        {{ number_format($invoice->subtotal_amount, 2) }} EGP
                     </h4>
                 </div>
             </div>
         </div>
 
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card shadow-sm border-0">
                 <div class="card-body">
                     <div class="text-muted">{{ __('invoices.discount_amount') }}</div>
                     <h4 class="mb-0 text-warning">
-                        {{ number_format($invoice->discount_amount ?? 0, 2) }}
+                        {{ number_format($invoice->discount_amount ?? 0, 2) }} EGP
                     </h4>
                 </div>
             </div>
         </div>
 
-        <div class="col-md-3">
+        <div class="col-md-2">
+            <div class="card shadow-sm border-0">
+                <div class="card-body">
+                    <div class="text-muted">Итого</div>
+                    <h4 class="mb-0">
+                        {{ number_format($invoice->total_amount, 2) }} EGP
+                    </h4>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-2">
             <div class="card shadow-sm border-0">
                 <div class="card-body">
                     <div class="text-muted">{{ __('invoices.paid_amount') }}</div>
                     <h4 class="mb-0 text-success">
-                        {{ number_format($invoice->paid_amount, 2) }}
+                        {{ number_format($invoice->paid_amount, 2) }} EGP
                     </h4>
                 </div>
             </div>
         </div>
 
-        <div class="col-md-3">
+        <div class="col-md-2">
             <div class="card shadow-sm border-0">
                 <div class="card-body">
                     <div class="text-muted">{{ __('invoices.remaining_amount') }}</div>
                     <h4 class="mb-0 text-danger">
-                        {{ number_format($invoice->remaining_amount, 2) }}
+                        {{ number_format($invoice->remaining_amount, 2) }} EGP
                     </h4>
                 </div>
             </div>
         </div>
 
     </div>
+
+    <div class="mb-4 text-muted">Валюта: EGP</div>
 
     {{-- STUDENT INFO --}}
     <div class="card mb-4 shadow-sm border-0">
@@ -388,11 +398,11 @@
 
                     <tr>
                         <th colspan="4" class="text-end">
-                            {{ __('invoices.total_amount') }}
+                            Сумма услуг
                         </th>
 
                         <th>
-                            {{ number_format($invoice->total_amount, 2) }}
+                            {{ number_format($invoice->subtotal_amount, 2) }} EGP
                         </th>
                     </tr>
 
@@ -402,17 +412,17 @@
                         </th>
 
                         <th>
-                            {{ number_format($invoice->discount_amount ?? 0, 2) }}
+                            {{ number_format($invoice->discount_amount ?? 0, 2) }} EGP
                         </th>
                     </tr>
 
                     <tr>
                         <th colspan="4" class="text-end">
-                            {{ __('invoices.net_amount') }}
+                            Итого
                         </th>
 
                         <th>
-                            {{ number_format($netAmount, 2) }}
+                            {{ number_format($netAmount, 2) }} EGP
                         </th>
                     </tr>
 

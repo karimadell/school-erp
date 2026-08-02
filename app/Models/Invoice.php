@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use LogicException;
 
 class Invoice extends Model
 {
@@ -12,8 +14,11 @@ class Invoice extends Model
 
     protected $fillable = [
         'student_id',
+        'invoice_number',
+        'currency',
         'academic_year_id',
         'customer_name',
+        'subtotal_amount',
         'total_amount',
         'discount_type',
         'discount_value',
@@ -26,9 +31,11 @@ class Invoice extends Model
         'paid_at',
         'due_date',
         'note',
+        'created_by',
     ];
 
     protected $casts = [
+        'subtotal_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
         'discount_value' => 'decimal:2',
         'discount_amount' => 'decimal:2',
@@ -38,6 +45,34 @@ class Invoice extends Model
         'due_date' => 'date',
     ];
 
+    protected $attributes = [
+        'currency' => 'EGP',
+    ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $invoice) {
+            if (
+                $invoice->isDirty('invoice_number')
+                && $invoice->getOriginal('invoice_number') !== null
+                && $invoice->invoice_number !== $invoice->getOriginal('invoice_number')
+            ) {
+                throw new LogicException('Номер счёта нельзя изменить после присвоения.');
+            }
+        });
+    }
+
+    public static function numberFor(int $id, int|string $year): string
+    {
+        return sprintf('INV-%s-%06d', $year, $id);
+    }
+
+    public function getDisplayNumberAttribute(): string
+    {
+        return $this->invoice_number
+            ?? self::numberFor($this->id, $this->created_at?->format('Y') ?? '0000');
+    }
+
     public function student()
     {
         return $this->belongsTo(Student::class);
@@ -46,6 +81,11 @@ class Invoice extends Model
     public function academicYear()
     {
         return $this->belongsTo(AcademicYear::class);
+    }
+
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 
     public function cashAccount()
@@ -73,9 +113,7 @@ class Invoice extends Model
 
     public function refreshPaymentStatus(): void
     {
-        $total = (float) $this->total_amount;
-        $discount = (float) ($this->discount_amount ?? 0);
-        $net = max($total - $discount, 0);
+        $net = max((float) $this->total_amount, 0);
 
         $paid = min((float) $this->paid_amount, $net);
         $remaining = max($net - $paid, 0);
@@ -113,9 +151,6 @@ class Invoice extends Model
 
     public function getNetAmountAttribute(): float
     {
-        return max(
-            (float) $this->total_amount - (float) ($this->discount_amount ?? 0),
-            0
-        );
+        return max((float) $this->total_amount, 0);
     }
 }

@@ -66,6 +66,10 @@ class StoreInvoiceRequest extends FormRequest
             'status' => ['prohibited'],
             'discount_amount' => ['prohibited'],
             'unit_price' => ['prohibited'],
+            'invoice_number' => ['prohibited'],
+            'currency' => ['prohibited'],
+            'subtotal_amount' => ['prohibited'],
+            'created_by' => ['prohibited'],
         ];
     }
 

@@ -32,7 +32,7 @@
                 <table class="table table-hover align-middle mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th style="width:70px;">#</th>
+                            <th style="width:170px;">Номер счёта</th>
                             <th>{{ __('invoices.student') }}</th>
                             <th>{{ __('invoices.services') }}</th>
                             <th style="width:140px;">{{ __('invoices.total_amount') }}</th>
@@ -47,7 +47,7 @@
                         @forelse($invoices as $invoice)
                             <tr>
                                 <td class="fw-bold">
-                                    #{{ $invoice->id }}
+                                    {{ $invoice->display_number }}
                                 </td>
 
                                 <td>
@@ -68,7 +68,7 @@
 
                                 <td>
                                     <strong>
-                                        {{ number_format($invoice->total_amount, 2) }}
+                                        {{ number_format($invoice->total_amount, 2) }} EGP
                                     </strong>
                                 </td>
 

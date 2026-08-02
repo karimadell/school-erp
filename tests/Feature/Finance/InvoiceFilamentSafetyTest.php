@@ -33,18 +33,24 @@ class InvoiceFilamentSafetyTest extends TestCase
         $student = Student::create(['name' => 'Ученик']);
         $account = CashAccount::create(['name' => 'Касса', 'type' => 'cash']);
 
-        return Invoice::create([
+        $invoice = Invoice::create([
             'student_id' => $student->id, 'cash_account_id' => $account->id,
-            'total_amount' => 100, 'paid_amount' => 0, 'remaining_amount' => 100,
+            'subtotal_amount' => 100, 'total_amount' => 100, 'paid_amount' => 0, 'remaining_amount' => 100,
             'status' => Invoice::STATUS_UNPAID,
         ]);
+        $invoice->invoice_number = Invoice::numberFor($invoice->id, 2026);
+        $invoice->save();
+
+        return $invoice;
     }
 
     public function test_list_and_view_remain_available(): void
     {
         $invoice = $this->invoice();
-        Livewire::actingAs($this->user)->test(ListInvoices::class)->assertSuccessful()->assertSee('EGP');
-        Livewire::actingAs($this->user)->test(ViewInvoice::class, ['record' => $invoice->getRouteKey()])->assertSuccessful();
+        Livewire::actingAs($this->user)->test(ListInvoices::class)
+            ->assertSuccessful()->assertSee($invoice->invoice_number)->assertSee('EGP');
+        Livewire::actingAs($this->user)->test(ViewInvoice::class, ['record' => $invoice->getRouteKey()])
+            ->assertSuccessful()->assertSee($invoice->invoice_number)->assertSee('EGP');
     }
 
     public function test_create_and_edit_routes_are_not_registered(): void

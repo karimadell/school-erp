@@ -14,8 +14,9 @@ class InvoicesTable
         return $table
             ->columns([
 
-                TextColumn::make('id')
-                    ->label('№ Счета')
+                TextColumn::make('invoice_number')
+                    ->label('Номер счёта')
+                    ->placeholder('—')
                     ->sortable(),
 
                 TextColumn::make('student.full_name')
@@ -27,10 +28,17 @@ class InvoicesTable
                     ->label('Плательщик')
                     ->searchable(),
 
+                TextColumn::make('subtotal_amount')
+                    ->label('Сумма услуг')
+                    ->money('EGP'),
+
                 TextColumn::make('total_amount')
-                    ->label('Сумма')
+                    ->label('Итого')
                     ->money('EGP')
                     ->sortable(),
+
+                TextColumn::make('currency')
+                    ->label('Валюта'),
 
                 TextColumn::make('status')
                     ->label('Статус')

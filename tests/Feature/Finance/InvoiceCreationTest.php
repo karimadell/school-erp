@@ -74,6 +74,10 @@ class InvoiceCreationTest extends TestCase
         $response->assertRedirect(route('dashboard.invoices.print', $invoice));
         $response->assertSessionHas('success', 'Счёт успешно создан. Все суммы рассчитаны в EGP.');
         $this->assertSame('1000.00', $invoice->total_amount);
+        $this->assertSame('1000.00', $invoice->subtotal_amount);
+        $this->assertSame('EGP', $invoice->currency);
+        $this->assertSame($this->user->id, $invoice->created_by);
+        $this->assertMatchesRegularExpression('/^INV-2026-\d{6}$/', $invoice->invoice_number);
         $this->assertSame($this->year->id, $invoice->academic_year_id);
         $this->assertSame('2026-09-01', $invoice->due_date->toDateString());
         $this->assertSame('1000.00', InvoiceItem::sole()->amount);
@@ -83,10 +87,15 @@ class InvoiceCreationTest extends TestCase
     public function test_browser_calculated_fields_are_rejected(): void
     {
         $response = $this->actingAs($this->user)->post(route('dashboard.invoices.store'), $this->payload([
-            'total_amount' => '0.01', 'paid_amount' => '999.00', 'remaining_amount' => '0.00', 'status' => 'paid',
+            'invoice_number' => 'OWN-NUMBER', 'currency' => 'RUB', 'subtotal_amount' => '0.01',
+            'created_by' => User::factory()->create()->id, 'total_amount' => '0.01',
+            'paid_amount' => '999.00', 'remaining_amount' => '0.00', 'status' => 'paid',
         ]));
 
-        $response->assertSessionHasErrors(['total_amount', 'paid_amount', 'remaining_amount', 'status']);
+        $response->assertSessionHasErrors([
+            'invoice_number', 'currency', 'subtotal_amount', 'created_by',
+            'total_amount', 'paid_amount', 'remaining_amount', 'status',
+        ]);
         $this->assertDatabaseCount('invoices', 0);
     }
 
@@ -99,7 +108,11 @@ class InvoiceCreationTest extends TestCase
 
         $this->assertDatabaseCount('invoice_payments', 0);
         $this->assertDatabaseCount('cash_transactions', 0);
-        $this->assertSame(Invoice::STATUS_UNPAID, Invoice::sole()->status);
+        $invoice = Invoice::sole();
+        $this->assertSame(Invoice::STATUS_UNPAID, $invoice->status);
+        $this->assertSame('0.00', $invoice->paid_amount);
+        $this->assertNull($invoice->payment_method);
+        $this->assertNull($invoice->cash_account_id);
     }
 
     public function test_initial_payment_and_cash_posting_are_atomic(): void

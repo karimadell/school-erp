@@ -22,6 +22,7 @@ class StudentServiceSubscription extends Model implements ResolvesAcademicYear
         'negotiated_price',
         'negotiated_reason',
         'negotiated_by',
+        'metadata',
     ];
 
     protected $casts = [
@@ -29,6 +30,7 @@ class StudentServiceSubscription extends Model implements ResolvesAcademicYear
         'end_date' => 'date',
         'quantity' => 'integer',
         'negotiated_price' => 'decimal:2',
+        'metadata' => 'array',
     ];
 
     public function enrollment()

@@ -7,8 +7,12 @@ use App\Models\SchoolClass;
 
 class Student extends Model
 {
+    public const STATUS_ACTIVE = 'active';
+    public const STATUS_PRE_REGISTERED = 'pre_registered';
+
     protected $fillable = [
-        
+        'name',
+        'status',
         'academic_year',
         
 
@@ -118,6 +122,19 @@ class Student extends Model
     public function averageGrade()
     {
         return round($this->grades()->avg('score') ?? 0, 2);
+    }
+
+    public function getProfileCompletionPercentageAttribute(): int
+    {
+        $fields = ['name', 'phone', 'birth_date', 'gender', 'nationality', 'address', 'email', 'documents'];
+        $completed = collect($fields)->filter(fn (string $field) => filled($this->{$field}))->count();
+
+        return (int) round(($completed / count($fields)) * 100);
+    }
+
+    public function getHasIncompleteProfileAttribute(): bool
+    {
+        return $this->status === self::STATUS_PRE_REGISTERED || $this->profile_completion_percentage < 100;
     }
 
     public function yearGrade($subjectId)

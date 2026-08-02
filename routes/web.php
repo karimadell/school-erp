@@ -7,6 +7,7 @@ use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\EnrollmentController;
 use App\Http\Controllers\Dashboard\InvoiceController;
+use App\Http\Controllers\Dashboard\QuickStudentRegistrationController;
 use App\Http\Controllers\Dashboard\FeeController;
 use App\Http\Controllers\Dashboard\FeePriceController;
 use App\Http\Controllers\Dashboard\ClassController;
@@ -242,6 +243,15 @@ Route::middleware(['auth', 'administrative'])
         */
         Route::resource('invoices', InvoiceController::class)
             ->only(['index', 'create', 'store', 'show']);
+
+        Route::get('quick-registration', [QuickStudentRegistrationController::class, 'create'])
+            ->name('quick-registration.create');
+        Route::post('quick-registration', [QuickStudentRegistrationController::class, 'store'])
+            ->name('quick-registration.store');
+        Route::post('quick-registration/price', [QuickStudentRegistrationController::class, 'price'])
+            ->name('quick-registration.price');
+        Route::get('quick-registration/{invoice}', [QuickStudentRegistrationController::class, 'summary'])
+            ->name('quick-registration.summary');
 
         Route::post('invoices/{invoice}/pay', [InvoiceController::class, 'pay'])
             ->name('invoices.pay');

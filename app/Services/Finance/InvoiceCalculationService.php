@@ -48,6 +48,13 @@ class InvoiceCalculationService
             }
 
             $amount = $this->resolvePrice($fee, $item, $pricingDate);
+            $quantity = (int) ($item['quantity'] ?? 1);
+
+            if ($quantity < 1) {
+                throw ValidationException::withMessages([
+                    'services' => 'Количество услуги должно быть не меньше 1.',
+                ]);
+            }
 
             if (bccomp($amount, '0.00', 2) <= 0) {
                 throw ValidationException::withMessages([
@@ -59,11 +66,16 @@ class InvoiceCalculationService
                 $amount = bcmul($amount, '2.00', 2);
             }
 
+            $unitPrice = $amount;
+            $amount = bcmul($unitPrice, (string) $quantity, 2);
+
             $subtotal = bcadd($subtotal, $amount, 2);
             $lines[] = [
                 'fee_id' => $fee->id,
                 'description' => $fee->name_ru,
                 'amount' => $amount,
+                'unit_price' => $unitPrice,
+                'quantity' => $quantity,
                 'grade_group' => $item['grade_group'] ?? null,
                 'payment_period' => $item['payment_period'] ?? null,
                 'size' => $item['size'] ?? null,

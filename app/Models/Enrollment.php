@@ -20,12 +20,14 @@ class Enrollment extends Model implements ResolvesAcademicYear
         'status',
         'notes',
         'is_active',
+        'registration_fee_charged_at',
     ];
 
     protected $casts = [
         'enrollment_date' => 'date',
         'enrolled_at' => 'date',
         'is_active' => 'boolean',
+        'registration_fee_charged_at' => 'datetime',
     ];
 
     public function student()

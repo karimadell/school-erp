@@ -18,6 +18,11 @@ class InvoiceItem extends Model
         'subscription_id',
         'description',
         'amount',
+        'unit_price',
+        'quantity',
+        'paid_amount',
+        'remaining_amount',
+        'metadata',
     ];
 
     /**
@@ -25,6 +30,11 @@ class InvoiceItem extends Model
      */
     protected $casts = [
         'amount' => 'decimal:2',
+        'unit_price' => 'decimal:2',
+        'quantity' => 'integer',
+        'paid_amount' => 'decimal:2',
+        'remaining_amount' => 'decimal:2',
+        'metadata' => 'array',
     ];
 
     /*

@@ -111,6 +111,11 @@ class Invoice extends Model
         return $this->hasMany(InvoicePayment::class)->latest();
     }
 
+    public function items()
+    {
+        return $this->hasMany(InvoiceItem::class);
+    }
+
     public function refreshPaymentStatus(): void
     {
         $net = max((float) $this->total_amount, 0);

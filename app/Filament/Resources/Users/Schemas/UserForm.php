@@ -2,8 +2,10 @@
 
 namespace App\Filament\Resources\Users\Schemas;
 
+use App\Support\LeadershipAuthorization;
 use Filament\Forms;
 use Filament\Schemas\Schema;
+use Illuminate\Database\Eloquent\Builder;
 
 class UserForm
 {
@@ -31,13 +33,28 @@ class UserForm
 
             Forms\Components\Select::make('roles')
                 ->label('Роль')
-                ->relationship('roles','name')
+                ->relationship(
+                    'roles',
+                    'name',
+                    modifyQueryUsing: fn (Builder $query) => auth()->user()?->isSuperAdmin()
+                        ? $query
+                        : $query
+                            ->where('name', '!=', 'super-admin')
+                            ->whereDoesntHave('permissions', fn (Builder $permissions) => $permissions
+                                ->whereIn('name', LeadershipAuthorization::protectedPermissionNames())),
+                )
                 ->multiple()
                 ->preload(),
 
             Forms\Components\CheckboxList::make('permissions')
                 ->label('Разрешения')
-                ->relationship('permissions','name')
+                ->relationship(
+                    'permissions',
+                    'name',
+                    modifyQueryUsing: fn (Builder $query) => auth()->user()?->isSuperAdmin()
+                        ? $query
+                        : $query->whereNotIn('name', LeadershipAuthorization::protectedPermissionNames()),
+                )
                 ->columns(3)
 
         ]);

@@ -2,8 +2,10 @@
 
 namespace App\Filament\Resources\Roles\Schemas;
 
+use App\Support\LeadershipAuthorization;
 use Filament\Forms;
 use Filament\Schemas\Schema;
+use Illuminate\Database\Eloquent\Builder;
 
 class RoleForm
 {
@@ -17,7 +19,13 @@ class RoleForm
 
             Forms\Components\CheckboxList::make('permissions')
                 ->label('Разрешения')
-                ->relationship('permissions','name')
+                ->relationship(
+                    'permissions',
+                    'name',
+                    modifyQueryUsing: fn (Builder $query) => auth()->user()?->isSuperAdmin()
+                        ? $query
+                        : $query->whereNotIn('name', LeadershipAuthorization::protectedPermissionNames()),
+                )
                 ->columns(3)
 
         ]);

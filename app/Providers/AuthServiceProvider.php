@@ -69,16 +69,12 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
-        /**
-         * Alpha testing: Super Admin ('admin' role) bypasses every Gate/
-         * Policy-based permission check, not just plain permission-name
-         * strings (User::hasPermissionTo() already covers those). Defense
-         * in depth for Blade @can, route `can:` middleware, Form Request
-         * authorize(), and any future Policy with logic beyond a bare
-         * $user->can('permission string') call.
-         */
         Gate::before(function (User $user, string $ability) {
-            return $user->isSuperAdmin() ? true : null;
+            if (in_array($ability, User::protectedPolicyAbilities(), true)) {
+                return null;
+            }
+
+            return $user->isActive() && $user->isSuperAdmin() ? true : null;
         });
     }
 }

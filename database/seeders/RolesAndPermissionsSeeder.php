@@ -65,6 +65,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage cash',
             'view cash reports',
 
+            // Leadership oversight
+            'view audit logs',
+
             // System configuration (Super Admin only)
             'manage users',
             'manage roles',
@@ -75,10 +78,12 @@ class RolesAndPermissionsSeeder extends Seeder
             Permission::firstOrCreate(['name' => $permission]);
         }
 
-        // 1. Super Admin — full access to all modules and all actions,
-        // including system configuration. Role name kept as 'admin'
-        // (unrenamed) since AdminUserSeeder and existing tests reference
-        // it by this exact name.
+        // Protected Super Admin — full access and the application-wide bypass.
+        $superAdmin = Role::firstOrCreate(['name' => 'super-admin']);
+        $superAdmin->syncPermissions($permissions);
+
+        // Existing admin role remains fully permissioned for compatibility,
+        // but it is no longer the protected application-wide bypass role.
         $admin = Role::firstOrCreate(['name' => 'admin']);
         $admin->syncPermissions($permissions);
 
@@ -133,20 +138,13 @@ class RolesAndPermissionsSeeder extends Seeder
         // enforced via TeacherAssignment (Batch 8).
         Role::firstOrCreate(['name' => 'teacher']);
 
-        // 6. Principal / Academic Manager — full academic permissions,
-        // read-only finance, explicitly no fee price editing. Includes
-        // journal oversight (Batch 9).
+        // 6. Principal / School Director — complete operational access and
+        // guarded user/role administration, excluding protected system-level
+        // permission management and historical unlock authority.
         $principal = Role::firstOrCreate(['name' => 'principal']);
-        $principal->syncPermissions([
-            'manage subjects',
-            'manage stages',
-            'manage grades',
-            'manage classes',
-            'manage academic years',
-            'manage journal entries',
-            'view invoices',
-            'view student balances',
-            'view cash reports',
-        ]);
+        $principal->syncPermissions(array_values(array_diff($permissions, [
+            'unlock historical academic year',
+            'manage permissions',
+        ])));
     }
 }

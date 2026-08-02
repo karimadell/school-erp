@@ -28,11 +28,13 @@ class PermissionPolicy
 
     public function update(User $user, Permission $permission): bool
     {
-        return $user->can('manage permissions');
+        return $user->can('manage permissions')
+            && (! $permission->roles()->where('name', 'super-admin')->exists() || $user->isSuperAdmin());
     }
 
     public function delete(User $user, Permission $permission): bool
     {
-        return $user->can('manage permissions');
+        return $user->can('manage permissions')
+            && (! $permission->roles()->where('name', 'super-admin')->exists() || $user->isSuperAdmin());
     }
 }

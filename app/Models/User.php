@@ -66,7 +66,7 @@ class User extends Authenticatable implements FilamentUser
         return match ($panel->getId()) {
             'admin' => $this->canAccessAdministrativePortal(),
             'teacher' => $this->hasRole('teacher')
-                && ! $this->hasAnyRole($this->administrativeRoles())
+                && ! $this->hasAnyRole(array_diff(self::administrativeRoles(), ['super-admin']))
                 && $this->teacher()->where('is_active', true)->exists(),
             default => false,
         };
@@ -89,20 +89,48 @@ class User extends Authenticatable implements FilamentUser
     /**
      * @return array<int, string>
      */
-    protected function administrativeRoles(): array
+    public static function administrativeRoles(): array
     {
-        return ['admin', 'school-admin', 'accountant', 'reception', 'principal'];
+        return ['super-admin', 'admin', 'school-admin', 'accountant', 'reception', 'principal'];
     }
 
     /**
-     * Alpha testing: 'admin' is Super Admin — a true, automatic bypass of
+     * @return array<int, string>
+     */
+    public static function protectedPolicyAbilities(): array
+    {
+        return [
+            'viewAny', 'view', 'create', 'update', 'delete', 'deleteAny',
+            'restore', 'restoreAny', 'forceDelete', 'forceDeleteAny',
+        ];
+    }
+
+    /**
+     * The protected super-admin role is a true, automatic bypass of
      * every permission, not just whatever the seeder currently lists. Used
      * by the hasPermissionTo() override below and by Gate::before in
      * AuthServiceProvider.
      */
     public function isSuperAdmin(): bool
     {
-        return $this->hasRole('admin');
+        return $this->hasRole('super-admin');
+    }
+
+    public function isPrincipal(): bool
+    {
+        return $this->hasRole('principal');
+    }
+
+    public function isLastActiveSuperAdmin(): bool
+    {
+        if (! $this->isActive() || ! $this->isSuperAdmin()) {
+            return false;
+        }
+
+        return static::query()
+            ->where('is_active', true)
+            ->whereHas('roles', fn ($query) => $query->where('name', 'super-admin'))
+            ->count() === 1;
     }
 
     /**
@@ -114,7 +142,12 @@ class User extends Authenticatable implements FilamentUser
      */
     public function hasPermissionTo($permission, $guardName = null): bool
     {
-        return $this->isSuperAdmin() || $this->spatieHasPermissionTo($permission, $guardName);
+        $permissionName = is_string($permission) ? $permission : $permission->name;
+        if ($this->isActive() && $this->isSuperAdmin() && ! in_array($permissionName, self::protectedPolicyAbilities(), true)) {
+            return true;
+        }
+
+        return $this->spatieHasPermissionTo($permission, $guardName);
     }
 
     public function canViewCashReports(): bool

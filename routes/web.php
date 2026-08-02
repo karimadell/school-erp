@@ -354,16 +354,18 @@ Route::middleware(['auth', 'administrative'])
 
         Route::prefix('admin')
             ->name('admin.')
-            ->middleware('role:admin')
             ->group(function () {
 
                 Route::get('users', [UserController::class, 'index'])
+                    ->middleware('permission:manage users')
                     ->name('users.index');
 
                 Route::get('roles', [RoleController::class, 'index'])
+                    ->middleware('permission:manage roles')
                     ->name('roles.index');
 
                 Route::get('audit-logs', [AuditLogController::class, 'index'])
+                    ->middleware('permission:view audit logs')
                     ->name('audit.logs.index');
             });
     });

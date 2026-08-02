@@ -6,9 +6,8 @@ use App\Models\User;
 use Spatie\Permission\Models\Role;
 
 /**
- * System configuration — Super Admin only. Explicitly registered in
- * AuthServiceProvider since Role is a Spatie package model, outside the
- * App\Models namespace Laravel's policy auto-discovery scans.
+ * Explicitly registered because Role is a Spatie package model. Ordinary
+ * role management follows permissions; super-admin itself is protected.
  */
 class RolePolicy
 {
@@ -29,11 +28,12 @@ class RolePolicy
 
     public function update(User $user, Role $role): bool
     {
-        return $user->can('manage roles');
+        return $user->can('manage roles')
+            && ($role->name !== 'super-admin' || $user->isSuperAdmin());
     }
 
     public function delete(User $user, Role $role): bool
     {
-        return $user->can('manage roles');
+        return $user->can('manage roles') && $role->name !== 'super-admin';
     }
 }

@@ -46,7 +46,7 @@ class AuthorizationMatrixTest extends TestCase
 
     public function test_every_admin_side_role_can_access_the_admin_panel(): void
     {
-        foreach (['admin', 'school-admin', 'accountant', 'reception', 'principal'] as $role) {
+        foreach (['super-admin', 'admin', 'school-admin', 'accountant', 'reception', 'principal'] as $role) {
             $user = $this->userWithRole($role);
 
             $this->assertTrue(
@@ -76,6 +76,7 @@ class AuthorizationMatrixTest extends TestCase
         ]);
 
         $this->assertTrue($teacher->canAccessPanel($teacherPanel));
+        $this->assertFalse($this->userWithRole('super-admin')->canAccessPanel($teacherPanel));
         $this->assertFalse($this->userWithRole('admin')->canAccessPanel($teacherPanel));
 
         foreach (['school-admin', 'accountant', 'reception', 'principal'] as $role) {
@@ -105,10 +106,19 @@ class AuthorizationMatrixTest extends TestCase
 
     public function test_super_admin_has_every_permission_including_system_configuration(): void
     {
-        $user = $this->userWithRole('admin');
+        $user = $this->userWithRole('super-admin');
 
         foreach (['manage users', 'manage roles', 'manage permissions', 'override service prices', 'manage fees'] as $permission) {
-            $this->assertTrue($user->can($permission), "admin should have [{$permission}].");
+            $this->assertTrue($user->can($permission), "super-admin should have [{$permission}].");
+        }
+    }
+
+    public function test_existing_admin_role_retains_its_seeded_permissions(): void
+    {
+        $user = $this->userWithRole('admin');
+
+        foreach (['manage users', 'manage roles', 'manage permissions', 'manage fees'] as $permission) {
+            $this->assertTrue($user->can($permission), "admin should retain [{$permission}].");
         }
     }
 
@@ -182,18 +192,21 @@ class AuthorizationMatrixTest extends TestCase
         }
     }
 
-    public function test_principal_has_full_academic_permissions_and_read_only_finance_with_no_fee_price_editing(): void
+    public function test_principal_has_full_operational_permissions_without_protected_system_permissions(): void
     {
         $user = $this->userWithRole('principal');
 
-        foreach (['manage subjects', 'manage stages', 'manage grades', 'manage classes', 'manage academic years'] as $permission) {
+        foreach ([
+            'view students', 'create students', 'manage teachers', 'manage subjects',
+            'manage stages', 'manage grades', 'manage classes', 'manage academic years',
+            'manage curriculum', 'manage journal entries', 'view timetable', 'manage timetable',
+            'manage fees', 'manage fee prices', 'manage invoices', 'manage expenses',
+            'manage cash', 'view cash reports', 'manage users', 'manage roles', 'view audit logs',
+        ] as $permission) {
             $this->assertTrue($user->can($permission), "principal should have [{$permission}].");
         }
 
-        $this->assertTrue($user->can('view invoices'));
-        $this->assertTrue($user->can('view cash reports'));
-
-        foreach (['manage fee prices', 'manage fees', 'manage invoices', 'manage expenses', 'override service prices'] as $permission) {
+        foreach (['manage permissions', 'unlock historical academic year'] as $permission) {
             $this->assertFalse($user->can($permission), "principal should NOT have [{$permission}].");
         }
     }
@@ -246,12 +259,12 @@ class AuthorizationMatrixTest extends TestCase
         $this->actingAs($user)->get(route('dashboard.invoices.create'))->assertForbidden();
     }
 
-    public function test_accountant_can_manage_fee_prices_but_principal_cannot(): void
+    public function test_accountant_and_principal_can_manage_fee_prices(): void
     {
         $accountant = $this->userWithRole('accountant');
         $principal = $this->userWithRole('principal');
 
         $this->actingAs($accountant)->get(route('dashboard.fee-prices.index'))->assertOk();
-        $this->actingAs($principal)->get(route('dashboard.fee-prices.index'))->assertForbidden();
+        $this->actingAs($principal)->get(route('dashboard.fee-prices.index'))->assertOk();
     }
 }

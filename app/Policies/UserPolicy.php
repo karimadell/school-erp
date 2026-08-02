@@ -5,9 +5,8 @@ namespace App\Policies;
 use App\Models\User;
 
 /**
- * System configuration — reserved for Super Admin ('admin' role) only, per
- * the approved Batch 6 role mapping. School Admin has full operational
- * access but explicitly excludes user/role/permission management.
+ * User administration is permission-based. Protected super-admin accounts
+ * require a super-admin actor, and the final active account cannot be deleted.
  */
 class UserPolicy
 {
@@ -18,7 +17,7 @@ class UserPolicy
 
     public function view(User $user, User $model): bool
     {
-        return $user->can('manage users');
+        return $user->can('manage users') && (! $model->isSuperAdmin() || $user->isSuperAdmin());
     }
 
     public function create(User $user): bool
@@ -28,11 +27,13 @@ class UserPolicy
 
     public function update(User $user, User $model): bool
     {
-        return $user->can('manage users');
+        return $user->can('manage users') && (! $model->isSuperAdmin() || $user->isSuperAdmin());
     }
 
     public function delete(User $user, User $model): bool
     {
-        return $user->can('manage users');
+        return $user->can('manage users')
+            && (! $model->isSuperAdmin() || $user->isSuperAdmin())
+            && ! $model->isLastActiveSuperAdmin();
     }
 }

@@ -21,7 +21,7 @@ class RolesAndPermissionsSeeder extends Seeder
     {
         $permissions = [
             // People
-            'view students', 'create students', 'update students', 'delete students',
+            'view students', 'create students', 'update students', 'delete students', 'manage students',
             'manage teachers',
             'view enrollments', 'create enrollments', 'update enrollments', 'delete enrollments',
 
@@ -127,7 +127,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // no roles/permissions.
         $reception = Role::firstOrCreate(['name' => 'reception']);
         $reception->syncPermissions([
-            'view students', 'create students', 'update students',
+            'view students', 'create students', 'update students', 'manage students',
             'view enrollments', 'create enrollments', 'update enrollments',
             'view invoices',
             'view student balances',

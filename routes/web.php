@@ -30,6 +30,7 @@ use App\Http\Controllers\Dashboard\TransportController;
 use App\Http\Controllers\Dashboard\SalaryController;
 use App\Http\Controllers\Dashboard\CashReportController;
 use App\Http\Controllers\Dashboard\SchoolSettingController;
+use App\Http\Controllers\Dashboard\SchoolEnrollmentController;
 
 use App\Http\Controllers\Cash\CashTransactionController;
 use App\Http\Controllers\Cash\CashTransferController;
@@ -103,6 +104,13 @@ Route::middleware(['auth', 'administrative'])
             ->name('settings.school.update');
 
         Route::resource('students', StudentController::class);
+
+        Route::get('enrollment', [SchoolEnrollmentController::class, 'index'])
+            ->name('school-enrollment.index');
+        Route::get('enrollment/create', [SchoolEnrollmentController::class, 'create'])
+            ->name('school-enrollment.create');
+        Route::post('enrollment', [SchoolEnrollmentController::class, 'store'])
+            ->name('school-enrollment.store');
 
         Route::get('enrollments', [EnrollmentController::class, 'index'])
             ->name('enrollments.index');

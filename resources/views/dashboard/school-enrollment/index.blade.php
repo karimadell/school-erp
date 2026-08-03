@@ -6,12 +6,12 @@
     <a href="{{ route('dashboard.school-enrollment.create') }}" class="btn btn-primary">Зачислить ученика</a>
 </div>
 <div class="card shadow-sm border-0"><div class="table-responsive"><table class="table align-middle mb-0">
-    <thead><tr><th>Ученик</th><th>Учебный год</th><th>Ступень</th><th>Класс</th><th>Группа</th><th>Дата</th></tr></thead>
+    <thead><tr><th>Ученик</th><th>Учебный год</th><th>Форма обучения</th><th>Ступень</th><th>Класс</th><th>Группа</th><th>Дата</th></tr></thead>
     <tbody>@forelse($enrollments as $enrollment)<tr>
-        <td>{{ $enrollment->student?->full_name }}</td><td>{{ $enrollment->academicYear?->name }}</td>
+        <td>{{ $enrollment->student?->full_name }}</td><td>{{ $enrollment->academicYear?->name }}</td><td>{{ $enrollment->enrollmentMode?->name_ru ?: '—' }}</td>
         <td>{{ $enrollment->stage?->name }}</td><td>{{ $enrollment->grade?->name }}</td><td>{{ $enrollment->schoolClass?->name }}</td>
         <td>{{ $enrollment->date?->format('d.m.Y') }}</td>
-    </tr>@empty<tr><td colspan="6" class="text-center text-muted py-5">Зачисления пока не оформлены.</td></tr>@endforelse</tbody>
+    </tr>@empty<tr><td colspan="7" class="text-center text-muted py-5">Зачисления пока не оформлены.</td></tr>@endforelse</tbody>
 </table></div></div>
 <div class="mt-3">{{ $enrollments->links() }}</div>
 @endsection

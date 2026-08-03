@@ -103,11 +103,14 @@ class SchoolEnrollmentService
                     'status' => Student::STATUS_ACTIVE,
                 ]);
 
-                $modeId = EnrollmentMode::query()->where('is_active', true)->orderBy('id')->value('id');
+                $mode = EnrollmentMode::query()->lockForUpdate()->findOrFail($data['enrollment_mode_id']);
+                if (! $mode->is_active) {
+                    throw ValidationException::withMessages(['enrollment_mode_id' => 'Выбранная форма обучения больше не активна.']);
+                }
                 $enrollment = Enrollment::create([
                     'student_id' => $student->id,
                     'academic_year_id' => $year->id,
-                    'enrollment_mode_id' => $modeId,
+                    'enrollment_mode_id' => $mode->id,
                     'stage_id' => $data['stage_id'],
                     'grade_id' => $data['grade_id'],
                     'class_id' => $class->id,

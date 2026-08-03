@@ -23,7 +23,7 @@
         <div class="alert alert-danger"><strong>Проверьте введённые данные:</strong><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
     @endif
     @if($academicYears->isEmpty())<div class="alert alert-warning" data-configuration-warning="academic-year">Нет активного учебного года.</div>@endif
-    @if($modes->isEmpty())<div class="alert alert-warning" data-configuration-warning="enrollment-mode">Формы обучения не настроены.</div>@endif
+    @if($modes->isEmpty())<div class="alert alert-warning" data-configuration-warning="enrollment-mode">Формы обучения не настроены. @can('manage academic years')<a href="{{ route('dashboard.academic.enrollment-modes.index') }}" class="alert-link">Настроить формы обучения</a>@endcan</div>@endif
     @if($fees->isEmpty())<div class="alert alert-warning" data-configuration-warning="services">Финансовые услуги не настроены. Обратитесь к администратору.</div>@endif
 
     <form method="POST" action="{{ route('dashboard.quick-registration.store') }}" id="quick-registration-form">

@@ -117,14 +117,14 @@ class EnrollmentWorkflowTest extends TestCase
         $this->actingAs($user)->post(route('dashboard.school-enrollment.store'), [])->assertForbidden();
     }
 
-    /** @return array{AcademicYear, Stage, Grade, SchoolClass, array<int, FeePrice>} */
+    /** @return array{AcademicYear, Stage, Grade, SchoolClass, array<int, FeePrice>, EnrollmentMode} */
     private function catalog(): array
     {
         $year = AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
         $stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'А', 'name_ru' => '1-А', 'name_ar' => 'A', 'is_active' => true]);
-        EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
 
         $registration = Fee::create(['name_ru' => 'Регистрационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '1.00', 'is_active' => true]);
         $tuition = Fee::create(['name_ru' => 'Обучение', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1.00', 'is_active' => true]);
@@ -133,12 +133,12 @@ class EnrollmentWorkflowTest extends TestCase
             FeePrice::create(['fee_id' => $tuition->id, 'academic_year_id' => $year->id, 'amount' => '2000.00', 'currency' => 'EGP', 'start_date' => $year->start_date, 'end_date' => $year->end_date, 'grade_id' => $grade->id, 'payment_period' => 'monthly', 'is_active' => true]),
         ];
 
-        return [$year, $stage, $grade, $class, $prices];
+        return [$year, $stage, $grade, $class, $prices, $mode];
     }
 
     private function payload(array $catalog, array $overrides = []): array
     {
-        [$year, $stage, $grade, $class, $prices] = $catalog;
+        [$year, $stage, $grade, $class, $prices, $mode] = $catalog;
 
         return array_replace([
             'student_name_ru' => 'Иванов Иван Иванович',
@@ -154,6 +154,7 @@ class EnrollmentWorkflowTest extends TestCase
             'mother_name' => 'Иванова Анна',
             'emergency_contact' => '+20 111 111 1111',
             'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $mode->id,
             'stage_id' => $stage->id,
             'grade_id' => $grade->id,
             'class_id' => $class->id,

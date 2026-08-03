@@ -8,6 +8,7 @@ use App\Models\AcademicYear;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Models\EnrollmentMode;
 use App\Models\Stage;
 use App\Services\Admissions\SchoolEnrollmentService;
 use Illuminate\Http\RedirectResponse;
@@ -24,7 +25,7 @@ class SchoolEnrollmentController extends Controller
     {
         return view('dashboard.school-enrollment.index', [
             'enrollments' => Enrollment::query()
-                ->with(['student', 'academicYear', 'stage', 'grade', 'schoolClass'])
+                ->with(['student', 'academicYear', 'stage', 'grade', 'schoolClass', 'enrollmentMode'])
                 ->latest()->paginate(15),
         ]);
     }
@@ -54,6 +55,7 @@ class SchoolEnrollmentController extends Controller
 
         return view('dashboard.school-enrollment.create', [
             'academicYears' => $years,
+            'enrollmentModes' => EnrollmentMode::active()->ordered()->get(),
             'stages' => $stages,
             'structureData' => $stages->mapWithKeys(fn ($stage) => [$stage->id => $stage->grades->map(fn ($grade) => [
                 'id' => $grade->id,

@@ -31,6 +31,7 @@ use App\Http\Controllers\Dashboard\SalaryController;
 use App\Http\Controllers\Dashboard\CashReportController;
 use App\Http\Controllers\Dashboard\SchoolSettingController;
 use App\Http\Controllers\Dashboard\SchoolEnrollmentController;
+use App\Http\Controllers\Dashboard\EnrollmentModeController;
 use App\Http\Controllers\Dashboard\StudentDocumentController;
 use App\Http\Controllers\Dashboard\StudentProfileCompletionController;
 
@@ -124,6 +125,12 @@ Route::middleware(['auth', 'administrative'])
             ->name('school-enrollment.create');
         Route::post('enrollment', [SchoolEnrollmentController::class, 'store'])
             ->name('school-enrollment.store');
+
+        Route::prefix('academic')->name('academic.')->group(function () {
+            Route::resource('enrollment-modes', EnrollmentModeController::class)
+                ->parameters(['enrollment-modes' => 'enrollmentMode'])
+                ->except(['show', 'destroy']);
+        });
 
         Route::get('enrollments', [EnrollmentController::class, 'index'])
             ->name('enrollments.index');

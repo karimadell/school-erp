@@ -18,6 +18,7 @@
             'label' => 'Учебный процесс',
             'items' => [
                 ['label' => 'Учебные годы', 'icon' => 'calendar_days', 'route' => 'dashboard.academic-years.index', 'active' => 'dashboard.academic-years.*'],
+                ['label' => 'Формы обучения', 'icon' => 'notebook_text', 'route' => auth()->user()?->can('manage academic years') ? 'dashboard.academic.enrollment-modes.index' : null, 'active' => 'dashboard.academic.enrollment-modes.*'],
                 // Четверти: Quarter model exists but has no management UI yet — hidden.
                 ['label' => 'Структура школы', 'icon' => 'school', 'route' => 'dashboard.stages.index', 'active' => 'dashboard.stages.*'],
                 ['label' => 'Предметы', 'icon' => 'book_open', 'route' => 'dashboard.subjects.index', 'active' => 'dashboard.subjects.*'],

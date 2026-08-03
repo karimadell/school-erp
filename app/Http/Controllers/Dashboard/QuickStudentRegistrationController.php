@@ -29,7 +29,7 @@ class QuickStudentRegistrationController extends Controller
     public function create(): View
     {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
-        $modes = EnrollmentMode::where('is_active', true)->orderBy('name_ru')->orderBy('id')->get();
+        $modes = EnrollmentMode::active()->ordered()->get();
         $fees = Fee::with(['prices' => fn ($query) => $query->active()->current()->orderByDesc('start_date')])
             ->active()->orderBy('category')->orderBy('name_ru')->get();
 

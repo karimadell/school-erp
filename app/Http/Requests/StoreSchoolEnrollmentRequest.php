@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\AcademicYear;
 use App\Models\FeePrice;
+use App\Models\EnrollmentMode;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
@@ -46,6 +47,7 @@ class StoreSchoolEnrollmentRequest extends FormRequest
             'mother_passport' => ['nullable', 'string', 'max:255'],
             'emergency_contact' => ['nullable', 'string', 'max:500'],
             'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
+            'enrollment_mode_id' => ['required', 'integer', 'exists:enrollment_modes,id'],
             'stage_id' => ['required', 'integer', 'exists:stages,id'],
             'grade_id' => ['required', 'integer', 'exists:grades,id'],
             'class_id' => ['required', 'integer', 'exists:classes,id'],
@@ -60,6 +62,10 @@ class StoreSchoolEnrollmentRequest extends FormRequest
             $year = AcademicYear::find($this->integer('academic_year_id'));
             if ($year && ! $year->is_active) {
                 $validator->errors()->add('academic_year_id', 'Выберите активный учебный год.');
+            }
+            $mode = EnrollmentMode::find($this->integer('enrollment_mode_id'));
+            if ($mode && ! $mode->is_active) {
+                $validator->errors()->add('enrollment_mode_id', 'Выберите активную форму обучения.');
             }
 
             $stage = Stage::find($this->integer('stage_id'));
@@ -97,6 +103,7 @@ class StoreSchoolEnrollmentRequest extends FormRequest
         return [
             'student_name_ru.required' => 'Укажите полное имя ученика на русском языке.',
             'academic_year_id.required' => 'Выберите учебный год.',
+            'enrollment_mode_id.required' => 'Выберите форму обучения.',
             'stage_id.required' => 'Выберите ступень.',
             'grade_id.required' => 'Выберите класс.',
             'class_id.required' => 'Выберите учебную группу.',

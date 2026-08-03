@@ -89,7 +89,7 @@ class QuickStudentRegistrationTest extends TestCase
         $this->assertSame('2026-08-02', Enrollment::sole()->enrollment_date->toDateString());
         $this->assertSame('1000.00', $invoice->total_amount);
         $this->get(route('dashboard.quick-registration.summary', $invoice))->assertOk()
-            ->assertSee('Данные ученика заполнены не полностью.')->assertSee('Завершить заполнение данных ученика');
+            ->assertSee('Данные ученика заполнены не полностью.')->assertSee('Завершить регистрацию');
     }
 
     public function test_registration_fee_can_only_appear_once_per_year(): void

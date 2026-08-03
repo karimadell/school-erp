@@ -12,7 +12,7 @@ class StudentFilePolicy
      */
     public function view(User $user): bool
     {
-        return $user->can('view invoices');
+        return $user->isActive() && $user->can('manage students');
     }
 
     /**
@@ -20,7 +20,7 @@ class StudentFilePolicy
      */
     public function create(User $user): bool
     {
-        return $user->can('manage invoices');
+        return $user->isActive() && $user->can('manage students');
     }
 
     /**
@@ -28,12 +28,6 @@ class StudentFilePolicy
      */
     public function delete(User $user, StudentFile $file): bool
     {
-        // Admin يقدر يحذف أي ملف
-        if ($user->hasRole('admin')) {
-            return true;
-        }
-
-        // غير كده لازم صلاحية إدارة الفواتير
-        return $user->can('manage invoices');
+        return false;
     }
 }

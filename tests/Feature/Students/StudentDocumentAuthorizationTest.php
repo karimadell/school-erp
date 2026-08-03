@@ -1,0 +1,7 @@
+<?php
+namespace Tests\Feature\Students;
+use App\Models\Student; use App\Models\StudentFile; use App\Models\User; use Illuminate\Support\Facades\Storage;
+class StudentDocumentAuthorizationTest extends StudentCompletionTestCase {
+ public function test_teacher_and_cross_student_access_are_denied():void { Storage::fake('local'); Storage::disk('local')->put('students/1/documents/a.pdf','x'); $file=StudentFile::create(['student_id'=>$this->student->id,'title'=>'Паспорт','file_name'=>'a.pdf','file_path'=>'students/1/documents/a.pdf','file_type'=>'application/pdf','file_size'=>1,'category'=>'other','type'=>'passport']); $teacher=User::factory()->create(['is_active'=>true]); $teacher->assignRole('teacher'); $this->actingAs($teacher)->get(route('dashboard.students.documents.preview',[$this->student,$file]))->assertRedirect('/login'); $other=Student::create(['name'=>'Другой']); $this->actingAs($this->manager)->get(route('dashboard.students.documents.preview',[$other,$file]))->assertNotFound(); }
+ public function test_missing_physical_file_is_not_found():void { Storage::fake('local'); $file=StudentFile::create(['student_id'=>$this->student->id,'title'=>'Паспорт','file_name'=>'a.pdf','file_path'=>'missing.pdf','file_type'=>'application/pdf','file_size'=>1,'category'=>'other','type'=>'passport']); $this->actingAs($this->manager)->get(route('dashboard.students.documents.preview',[$this->student,$file]))->assertNotFound(); }
+}

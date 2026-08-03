@@ -24,6 +24,6 @@
         <p><strong>Способ оплаты:</strong> {{ match($invoice->payment_method) { 'cash' => 'Наличные', 'card' => 'Карта', 'bank' => 'Банк', 'transfer' => 'Перевод', default => 'Без оплаты' } }}</p>
         <p><strong>Касса:</strong> {{ $invoice->cashAccount?->name ?? 'Без оплаты' }}</p>
     </div></div>
-    <a href="{{ route('dashboard.students.edit', $invoice->student) }}" class="btn btn-primary">Завершить заполнение данных ученика</a>
+    <a href="{{ route('dashboard.students.complete-registration.edit', $invoice->student) }}" class="btn btn-primary">Завершить регистрацию</a>
 </div>
 @endsection

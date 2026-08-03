@@ -9,6 +9,9 @@ class Student extends Model
 {
     public const STATUS_ACTIVE = 'active';
     public const STATUS_PRE_REGISTERED = 'pre_registered';
+    public const STATUS_DOCUMENTS_REQUIRED = 'documents_required';
+    public const STATUS_UNDER_REVIEW = 'under_review';
+    public const STATUS_REGISTRATION_COMPLETED = 'registration_completed';
 
     protected $fillable = [
         'name',
@@ -110,6 +113,24 @@ class Student extends Model
     public function invoices()
     {
         return $this->hasMany(Invoice::class);
+    }
+
+    public function files()
+    {
+        return $this->hasMany(StudentFile::class);
+    }
+
+    public function statusLabel(): string
+    {
+        return match ($this->status) {
+            self::STATUS_PRE_REGISTERED => 'Предварительная регистрация',
+            self::STATUS_DOCUMENTS_REQUIRED => 'Требуются документы',
+            self::STATUS_UNDER_REVIEW => 'На проверке',
+            self::STATUS_REGISTRATION_COMPLETED => 'Регистрация завершена',
+            'suspended' => 'Приостановлен',
+            'graduated' => 'Выпускник',
+            default => 'Активен',
+        };
     }
 
     public function grades()

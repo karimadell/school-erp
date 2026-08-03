@@ -31,6 +31,8 @@ use App\Http\Controllers\Dashboard\SalaryController;
 use App\Http\Controllers\Dashboard\CashReportController;
 use App\Http\Controllers\Dashboard\SchoolSettingController;
 use App\Http\Controllers\Dashboard\SchoolEnrollmentController;
+use App\Http\Controllers\Dashboard\StudentDocumentController;
+use App\Http\Controllers\Dashboard\StudentProfileCompletionController;
 
 use App\Http\Controllers\Cash\CashTransactionController;
 use App\Http\Controllers\Cash\CashTransferController;
@@ -104,6 +106,17 @@ Route::middleware(['auth', 'administrative'])
             ->name('settings.school.update');
 
         Route::resource('students', StudentController::class);
+
+        Route::get('students/{student}/complete-registration', [StudentProfileCompletionController::class, 'edit'])->name('students.complete-registration.edit');
+        Route::put('students/{student}/complete-registration', [StudentProfileCompletionController::class, 'update'])->name('students.complete-registration.update');
+        Route::post('students/{student}/submit-registration-review', [StudentProfileCompletionController::class, 'submitReview'])->name('students.registration-review.submit');
+        Route::post('students/{student}/complete-registration-review', [StudentProfileCompletionController::class, 'completeReview'])->name('students.registration-review.complete');
+        Route::get('students/{student}/documents', [StudentDocumentController::class, 'index'])->name('students.documents.index');
+        Route::post('students/{student}/documents', [StudentDocumentController::class, 'store'])->name('students.documents.store');
+        Route::get('students/{student}/documents/{studentFile}/preview', [StudentDocumentController::class, 'preview'])->name('students.documents.preview');
+        Route::get('students/{student}/documents/{studentFile}/download', [StudentDocumentController::class, 'download'])->name('students.documents.download');
+        Route::patch('students/{student}/documents/{studentFile}/archive', [StudentDocumentController::class, 'archive'])->name('students.documents.archive');
+        Route::patch('students/{student}/documents/{studentFile}/restore', [StudentDocumentController::class, 'restore'])->name('students.documents.restore');
 
         Route::get('enrollment', [SchoolEnrollmentController::class, 'index'])
             ->name('school-enrollment.index');

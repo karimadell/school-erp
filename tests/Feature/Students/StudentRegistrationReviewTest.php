@@ -1,0 +1,7 @@
+<?php
+namespace Tests\Feature\Students;
+use App\Models\Student; use App\Models\StudentFile; use Illuminate\Support\Facades\Storage;
+class StudentRegistrationReviewTest extends StudentCompletionTestCase {
+ public function test_incomplete_file_cannot_submit():void { $this->actingAs($this->manager)->post(route('dashboard.students.registration-review.submit',$this->student))->assertSessionHasErrors('profile'); $this->assertSame(Student::STATUS_PRE_REGISTERED,$this->student->fresh()->status); }
+ public function test_complete_file_can_be_reviewed_and_approved():void { Storage::fake('public'); Storage::disk('public')->put('photo.jpg','x'); $this->student->update(array_merge($this->profilePayload(),['photo'=>'photo.jpg','documents'=>['father'=>['phone'=>'+201011111111']]])); foreach(['birth_certificate','passport','previous_school','medical'] as $type) StudentFile::create(['student_id'=>$this->student->id,'title'=>$type,'file_name'=>$type.'.pdf','file_path'=>$type.'.pdf','file_type'=>'application/pdf','file_size'=>1,'category'=>'other','type'=>$type]); $this->actingAs($this->manager)->post(route('dashboard.students.registration-review.submit',$this->student))->assertRedirect(); $this->assertSame(Student::STATUS_UNDER_REVIEW,$this->student->fresh()->status); $this->actingAs($this->manager)->post(route('dashboard.students.registration-review.complete',$this->student))->assertRedirect(); $this->assertSame(Student::STATUS_REGISTRATION_COMPLETED,$this->student->fresh()->status); }
+}

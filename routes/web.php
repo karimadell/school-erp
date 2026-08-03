@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\FinanceServiceController;
 use App\Http\Controllers\Dashboard\FinanceTariffController;
+use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\EnrollmentController;
@@ -243,6 +244,9 @@ Route::middleware(['auth', 'administrative'])
                 ->except(['destroy']);
             Route::resource('tariffs', FinanceTariffController::class)
                 ->parameters(['tariffs' => 'feePrice'])->only(['index', 'create', 'store', 'show']);
+            Route::get('tariffs-rollover', [FinanceTariffRolloverController::class, 'create'])->name('tariffs.rollover.create');
+            Route::post('tariffs-rollover/preview', [FinanceTariffRolloverController::class, 'preview'])->name('tariffs.rollover.preview');
+            Route::post('tariffs-rollover', [FinanceTariffRolloverController::class, 'store'])->name('tariffs.rollover.store');
         });
 
         /*

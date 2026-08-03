@@ -52,7 +52,7 @@
                 <div class="col-12"><label class="form-label">Адрес</label><textarea class="form-control" name="address" rows="3">{{ old('address',$settings->address) }}</textarea></div>
             </div></div>
 
-            <div class="tab-pane fade" id="settings-documents"><div class="row g-3">
+            <div class="tab-pane fade" id="settings-documents">
                 @php
                     $documentAssets = [
                         'printing_logo' => ['label' => 'Логотип школы для документов', 'current' => 'Текущий логотип для документов', 'url' => $settings->printingLogoUrl()],
@@ -60,26 +60,52 @@
                         'director_signature' => ['label' => 'Подпись директора', 'current' => 'Текущая подпись директора', 'url' => $settings->directorSignatureUrl()],
                     ];
                 @endphp
-                @foreach ($documentAssets as $field => $asset)
-                    <div class="col-12 col-lg-4">
-                        <label class="form-label">{{ $asset['label'] }}</label>
-                        <div class="border rounded p-3 mb-2 text-center bg-light h-100" data-asset-preview="{{ $field }}">
-                            <div class="small fw-semibold mb-2">{{ $asset['current'] }}</div>
-                            <img src="{{ $asset['url'] ?? '' }}" alt="{{ $asset['current'] }}" class="{{ $asset['url'] ? '' : 'd-none' }} mx-auto" data-asset-image="{{ $field }}" style="display:block;max-width:100%;max-height:130px;width:auto;height:auto;object-fit:contain">
-                            <div class="{{ $asset['url'] ? 'd-none' : '' }} text-muted small py-4" data-asset-placeholder="{{ $field }}">Изображение не загружено.</div>
+                <div class="row g-4 align-items-stretch" data-document-upload-row>
+                    @foreach ($documentAssets as $field => $asset)
+                        <div class="col-12 col-md-6 col-xl-4 d-flex">
+                            <div class="card border shadow-sm w-100 h-100">
+                                <div class="card-body d-flex flex-column">
+                                    <label class="form-label fw-semibold">{{ $asset['label'] }}</label>
+                                    <div class="border rounded p-3 mb-3 text-center bg-light d-flex flex-column justify-content-center" data-asset-preview="{{ $field }}" style="min-height:220px">
+                                        <div class="small fw-semibold mb-2">{{ $asset['current'] }}</div>
+                                        <img src="{{ $asset['url'] ?? '' }}" alt="{{ $asset['current'] }}" class="{{ $asset['url'] ? '' : 'd-none' }} mx-auto" data-asset-image="{{ $field }}" style="display:block;max-width:100%;max-height:180px;width:auto;height:auto;object-fit:contain">
+                                        <div class="{{ $asset['url'] ? 'd-none' : '' }} text-muted small py-4" data-asset-placeholder="{{ $field }}">Изображение не загружено.</div>
+                                    </div>
+                                    <div class="mt-auto">
+                                        <input class="form-control" type="file" name="{{ $field }}" accept="image/png,image/jpeg,image/webp" data-branding-file="{{ $field }}">
+                                        <div class="form-text">Допустимый размер файла: не более 2 МБ.<br>Форматы: JPG, JPEG, PNG, WEBP.</div>
+                                        <div class="text-danger small mt-1 d-none" data-branding-error="{{ $field }}">Размер файла не должен превышать 2 МБ.</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <input class="form-control" type="file" name="{{ $field }}" accept="image/png,image/jpeg,image/webp" data-branding-file="{{ $field }}">
-                        <div class="form-text">Допустимый размер файла: не более 2 МБ.<br>Форматы: JPG, JPEG, PNG, WEBP.</div>
-                        <div class="text-danger small mt-1 d-none" data-branding-error="{{ $field }}">Размер файла не должен превышать 2 МБ.</div>
+                    @endforeach
+                </div>
+
+                <div class="row g-3 mt-3" data-document-colors-row>
+                    <div class="col-12 col-md-6"><label class="form-label">Цвет заголовка</label><input class="form-control form-control-color" type="color" name="header_color" value="{{ old('header_color',$settings->header_color) }}"></div>
+                    <div class="col-12 col-md-6"><label class="form-label">Цвет подвала</label><input class="form-control form-control-color" type="color" name="footer_color" value="{{ old('footer_color',$settings->footer_color) }}"></div>
+                </div>
+
+                <div class="row g-3 mt-2" data-document-options-row>
+                    <div class="col-12 col-md-6">
+                        <div class="form-check border rounded p-3 ps-5 h-100">
+                            <input type="hidden" name="print_date_enabled" value="0">
+                            <input class="form-check-input" type="checkbox" name="print_date_enabled" value="1" @checked(old('print_date_enabled',$settings->print_date_enabled))>
+                            <label class="form-check-label">Показывать дату печати</label>
+                        </div>
                     </div>
-                @endforeach
-                <div class="col-md-3"><label class="form-label">Цвет заголовка</label><input class="form-control form-control-color" type="color" name="header_color" value="{{ old('header_color',$settings->header_color) }}"></div>
-                <div class="col-md-3"><label class="form-label">Цвет подвала</label><input class="form-control form-control-color" type="color" name="footer_color" value="{{ old('footer_color',$settings->footer_color) }}"></div>
-                <div class="col-md-3 form-check mt-5"><input type="hidden" name="print_date_enabled" value="0"><input class="form-check-input" type="checkbox" name="print_date_enabled" value="1" @checked(old('print_date_enabled',$settings->print_date_enabled))><label class="form-check-label">Показывать дату печати</label></div>
-                <div class="col-md-3 form-check mt-5"><input type="hidden" name="page_numbers_enabled" value="0"><input class="form-check-input" type="checkbox" name="page_numbers_enabled" value="1" @checked(old('page_numbers_enabled',$settings->page_numbers_enabled))><label class="form-check-label">Показывать номера страниц</label></div>
+                    <div class="col-12 col-md-6">
+                        <div class="form-check border rounded p-3 ps-5 h-100">
+                            <input type="hidden" name="page_numbers_enabled" value="0">
+                            <input class="form-check-input" type="checkbox" name="page_numbers_enabled" value="1" @checked(old('page_numbers_enabled',$settings->page_numbers_enabled))>
+                            <label class="form-check-label">Показывать номера страниц</label>
+                        </div>
+                    </div>
+                </div>
 
                 @php($documentLogoUrl = $settings->printingLogoUrl() ?: $settings->logoUrl())
-                <div class="col-12 mt-4">
+                <div class="mt-5" data-document-preview-row>
                     <div class="card border shadow-sm overflow-hidden" data-document-preview>
                         <div class="card-header bg-white"><h2 class="h5 mb-0">Предварительный просмотр документа</h2></div>
                         <div class="card-body p-3 p-md-4">
@@ -100,7 +126,7 @@
                         </div>
                     </div>
                 </div>
-            </div></div>
+            </div>
 
             <div class="tab-pane fade" id="settings-finance"><div class="row g-3">
                 <div class="col-md-3"><label class="form-label">Валюта</label><select class="form-select" name="currency"><option value="EGP">EGP</option></select></div>

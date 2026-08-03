@@ -188,6 +188,22 @@ class SchoolSettingsTest extends TestCase
             ->assertSee('data-preview-page-numbers data-enabled="1"', false);
     }
 
+    public function test_document_controls_use_separate_responsive_bootstrap_rows(): void
+    {
+        $html = $this->actingAs($this->user('admin'))
+            ->get(route('dashboard.settings.school.edit'))
+            ->assertOk()
+            ->assertSee('data-document-upload-row', false)
+            ->assertSee('data-document-colors-row', false)
+            ->assertSee('data-document-options-row', false)
+            ->assertSee('data-document-preview-row', false)
+            ->assertSee('col-12 col-md-6 col-xl-4 d-flex', false)
+            ->assertSee('max-height:180px', false)
+            ->getContent();
+
+        $this->assertStringNotContainsString('position:absolute', str_replace(' ', '', $html));
+    }
+
     public function test_saving_without_files_preserves_all_asset_paths(): void
     {
         $paths = [

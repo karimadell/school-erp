@@ -12,19 +12,19 @@ class FeeInfolist
     {
         return $schema
             ->components([
-                TextEntry::make('name_ru'),
+                TextEntry::make('name_ru')->label('Услуга'),
                 TextEntry::make('category')
+                    ->label('Категория')
                     ->placeholder('-'),
-                TextEntry::make('payment_period')
-                    ->placeholder('-'),
-                TextEntry::make('amount')
-                    ->numeric(),
                 IconEntry::make('is_active')
+                    ->label('Активна')
                     ->boolean(),
                 TextEntry::make('created_at')
+                    ->label('Создана')
                     ->dateTime()
                     ->placeholder('-'),
                 TextEntry::make('updated_at')
+                    ->label('Изменена')
                     ->dateTime()
                     ->placeholder('-'),
             ]);

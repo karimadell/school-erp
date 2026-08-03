@@ -29,6 +29,6 @@ class FeePricePolicy
 
     public function delete(User $user, FeePrice $feePrice): bool
     {
-        return $user->can('manage fee prices');
+        return false;
     }
 }

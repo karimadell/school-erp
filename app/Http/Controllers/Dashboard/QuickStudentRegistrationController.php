@@ -74,13 +74,14 @@ class QuickStudentRegistrationController extends Controller
             'payment_period' => ['nullable', 'string', 'max:50'],
             'first_last_month' => ['nullable', 'boolean'],
             'meal_plan_id' => ['nullable', 'integer', 'exists:meal_plans,id'],
+            'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
         ]);
         $fee = Fee::findOrFail($data['fee_id']);
         $tuitionCategories = [
             Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
             Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL,
         ];
-        $calculation = $calculator->calculate([[
+        $calculation = $calculator->calculate(items: [[
             'fee_id' => $fee->id,
             'quantity' => $data['quantity'],
             'grade_id' => in_array($fee->category, $tuitionCategories, true) && blank($data['grade_group'] ?? null)
@@ -101,7 +102,7 @@ class QuickStudentRegistrationController extends Controller
                 Fee::CATEGORY_FOOD => isset($data['meal_plan_id']) ? (string) $data['meal_plan_id'] : null,
                 default => null,
             },
-        ]]);
+        ]], academicYearId: (int) $data['academic_year_id']);
 
         return response()->json([
             'unit_price' => $calculation['line_items'][0]['unit_price'],

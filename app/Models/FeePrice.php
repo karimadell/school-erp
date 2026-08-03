@@ -3,11 +3,40 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
 
 class FeePrice extends Model
 {
+    protected $attributes = [
+        'currency' => 'EGP',
+        'is_active' => true,
+    ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $price): void {
+            if ($price->currency !== 'EGP') {
+                throw ValidationException::withMessages(['currency' => 'Для цен используется валюта EGP.']);
+            }
+            if (bccomp((string) $price->amount, '0.00', 2) <= 0) {
+                throw ValidationException::withMessages(['amount' => 'Цена должна быть больше нуля.']);
+            }
+            if ($price->end_date && $price->end_date->lt($price->start_date)) {
+                throw ValidationException::withMessages(['end_date' => 'Дата окончания не может быть раньше даты начала.']);
+            }
+            if ($price->academic_year_id) {
+                $year = AcademicYear::find($price->academic_year_id);
+                if (! $year || $price->start_date->lt($year->start_date) || $price->start_date->gt($year->end_date)
+                    || ($price->end_date && $price->end_date->gt($year->end_date))) {
+                    throw ValidationException::withMessages(['academic_year_id' => 'Период действия цены должен находиться в пределах учебного года.']);
+                }
+            }
+        });
+    }
+
     protected $fillable = [
         'fee_id',
+        'academic_year_id',
         'grade_id',
 
         // للتعليم: Подготовительный / 1-4 / 5-6 / 7-8 / 9-11
@@ -17,6 +46,7 @@ class FeePrice extends Model
         'payment_period',
 
         'amount',
+        'currency',
         'start_date',
         'end_date',
 
@@ -40,6 +70,16 @@ class FeePrice extends Model
     public function fee()
     {
         return $this->belongsTo(Fee::class);
+    }
+
+    public function academicYear()
+    {
+        return $this->belongsTo(AcademicYear::class);
+    }
+
+    public function scopeForAcademicYear($query, int $academicYearId)
+    {
+        return $query->where('academic_year_id', $academicYearId);
     }
 
     public function grade()

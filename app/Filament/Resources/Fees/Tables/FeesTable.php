@@ -17,17 +17,16 @@ class FeesTable
         return $table
             ->columns([
                 TextColumn::make('name_ru')
+                    ->label('Услуга')
                     ->searchable(),
                 TextColumn::make('category')
+                    ->label('Категория')
                     ->searchable(),
-                TextColumn::make('payment_period')
-                    ->searchable(),
-                TextColumn::make('amount')
-                    ->numeric()
-                    ->sortable(),
                 IconColumn::make('is_active')
+                    ->label('Активна')
                     ->boolean(),
                 TextColumn::make('created_at')
+                    ->label('Создана')
                     ->dateTime()
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),

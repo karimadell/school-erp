@@ -143,6 +143,7 @@ class QuickStudentRegistrationService
                 items: $items,
                 initialPaymentAmount: '0.00',
                 pricingDate: $data['registration_date'],
+                academicYearId: $year->id,
             );
 
             $allocatedPaid = '0.00';
@@ -158,6 +159,7 @@ class QuickStudentRegistrationService
                 items: $items,
                 initialPaymentAmount: $paidNow,
                 pricingDate: $data['registration_date'],
+                academicYearId: $year->id,
             );
 
             $invoice = Invoice::create([

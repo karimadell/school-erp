@@ -92,6 +92,7 @@ class InvoiceController extends Controller
                 discountValue: $data['discount_value'] ?? null,
                 initialPaymentAmount: $data['initial_payment_amount'] ?? '0',
                 pricingDate: now()->toDateString(),
+                academicYearId: $academicYear->id,
             );
 
             $invoiceData = [

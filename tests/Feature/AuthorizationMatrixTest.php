@@ -264,7 +264,9 @@ class AuthorizationMatrixTest extends TestCase
         $accountant = $this->userWithRole('accountant');
         $principal = $this->userWithRole('principal');
 
-        $this->actingAs($accountant)->get(route('dashboard.fee-prices.index'))->assertOk();
-        $this->actingAs($principal)->get(route('dashboard.fee-prices.index'))->assertOk();
+        $this->actingAs($accountant)->get(route('dashboard.fee-prices.index'))
+            ->assertRedirect(\App\Filament\Resources\FeePrices\FeePriceResource::getUrl('index'));
+        $this->actingAs($principal)->get(route('dashboard.fee-prices.index'))
+            ->assertRedirect(\App\Filament\Resources\FeePrices\FeePriceResource::getUrl('index'));
     }
 }

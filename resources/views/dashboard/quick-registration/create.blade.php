@@ -134,6 +134,7 @@ async function updateRow(row) {
     body.append('_token', document.querySelector('input[name="_token"]').value);
     body.append('fee_id', row.dataset.feeId);
     body.append('quantity', row.querySelector('.quantity')?.value || 1);
+    body.append('academic_year_id', document.querySelector('[name="academic_year_id"]').value);
     if (grade.value) body.append('grade_id', grade.value);
     ['grade_group', 'payment_period', 'transport_area'].forEach(name => { const input = row.querySelector(`[name$="[${name}]"]`); if (input?.value) body.append(name, input.value); });
     const firstLast = row.querySelector('[name$="[first_last_month]"]'); if (firstLast?.checked) body.append('first_last_month', '1');

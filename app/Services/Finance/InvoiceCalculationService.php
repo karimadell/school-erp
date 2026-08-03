@@ -22,6 +22,7 @@ class InvoiceCalculationService
         string|int|float|null $discountValue = null,
         string|int|float|null $initialPaymentAmount = null,
         ?string $pricingDate = null,
+        ?int $academicYearId = null,
     ): array {
         $pricingDate ??= now()->toDateString();
         $feeIds = collect($items)->pluck('fee_id')->map(fn ($id) => (int) $id)->all();
@@ -47,7 +48,7 @@ class InvoiceCalculationService
                 ]);
             }
 
-            $amount = $this->resolvePrice($fee, $item, $pricingDate);
+            $amount = $this->resolvePrice($fee, $item, $pricingDate, $academicYearId);
             $quantity = (int) ($item['quantity'] ?? 1);
 
             if ($quantity < 1) {
@@ -121,11 +122,13 @@ class InvoiceCalculationService
     }
 
     /** @param array<string, mixed> $selection */
-    private function resolvePrice(Fee $fee, array $selection, string $date): string
+    private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId): string
     {
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
             ->where('is_active', true)
+            ->when($academicYearId, fn ($query) => $query->where('academic_year_id', $academicYearId))
+            ->where('currency', self::CURRENCY)
             ->whereDate('start_date', '<=', $date)
             ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $date));
 
@@ -135,7 +138,13 @@ class InvoiceCalculationService
             }
         }
 
-        $price = $query->orderByDesc('start_date')->lockForUpdate()->first();
+        $price = $query->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->first();
+
+        if (! $price && $academicYearId && $fee->prices()->exists()) {
+            throw ValidationException::withMessages([
+                'fees' => "Для услуги «{$fee->name_ru}» не настроена активная цена на выбранный учебный год и дату.",
+            ]);
+        }
 
         return $this->money($price?->getRawOriginal('amount') ?? $fee->getRawOriginal('amount') ?? $fee->getRawOriginal('base_price') ?? '0');
     }

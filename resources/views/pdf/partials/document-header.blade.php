@@ -1,11 +1,12 @@
 @php
-    $brandingLogoPath = $logoPath ?? public_path('images/school-logo.png');
+    $schoolSettings = $schoolSettings ?? \App\Models\SchoolSetting::current();
+    $brandingLogoPath = $schoolSettings->documentLogoPath();
 @endphp
 
 <style>
     .school-document-header {
         width: 100%;
-        border-bottom: 2px solid #263b58;
+        border-bottom: 2px solid {{ $schoolSettings->header_color }};
         margin-bottom: 18px;
         padding-bottom: 12px;
     }
@@ -35,10 +36,18 @@
             <td class="school-document-logo-cell"></td>
         @endif
         <td class="school-document-identity">
-            <div class="school-document-name">ЦЕНТР «НАШИ ТРАДИЦИИ»</div>
+            <div class="school-document-name">{{ $schoolSettings->school_name }}</div>
             <div class="school-document-subtitle">Русская школа в Египте</div>
+            <div class="school-document-subtitle">
+                {{ $schoolSettings->phone_1 }}
+                @if ($schoolSettings->phone_2) / {{ $schoolSettings->phone_2 }} @endif
+                @if ($schoolSettings->email) · {{ $schoolSettings->email }} @endif
+            </div>
             @if (filled($documentTitle ?? null))
                 <div class="school-document-title">{{ $documentTitle }}</div>
+            @endif
+            @if ($schoolSettings->print_date_enabled)
+                <div class="school-document-subtitle">{{ now()->format('d.m.Y H:i') }}</div>
             @endif
         </td>
     </tr>

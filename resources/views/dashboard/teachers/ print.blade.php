@@ -94,10 +94,7 @@
     </button>
 </div>
 
-<div class="header">
-    <div class="title">Русская школа «Наши традиции»</div>
-    <div class="subtitle">{{ __('teachers.title') }} — {{ now()->format('Y-m-d') }}</div>
-</div>
+<x-school-document-header :title="__('teachers.title')" :footer="true" />
 
 <table>
     <thead>

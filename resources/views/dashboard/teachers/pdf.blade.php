@@ -162,12 +162,7 @@
 
 @php
     $documentId = 'TR-' . now()->format('Ymd-His');
-    $logoPath = public_path('images/logo.png');
 @endphp
-
-@if(file_exists($logoPath))
-    <img src="{{ $logoPath }}" class="watermark">
-@endif
 
 <div class="meta"><span class="doc-id">Документ №: {{ $documentId }}</span> · Дата печати: {{ now()->format('d.m.Y H:i') }}</div>
 

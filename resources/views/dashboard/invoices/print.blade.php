@@ -348,8 +348,6 @@
 
 @php
 
-    $logoPath = public_path('images/logo.png');
-
     $invoiceNumber = $invoice->display_number;
 
     $statusText = match ($invoice->status) {

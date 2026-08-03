@@ -74,7 +74,7 @@
             'items' => [
                 ['label' => 'Пользователи', 'icon' => 'user_cog', 'href' => Route::has('filament.admin.resources.users.index') ? route('filament.admin.resources.users.index') : null],
                 ['label' => 'Роли и разрешения', 'icon' => 'shield_check', 'href' => Route::has('filament.admin.resources.roles.index') ? route('filament.admin.resources.roles.index') : null],
-                // Настройки школы: no unified settings page exists yet — hidden.
+                ['label' => 'Настройки школы', 'icon' => 'school', 'route' => auth()->user()?->hasAnyRole(['super-admin', 'admin']) ? 'dashboard.settings.school.edit' : null, 'active' => 'dashboard.settings.school.*'],
                 // Языки: already available via the topbar language switcher, not a separate admin page.
                 ['label' => 'Журнал действий', 'icon' => 'scroll_text', 'route' => 'dashboard.admin.audit.logs.index', 'active' => 'dashboard.admin.audit.logs.*'],
                 // Резервные копии: spatie/laravel-backup is installed but has no admin-facing UI yet — hidden.

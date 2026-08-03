@@ -29,6 +29,7 @@ use App\Http\Controllers\Dashboard\DebtController;
 use App\Http\Controllers\Dashboard\TransportController;
 use App\Http\Controllers\Dashboard\SalaryController;
 use App\Http\Controllers\Dashboard\CashReportController;
+use App\Http\Controllers\Dashboard\SchoolSettingController;
 
 use App\Http\Controllers\Cash\CashTransactionController;
 use App\Http\Controllers\Cash\CashTransferController;
@@ -95,6 +96,11 @@ Route::middleware(['auth', 'administrative'])
     ->group(function () {
 
         Route::get('/', [DashboardController::class, 'index'])->name('index');
+
+        Route::get('administration/school-settings', [SchoolSettingController::class, 'edit'])
+            ->name('settings.school.edit');
+        Route::put('administration/school-settings', [SchoolSettingController::class, 'update'])
+            ->name('settings.school.update');
 
         Route::resource('students', StudentController::class);
 

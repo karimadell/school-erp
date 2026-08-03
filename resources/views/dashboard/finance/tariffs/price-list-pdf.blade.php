@@ -5,7 +5,7 @@
 </style></head>
 <body>
 @include('pdf.partials.document-footer', ['academicYear' => $year])
-@include('pdf.partials.document-header', ['documentTitle' => null, 'logoPath' => $logoPath ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => null])
 <div class="price-list-title">ПРАЙС</div><div class="price-list-year">{{ str_replace('/', '–', $year->name) }} учебный год</div><div class="price-list-meta">Дата формирования: {{ $generatedAt->format('d.m.Y') }} · Валюта: EGP</div>
 
 @forelse($sections as $heading=>$rows)

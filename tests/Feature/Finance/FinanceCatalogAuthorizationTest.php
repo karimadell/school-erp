@@ -1,0 +1,4 @@
+<?php
+namespace Tests\Feature\Finance;
+use App\Models\User;
+class FinanceCatalogAuthorizationTest extends ModernFinanceCatalogTestCase { public function test_approved_roles_allowed_and_others_denied():void{foreach(['super-admin','principal','admin','school-admin','accountant'] as $role){$u=User::factory()->create(['is_active'=>true]);$u->assignRole($role);$this->actingAs($u)->get(route('dashboard.finance.services.index'))->assertOk();}$teacher=User::factory()->create(['is_active'=>true]);$teacher->assignRole('teacher');$this->actingAs($teacher)->get(route('dashboard.finance.services.index'))->assertRedirect('/login');$none=User::factory()->create(['is_active'=>true]);$this->actingAs($none)->get(route('dashboard.finance.services.index'))->assertRedirect('/login');$disabled=User::factory()->create(['is_active'=>false]);$disabled->assignRole('accountant');$this->actingAs($disabled)->get(route('dashboard.finance.services.index'))->assertRedirect('/login');}}

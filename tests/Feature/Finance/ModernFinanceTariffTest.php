@@ -1,0 +1,3 @@
+<?php
+namespace Tests\Feature\Finance;
+class ModernFinanceTariffTest extends ModernFinanceCatalogTestCase { public function test_tariff_creation_is_exact_egp_and_visible_in_history():void{$fee=$this->fee();$this->actingAs($this->user)->post(route('dashboard.finance.tariffs.store'),$this->tariff($fee))->assertSessionHasNoErrors();$price=\App\Models\FeePrice::sole();$this->assertSame('1000.00',$price->amount);$this->assertSame('EGP',$price->currency);$this->actingAs($this->user)->get(route('dashboard.finance.services.show',$fee))->assertOk()->assertSee('1000.00 EGP')->assertSee('Новая стоимость');$this->assertFalse(\Illuminate\Support\Facades\Route::has('dashboard.finance.tariffs.destroy'));}}

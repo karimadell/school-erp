@@ -57,6 +57,7 @@ class FeePrice extends Model
         'item',
 
         'notes',
+        'change_reason',
         'is_active',
     ];
 
@@ -102,6 +103,22 @@ class FeePrice extends Model
                 $q->whereNull('end_date')
                   ->orWhereDate('end_date', '>=', $date);
             });
+    }
+
+    public function status(?string $date = null): string
+    {
+        $date = \Illuminate\Support\Carbon::parse($date ?? now()->toDateString());
+        if (! $this->is_active) {
+            return 'inactive';
+        }
+        if ($this->start_date->gt($date)) {
+            return 'future';
+        }
+        if ($this->end_date && $this->end_date->lt($date)) {
+            return 'expired';
+        }
+
+        return 'current';
     }
 
     public function getDisplayNameAttribute(): string

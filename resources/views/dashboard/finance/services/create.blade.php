@@ -1,0 +1,2 @@
+@extends('layouts.dashboard')
+@section('content')<div class="container py-4"><h2>Новая услуга</h2>@if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif<form method="POST" action="{{ route('dashboard.finance.services.store') }}" class="card card-body">@csrf @include('dashboard.finance.services._form')<button class="btn btn-primary mt-4">Создать услугу</button></form></div>@endsection

@@ -1,0 +1,2 @@
+@extends('layouts.dashboard')
+@section('content')<div class="container py-4"><h2>Изменение услуги</h2><div class="alert alert-info">Изменяются только данные услуги. История тарифов и старые счета остаются без изменений.</div>@if($errors->any())<div class="alert alert-danger">{{ $errors->first() }}</div>@endif<form method="POST" action="{{ route('dashboard.finance.services.update',$fee) }}" class="card card-body">@csrf @method('PUT') @include('dashboard.finance.services._form')<button class="btn btn-primary mt-4">Сохранить</button></form></div>@endsection

@@ -1,0 +1,3 @@
+<?php
+namespace Tests\Feature\Finance;
+class FinanceCatalogRussianUiTest extends ModernFinanceCatalogTestCase { public function test_dashboard_catalog_is_russian_egp_and_links_are_classic():void{$fee=$this->fee();$response=$this->actingAs($this->user)->get(route('dashboard.finance.tariffs.create',['fee_id'=>$fee->id]));$response->assertOk()->assertSee('Новый тариф')->assertSee('Цена, EGP')->assertSee('Дополнительные параметры тарифа')->assertDontSee('RUB');$sidebar=view('layouts.partials.shell-sidebar')->render();$this->assertStringContainsString('/dashboard/finance/services',$sidebar);$this->assertStringContainsString('/dashboard/finance/tariffs',$sidebar);$this->assertStringNotContainsString('/admin/fee-prices',$sidebar);}}

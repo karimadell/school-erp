@@ -3,6 +3,8 @@
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Controllers\Dashboard\DashboardController;
+use App\Http\Controllers\Dashboard\FinanceServiceController;
+use App\Http\Controllers\Dashboard\FinanceTariffController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\EnrollmentController;
@@ -235,6 +237,13 @@ Route::middleware(['auth', 'administrative'])
         Route::patch('fees/{fee}/toggle', [FeeController::class, 'toggle'])
              ->name('fees.toggle');
         Route::resource('fee-prices', FeePriceController::class);
+        Route::prefix('finance')->name('finance.')->group(function () {
+            Route::resource('services', FinanceServiceController::class)
+                ->parameters(['services' => 'fee'])
+                ->except(['destroy']);
+            Route::resource('tariffs', FinanceTariffController::class)
+                ->parameters(['tariffs' => 'feePrice'])->only(['index', 'create', 'store', 'show']);
+        });
 
         /*
         |--------------------------------------------------------------------------

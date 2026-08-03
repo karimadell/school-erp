@@ -54,7 +54,8 @@
             'label' => 'Финансы',
             'items' => [
                 ['label' => 'Счета', 'icon' => 'receipt', 'route' => 'dashboard.invoices.index', 'active' => 'dashboard.invoices.*'],
-                ['label' => 'Услуги', 'icon' => 'credit_card', 'route' => 'dashboard.fees.index', 'active' => 'dashboard.fees.*'],
+                ['label' => 'Услуги и сборы', 'icon' => 'credit_card', 'route' => 'dashboard.finance.services.index', 'active' => 'dashboard.finance.services.*'],
+                ['label' => 'Цены на услуги', 'icon' => 'payments', 'route' => 'dashboard.finance.tariffs.index', 'active' => 'dashboard.finance.tariffs.*'],
                 // Платежи: no standalone page — payments happen as an action from within Счета.
                 ['label' => 'Касса', 'icon' => 'landmark', 'route' => 'dashboard.cash.ledger', 'active' => 'dashboard.cash.ledger'],
                 ['label' => 'Кассовые счета', 'icon' => 'briefcase', 'route' => 'dashboard.cash.accounts', 'active' => 'dashboard.cash.accounts'],

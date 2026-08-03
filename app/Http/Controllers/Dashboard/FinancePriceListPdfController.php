@@ -35,7 +35,7 @@ class FinancePriceListPdfController extends Controller
     {
         $year = AcademicYear::findOrFail($request->integer('academic_year_id'));
         $categories = $request->input('categories', ExportFinancePriceListRequest::categories());
-        $data = $service->data($year, $categories, $request->boolean('active_only'));
+        $data = $service->data($year, $categories, $request->boolean('include_inactive'));
         $data['generatedAt'] = now();
         $data['logoPath'] = public_path('images/school-logo.png');
 

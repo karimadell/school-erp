@@ -19,7 +19,7 @@ class ExportFinancePriceListRequest extends FormRequest
             'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
             'categories' => ['nullable', 'array'],
             'categories.*' => ['string', Rule::in(self::categories())],
-            'active_only' => ['nullable', 'boolean'],
+            'include_inactive' => ['nullable', 'boolean'],
         ];
     }
 

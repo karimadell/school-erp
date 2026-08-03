@@ -54,14 +54,15 @@ class AcademicYearPriceListPdfTest extends TestCase
         $data = app(AcademicYearPriceListService::class)->data($this->year, array_keys(AcademicYearPriceListService::categoryOptions()), false);
         $html = view('dashboard.finance.tariffs.price-list-pdf', $data + ['generatedAt' => now(), 'logoPath' => public_path('images/school-logo.png')])->render();
         $this->assertStringContainsString('ЦЕНТР «НАШИ ТРАДИЦИИ»', $html);
-        $this->assertStringContainsString('ПРАЙС 2025/2026 учебный год', $html);
+        $this->assertStringContainsString('ПРАЙС', $html);
+        $this->assertStringContainsString('2025–2026 учебный год', $html);
         $this->assertStringContainsString('1–4 классы', $html);
-        $this->assertStringContainsString('За год', $html);
-        $this->assertStringContainsString('Ежемесячно', $html);
+        $this->assertStringContainsString('>Год<', $html);
+        $this->assertStringContainsString('Часть / месяц', $html);
         $this->assertStringContainsString('Каусер', $html);
         $this->assertStringContainsString('Комплексное питание', $html);
         $this->assertStringContainsString('Толстовка', $html);
-        $this->assertStringContainsString('Размер: 12–16', $html);
+        $this->assertStringContainsString('Размер 12–16', $html);
         $this->assertStringContainsString('EGP', $html);
         $this->assertStringNotContainsString('RUB', $html);
     }
@@ -92,9 +93,26 @@ class AcademicYearPriceListPdfTest extends TestCase
     {
         [$tuition] = $this->catalog();
         $this->actingAs($this->accountant)->get(route('dashboard.finance.tariffs.index'))
-            ->assertOk()->assertSee('Вариант тарифа')->assertSee('Класс: 1–4 классы')->assertSee('Период: За год')->assertSee('Скачать прайс-лист PDF');
+            ->assertOk()->assertSee('Группа классов')->assertSee('Период оплаты')->assertSee('Позиция')
+            ->assertSee('Размер')->assertSee('Вариант / транспортная зона')->assertSee('1–4 классы')->assertSee('За год')->assertSee('Скачать прайс-лист PDF');
         $this->actingAs($this->accountant)->get(route('dashboard.finance.services.create'))->assertOk();
         $this->actingAs($this->accountant)->get(route('dashboard.finance.tariffs.create', ['fee_id' => $tuition->id]))->assertOk();
+    }
+
+    public function test_inactive_tariffs_are_excluded_by_default_and_can_be_included_explicitly(): void
+    {
+        [$tuition] = $this->catalog();
+        $inactive = $this->price($tuition, '12345.00', ['grade_group' => 'Неактивная группа', 'payment_period' => 'yearly']);
+        $inactive->update(['is_active' => false]);
+
+        $default = app(AcademicYearPriceListService::class)->data($this->year, [Fee::CATEGORY_TUITION], false);
+        $withInactive = app(AcademicYearPriceListService::class)->data($this->year, [Fee::CATEGORY_TUITION], true);
+
+        $this->assertFalse($default['tariffs']->contains('id', $inactive->id));
+        $this->assertTrue($withInactive['tariffs']->contains('id', $inactive->id));
+        $this->actingAs($this->accountant)->get(route('dashboard.finance.tariffs.price-list.create'))
+            ->assertOk()->assertSee('Включить неактивные тарифы')
+            ->assertDontSee('name="include_inactive" value="1" checked', false);
     }
 
     /** @return array<int,Fee> */

@@ -16,7 +16,7 @@ class AcademicYearPriceListService
         Fee::CATEGORY_TUITION_FAMILY => 'ОБУЧЕНИЕ',
         Fee::CATEGORY_TRANSPORT => 'ТРАНСПОРТ',
         Fee::CATEGORY_FOOD => 'ПИТАНИЕ',
-        Fee::CATEGORY_TUITION_EXTERNAL => 'ЭКСТЕРНАТ',
+        Fee::CATEGORY_TUITION_EXTERNAL => 'ОБУЧЕНИЕ',
         Fee::CATEGORY_UNIFORM => 'ШКОЛЬНАЯ ФОРМА',
         Fee::CATEGORY_BOOKS => 'ДОПОЛНИТЕЛЬНЫЕ УСЛУГИ',
         Fee::CATEGORY_EXTRA_CLASSES => 'ДОПОЛНИТЕЛЬНЫЕ УСЛУГИ',
@@ -24,14 +24,14 @@ class AcademicYearPriceListService
         Fee::CATEGORY_OTHER => 'ДОПОЛНИТЕЛЬНЫЕ УСЛУГИ',
     ];
 
-    /** @return array{year:AcademicYear,groups:Collection<string,Collection<int,FeePrice>>,tariffs:Collection<int,FeePrice>} */
-    public function data(AcademicYear $year, array $categories, bool $activeOnly): array
+    /** @return array{year:AcademicYear,groups:Collection<string,Collection<int,FeePrice>>,sections:Collection<string,Collection>,tariffs:Collection<int,FeePrice>} */
+    public function data(AcademicYear $year, array $categories, bool $includeInactive): array
     {
         $tariffs = FeePrice::query()
             ->with(['fee', 'grade'])
             ->where('academic_year_id', $year->id)
             ->whereHas('fee', fn ($query) => $query->whereIn('category', $categories))
-            ->when($activeOnly, fn ($query) => $query->where('is_active', true))
+            ->when(! $includeInactive, fn ($query) => $query->where('is_active', true))
             ->orderBy('fee_id')->orderBy('grade_group')->orderBy('option_value')->orderBy('size')->orderBy('item')->orderBy('payment_period')
             ->get();
 
@@ -40,7 +40,9 @@ class AcademicYearPriceListService
             ->filter(fn (string $label) => $groups->has($label))
             ->mapWithKeys(fn (string $label) => [$label => $groups->get($label)]);
 
-        return ['year' => $year, 'groups' => $ordered, 'tariffs' => $tariffs];
+        $sections = $ordered->map(fn (Collection $prices, string $heading) => $this->sectionRows($heading, $prices));
+
+        return ['year' => $year, 'groups' => $ordered, 'sections' => $sections, 'tariffs' => $tariffs];
     }
 
     public static function categoryOptions(): array
@@ -73,5 +75,36 @@ class AcademicYearPriceListService
             $price->item ? 'Позиция: '.$price->item : null,
             $price->size ? 'Размер: '.$price->size : null,
         ])->filter()->implode(' · ') ?: 'Общий тариф';
+    }
+
+    private function sectionRows(string $heading, Collection $prices): Collection
+    {
+        if (in_array($heading, ['ОБУЧЕНИЕ', 'ТРАНСПОРТ'], true)) {
+            return $prices->groupBy(function (FeePrice $price) use ($heading): string {
+                $identity = $heading === 'ТРАНСПОРТ'
+                    ? ($price->option_value ?: $price->fee->name_ru)
+                    : collect([$price->fee->name_ru, $price->grade_group, $price->option_value])->filter()->implode(' · ');
+
+                return $identity ?: $price->fee->name_ru;
+            })->map(function (Collection $variants, string $label): array {
+                return [
+                    'label' => $label,
+                    'yearly' => $variants->firstWhere('payment_period', Fee::PERIOD_YEARLY),
+                    'monthly' => $variants->firstWhere('payment_period', Fee::PERIOD_MONTHLY),
+                    'other' => $variants->reject(fn (FeePrice $price) => in_array($price->payment_period, [Fee::PERIOD_YEARLY, Fee::PERIOD_MONTHLY], true)),
+                ];
+            })->values();
+        }
+
+        if ($heading === 'ШКОЛЬНАЯ ФОРМА') {
+            return $prices->sortBy(fn (FeePrice $price) => ($price->item ?? '').'|'.($price->size ?? ''))
+                ->map(fn (FeePrice $price) => ['label' => collect([$price->item, $price->size ? 'Размер '.$price->size : null])->filter()->implode(' · '), 'price' => $price]);
+        }
+
+        if ($heading === 'ПИТАНИЕ') {
+            return $prices->sortBy('item')->map(fn (FeePrice $price) => ['label' => $price->item ?: $price->fee->name_ru, 'price' => $price]);
+        }
+
+        return $prices->map(fn (FeePrice $price) => ['label' => self::variantLabel($price), 'price' => $price]);
     }
 }

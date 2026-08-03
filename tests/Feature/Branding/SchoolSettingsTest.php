@@ -100,6 +100,58 @@ class SchoolSettingsTest extends TestCase
         $this->assertStringContainsString('data:image/png;base64,', view('components.school-document-header')->render());
     }
 
+    public function test_existing_logo_is_displayed_and_saving_without_a_file_preserves_it(): void
+    {
+        Storage::fake('public');
+        Storage::disk('public')->put('branding/existing-logo.png', 'existing-logo-content');
+        $settings = SchoolSetting::current();
+        $settings->update([
+            'logo_path' => 'branding/existing-logo.png',
+            'printing_logo_path' => 'branding/existing-logo.png',
+        ]);
+
+        $this->actingAs($this->user('admin'))->get(route('dashboard.settings.school.edit'))
+            ->assertOk()
+            ->assertSee(Storage::disk('public')->url('branding/existing-logo.png'))
+            ->assertSee('Оставьте поле пустым, чтобы сохранить текущий логотип.');
+
+        $this->actingAs($this->user('admin'))->put(
+            route('dashboard.settings.school.update'),
+            $this->payload(),
+        )->assertRedirect();
+
+        $settings->refresh();
+        $this->assertSame('branding/existing-logo.png', $settings->logo_path);
+        $this->assertSame('branding/existing-logo.png', $settings->printing_logo_path);
+        Storage::disk('public')->assertExists('branding/existing-logo.png');
+    }
+
+    public function test_logo_size_and_php_upload_failures_return_clear_russian_errors(): void
+    {
+        $admin = $this->user('admin');
+
+        $this->actingAs($admin)->put(route('dashboard.settings.school.update'), $this->payload([
+            'logo' => UploadedFile::fake()->create('large-logo.png', 2049, 'image/png'),
+        ]))->assertSessionHasErrors([
+            'logo' => 'Размер логотипа не должен превышать 2 МБ.',
+        ]);
+
+        $temporary = UploadedFile::fake()->create('failed-logo.png', 10, 'image/png');
+        $failedUpload = new UploadedFile(
+            $temporary->getPathname(),
+            'failed-logo.png',
+            'image/png',
+            UPLOAD_ERR_INI_SIZE,
+            true,
+        );
+
+        $this->actingAs($admin)->put(route('dashboard.settings.school.update'), $this->payload([
+            'logo' => $failedUpload,
+        ]))->assertSessionHasErrors([
+            'logo' => 'Не удалось загрузить логотип. Максимальный размер файла — 2 МБ.',
+        ]);
+    }
+
     public function test_shared_pdf_header_footer_and_missing_logo_fallback(): void
     {
         Storage::fake('public');

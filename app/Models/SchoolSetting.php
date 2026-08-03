@@ -38,4 +38,11 @@ class SchoolSetting extends Model
             ? Storage::disk('public')->path($path)
             : null;
     }
+
+    public function logoUrl(): ?string
+    {
+        return $this->logo_path && Storage::disk('public')->exists($this->logo_path)
+            ? Storage::disk('public')->url($this->logo_path)
+            : null;
+    }
 }

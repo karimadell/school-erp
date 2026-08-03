@@ -7,6 +7,8 @@ use App\Http\Requests\UpdateSchoolSettingRequest;
 use App\Models\AcademicYear;
 use App\Models\SchoolSetting;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class SchoolSettingController extends Controller
@@ -28,7 +30,7 @@ class SchoolSettingController extends Controller
         $data = $request->safe()->except(['logo', 'printing_logo', 'stamp', 'director_signature']);
 
         if ($request->hasFile('logo')) {
-            $data['logo_path'] = $request->file('logo')->store('branding', 'public');
+            $data['logo_path'] = $this->storeBrandingImage($request->file('logo'), 'logo');
             $data['printing_logo_path'] = $data['logo_path'];
         }
 
@@ -41,5 +43,18 @@ class SchoolSettingController extends Controller
         $settings->update($data);
 
         return back()->with('success', 'Настройки школы сохранены. Новое оформление применяется ко всем документам.');
+    }
+
+    private function storeBrandingImage(UploadedFile $file, string $field): string
+    {
+        $path = $file->store('branding', 'public');
+
+        if (! is_string($path) || $path === '') {
+            throw ValidationException::withMessages([
+                $field => 'Не удалось сохранить логотип. Проверьте доступ к хранилищу и повторите попытку.',
+            ]);
+        }
+
+        return $path;
     }
 }

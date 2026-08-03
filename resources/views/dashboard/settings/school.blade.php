@@ -26,7 +26,17 @@
                 <div class="row g-3">
                     <div class="col-md-6"><label class="form-label">Название школы</label><input class="form-control" name="school_name" required value="{{ old('school_name',$settings->school_name) }}"></div>
                     <div class="col-md-6"><label class="form-label">Краткое название</label><input class="form-control" name="short_name" required value="{{ old('short_name',$settings->short_name) }}"></div>
-                    <div class="col-md-6"><label class="form-label">Логотип</label><input class="form-control" type="file" name="logo" accept="image/png,image/jpeg,image/webp"><div class="form-text">Текущий логотип автоматически используется во всех документах.</div></div>
+                    <div class="col-md-6">
+                        <label class="form-label">Логотип</label>
+                        @if ($settings->logoUrl())
+                            <div class="mb-2"><img src="{{ $settings->logoUrl() }}" alt="Текущий логотип школы" style="display:block;max-width:180px;max-height:100px;width:auto;height:auto;object-fit:contain"></div>
+                        @else
+                            <div class="alert alert-light border py-2">Сохранённый логотип отсутствует. В документах отображается название школы.</div>
+                        @endif
+                        <input class="form-control" type="file" name="logo" accept="image/png,image/jpeg,image/webp" data-school-logo-input>
+                        <div class="form-text">PNG, JPG или WEBP, не более 2 МБ. Оставьте поле пустым, чтобы сохранить текущий логотип.</div>
+                        <div class="text-danger small mt-1 d-none" data-school-logo-error>Размер логотипа не должен превышать 2 МБ.</div>
+                    </div>
                     <div class="col-md-6"><label class="form-label">Страна</label><input class="form-control" name="country" required value="{{ old('country',$settings->country) }}"></div>
                     <div class="col-md-4"><label class="form-label">Город</label><input class="form-control" name="city" value="{{ old('city',$settings->city) }}"></div>
                     <div class="col-md-4"><label class="form-label">Часовой пояс</label><input class="form-control" name="timezone" required value="{{ old('timezone',$settings->timezone) }}"></div>
@@ -70,3 +80,18 @@
     </form>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+    document.querySelector('[data-school-logo-input]')?.addEventListener('change', function () {
+        var error = document.querySelector('[data-school-logo-error]');
+        var file = this.files && this.files[0];
+        var tooLarge = file && file.size > 2 * 1024 * 1024;
+
+        error?.classList.toggle('d-none', !tooLarge);
+        if (tooLarge) {
+            this.value = '';
+        }
+    });
+</script>
+@endpush

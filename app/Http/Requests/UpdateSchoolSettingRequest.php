@@ -35,7 +35,11 @@ class UpdateSchoolSettingRequest extends FormRequest
             'email' => ['required', 'email', 'max:255'],
             'website' => ['nullable', 'url', 'max:255'],
             'address' => ['nullable', 'string', 'max:1000'],
-            'logo' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
+            // Keep this at or below the deployed PHP upload_max_filesize
+            // (currently 2 MB). A larger Laravel limit lets PHP reject the
+            // request first and produces only the opaque "failed to upload"
+            // message instead of useful validation feedback.
+            'logo' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:2048'],
             'printing_logo' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
             'stamp' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
             'director_signature' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
@@ -62,6 +66,9 @@ class UpdateSchoolSettingRequest extends FormRequest
             'email.required' => 'Укажите электронную почту школы.',
             'email.email' => 'Укажите корректную электронную почту.',
             'logo.image' => 'Логотип должен быть изображением.',
+            'logo.uploaded' => 'Не удалось загрузить логотип. Максимальный размер файла — 2 МБ.',
+            'logo.max' => 'Размер логотипа не должен превышать 2 МБ.',
+            'logo.mimes' => 'Логотип должен быть в формате PNG, JPG, JPEG или WEBP.',
             'school_year_end.after_or_equal' => 'Дата окончания учебного года не может быть раньше даты начала.',
         ];
     }

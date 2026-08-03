@@ -36,7 +36,7 @@ class SchoolSettingController extends Controller
 
         foreach (['printing_logo', 'stamp', 'director_signature'] as $field) {
             if ($request->hasFile($field)) {
-                $data[$field.'_path'] = $request->file($field)->store('branding', 'public');
+                $data[$field.'_path'] = $this->storeBrandingImage($request->file($field), $field);
             }
         }
 
@@ -51,7 +51,7 @@ class SchoolSettingController extends Controller
 
         if (! is_string($path) || $path === '') {
             throw ValidationException::withMessages([
-                $field => 'Не удалось сохранить логотип. Проверьте доступ к хранилищу и повторите попытку.',
+                $field => 'Не удалось сохранить изображение. Проверьте доступ к хранилищу и повторите попытку.',
             ]);
         }
 

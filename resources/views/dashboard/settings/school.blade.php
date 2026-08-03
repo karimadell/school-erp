@@ -28,14 +28,14 @@
                     <div class="col-md-6"><label class="form-label">Краткое название</label><input class="form-control" name="short_name" required value="{{ old('short_name',$settings->short_name) }}"></div>
                     <div class="col-md-6">
                         <label class="form-label">Логотип</label>
-                        @if ($settings->logoUrl())
-                            <div class="mb-2"><img src="{{ $settings->logoUrl() }}" alt="Текущий логотип школы" style="display:block;max-width:180px;max-height:100px;width:auto;height:auto;object-fit:contain"></div>
-                        @else
-                            <div class="alert alert-light border py-2">Сохранённый логотип отсутствует. В документах отображается название школы.</div>
-                        @endif
-                        <input class="form-control" type="file" name="logo" accept="image/png,image/jpeg,image/webp" data-school-logo-input>
-                        <div class="form-text">PNG, JPG или WEBP, не более 2 МБ. Оставьте поле пустым, чтобы сохранить текущий логотип.</div>
-                        <div class="text-danger small mt-1 d-none" data-school-logo-error>Размер логотипа не должен превышать 2 МБ.</div>
+                        <div class="border rounded p-3 mb-2 text-center bg-light" data-asset-preview="logo">
+                            <div class="small fw-semibold mb-2">Текущий логотип</div>
+                            <img src="{{ $settings->logoUrl() ?? '' }}" alt="Текущий логотип школы" class="{{ $settings->logoUrl() ? '' : 'd-none' }} mx-auto" data-asset-image="logo" style="display:block;max-width:100%;max-height:110px;width:auto;height:auto;object-fit:contain">
+                            <div class="{{ $settings->logoUrl() ? 'd-none' : '' }} text-muted small py-3" data-asset-placeholder="logo">Изображение не загружено. В документах будет показано название школы.</div>
+                        </div>
+                        <input class="form-control" type="file" name="logo" accept="image/png,image/jpeg,image/webp" data-branding-file="logo">
+                        <div class="form-text">Допустимый размер файла: не более 2 МБ.<br>Форматы: JPG, JPEG, PNG, WEBP.</div>
+                        <div class="text-danger small mt-1 d-none" data-branding-error="logo">Размер файла не должен превышать 2 МБ.</div>
                     </div>
                     <div class="col-md-6"><label class="form-label">Страна</label><input class="form-control" name="country" required value="{{ old('country',$settings->country) }}"></div>
                     <div class="col-md-4"><label class="form-label">Город</label><input class="form-control" name="city" value="{{ old('city',$settings->city) }}"></div>
@@ -53,13 +53,53 @@
             </div></div>
 
             <div class="tab-pane fade" id="settings-documents"><div class="row g-3">
-                <div class="col-md-4"><label class="form-label">Логотип для печати</label><input class="form-control" type="file" name="printing_logo" accept="image/png,image/jpeg,image/webp"></div>
-                <div class="col-md-4"><label class="form-label">Печать школы</label><input class="form-control" type="file" name="stamp" accept="image/png,image/jpeg,image/webp"></div>
-                <div class="col-md-4"><label class="form-label">Подпись директора</label><input class="form-control" type="file" name="director_signature" accept="image/png,image/jpeg,image/webp"></div>
+                @php
+                    $documentAssets = [
+                        'printing_logo' => ['label' => 'Логотип школы для документов', 'current' => 'Текущий логотип для документов', 'url' => $settings->printingLogoUrl()],
+                        'stamp' => ['label' => 'Официальная печать школы', 'current' => 'Текущая печать', 'url' => $settings->stampUrl()],
+                        'director_signature' => ['label' => 'Подпись директора', 'current' => 'Текущая подпись директора', 'url' => $settings->directorSignatureUrl()],
+                    ];
+                @endphp
+                @foreach ($documentAssets as $field => $asset)
+                    <div class="col-12 col-lg-4">
+                        <label class="form-label">{{ $asset['label'] }}</label>
+                        <div class="border rounded p-3 mb-2 text-center bg-light h-100" data-asset-preview="{{ $field }}">
+                            <div class="small fw-semibold mb-2">{{ $asset['current'] }}</div>
+                            <img src="{{ $asset['url'] ?? '' }}" alt="{{ $asset['current'] }}" class="{{ $asset['url'] ? '' : 'd-none' }} mx-auto" data-asset-image="{{ $field }}" style="display:block;max-width:100%;max-height:130px;width:auto;height:auto;object-fit:contain">
+                            <div class="{{ $asset['url'] ? 'd-none' : '' }} text-muted small py-4" data-asset-placeholder="{{ $field }}">Изображение не загружено.</div>
+                        </div>
+                        <input class="form-control" type="file" name="{{ $field }}" accept="image/png,image/jpeg,image/webp" data-branding-file="{{ $field }}">
+                        <div class="form-text">Допустимый размер файла: не более 2 МБ.<br>Форматы: JPG, JPEG, PNG, WEBP.</div>
+                        <div class="text-danger small mt-1 d-none" data-branding-error="{{ $field }}">Размер файла не должен превышать 2 МБ.</div>
+                    </div>
+                @endforeach
                 <div class="col-md-3"><label class="form-label">Цвет заголовка</label><input class="form-control form-control-color" type="color" name="header_color" value="{{ old('header_color',$settings->header_color) }}"></div>
                 <div class="col-md-3"><label class="form-label">Цвет подвала</label><input class="form-control form-control-color" type="color" name="footer_color" value="{{ old('footer_color',$settings->footer_color) }}"></div>
                 <div class="col-md-3 form-check mt-5"><input type="hidden" name="print_date_enabled" value="0"><input class="form-check-input" type="checkbox" name="print_date_enabled" value="1" @checked(old('print_date_enabled',$settings->print_date_enabled))><label class="form-check-label">Показывать дату печати</label></div>
                 <div class="col-md-3 form-check mt-5"><input type="hidden" name="page_numbers_enabled" value="0"><input class="form-check-input" type="checkbox" name="page_numbers_enabled" value="1" @checked(old('page_numbers_enabled',$settings->page_numbers_enabled))><label class="form-check-label">Показывать номера страниц</label></div>
+
+                @php($documentLogoUrl = $settings->printingLogoUrl() ?: $settings->logoUrl())
+                <div class="col-12 mt-4">
+                    <div class="card border shadow-sm overflow-hidden" data-document-preview>
+                        <div class="card-header bg-white"><h2 class="h5 mb-0">Предварительный просмотр документа</h2></div>
+                        <div class="card-body p-3 p-md-4">
+                            <div class="rounded border bg-white mx-auto overflow-hidden" style="max-width:900px">
+                                <div class="p-3 p-md-4 text-center" data-preview-header style="border-top:8px solid {{ old('header_color',$settings->header_color) }}">
+                                    <img src="{{ $documentLogoUrl ?? '' }}" alt="Логотип в документе" class="{{ $documentLogoUrl ? '' : 'd-none' }} mx-auto mb-3" data-preview-logo style="display:block;max-width:100%;max-height:100px;width:auto;height:auto;object-fit:contain">
+                                    <div class="{{ $documentLogoUrl ? 'd-none' : '' }} text-muted small mb-3" data-preview-logo-placeholder>Логотип не загружен — будет использовано название школы.</div>
+                                    <div class="h4 mb-2 text-break" data-preview-school-name>{{ old('school_name',$settings->school_name) }}</div>
+                                    <div class="small text-muted text-break" data-preview-phones>Тел.: {{ old('phone_1',$settings->phone_1) }}@if(old('phone_2',$settings->phone_2)) / {{ old('phone_2',$settings->phone_2) }}@endif</div>
+                                    <div class="small text-muted text-break" data-preview-email>Email: {{ old('email',$settings->email) }}</div>
+                                </div>
+                                <div class="p-4 text-center text-muted">Здесь будет содержимое официального документа.</div>
+                                <div class="p-3 text-center small" data-preview-footer style="border-bottom:8px solid {{ old('footer_color',$settings->footer_color) }}">
+                                    <span class="{{ old('print_date_enabled',$settings->print_date_enabled) ? '' : 'd-none' }} d-block" data-preview-print-date data-enabled="{{ old('print_date_enabled',$settings->print_date_enabled) ? '1' : '0' }}">Дата печати: {{ now()->format('d.m.Y') }}</span>
+                                    <span class="{{ old('page_numbers_enabled',$settings->page_numbers_enabled) ? '' : 'd-none' }} d-block" data-preview-page-numbers data-enabled="{{ old('page_numbers_enabled',$settings->page_numbers_enabled) ? '1' : '0' }}">Страница 1 из 1</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div></div>
 
             <div class="tab-pane fade" id="settings-finance"><div class="row g-3">
@@ -83,15 +123,67 @@
 
 @push('scripts')
 <script>
-    document.querySelector('[data-school-logo-input]')?.addEventListener('change', function () {
-        var error = document.querySelector('[data-school-logo-error]');
-        var file = this.files && this.files[0];
-        var tooLarge = file && file.size > 2 * 1024 * 1024;
+    (function () {
+        var maximumSize = 2 * 1024 * 1024;
+        var documentLogo = document.querySelector('[data-preview-logo]');
+        var documentLogoPlaceholder = document.querySelector('[data-preview-logo-placeholder]');
 
-        error?.classList.toggle('d-none', !tooLarge);
-        if (tooLarge) {
-            this.value = '';
+        document.querySelectorAll('[data-branding-file]').forEach(function (input) {
+            input.addEventListener('change', function () {
+                var field = input.dataset.brandingFile;
+                var file = input.files && input.files[0];
+                var error = document.querySelector('[data-branding-error="' + field + '"]');
+                var tooLarge = file && file.size > maximumSize;
+
+                error?.classList.toggle('d-none', !tooLarge);
+                if (tooLarge) {
+                    input.value = '';
+                    return;
+                }
+                if (!file) return;
+
+                var reader = new FileReader();
+                reader.addEventListener('load', function () {
+                    var image = document.querySelector('[data-asset-image="' + field + '"]');
+                    var placeholder = document.querySelector('[data-asset-placeholder="' + field + '"]');
+                    if (image) {
+                        image.src = reader.result;
+                        image.classList.remove('d-none');
+                    }
+                    placeholder?.classList.add('d-none');
+
+                    if (field === 'logo' || field === 'printing_logo') {
+                        documentLogo.src = reader.result;
+                        documentLogo.classList.remove('d-none');
+                        documentLogoPlaceholder?.classList.add('d-none');
+                    }
+                });
+                reader.readAsDataURL(file);
+            });
+        });
+
+        function textValue(name) {
+            return document.querySelector('[name="' + name + '"]')?.value.trim() || '';
         }
-    });
+
+        function refreshDocumentPreview() {
+            document.querySelector('[data-preview-school-name]').textContent = textValue('school_name') || 'Название школы';
+            var phones = [textValue('phone_1'), textValue('phone_2')].filter(Boolean).join(' / ');
+            document.querySelector('[data-preview-phones]').textContent = phones ? 'Тел.: ' + phones : 'Телефон не указан';
+            document.querySelector('[data-preview-email]').textContent = textValue('email') ? 'Email: ' + textValue('email') : 'Электронная почта не указана';
+            document.querySelector('[data-preview-header]').style.borderTopColor = textValue('header_color');
+            document.querySelector('[data-preview-footer]').style.borderBottomColor = textValue('footer_color');
+
+            var printDateEnabled = document.querySelector('[name="print_date_enabled"][type="checkbox"]')?.checked;
+            var pageNumbersEnabled = document.querySelector('[name="page_numbers_enabled"][type="checkbox"]')?.checked;
+            document.querySelector('[data-preview-print-date]').classList.toggle('d-none', !printDateEnabled);
+            document.querySelector('[data-preview-page-numbers]').classList.toggle('d-none', !pageNumbersEnabled);
+        }
+
+        ['school_name', 'phone_1', 'phone_2', 'email', 'header_color', 'footer_color', 'print_date_enabled', 'page_numbers_enabled'].forEach(function (name) {
+            document.querySelector('[name="' + name + '"][type="checkbox"]')?.addEventListener('change', refreshDocumentPreview);
+            document.querySelector('[name="' + name + '"]:not([type="checkbox"])')?.addEventListener('input', refreshDocumentPreview);
+        });
+    })();
 </script>
 @endpush

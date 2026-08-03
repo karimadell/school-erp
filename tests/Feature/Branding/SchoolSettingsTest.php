@@ -113,7 +113,8 @@ class SchoolSettingsTest extends TestCase
         $this->actingAs($this->user('admin'))->get(route('dashboard.settings.school.edit'))
             ->assertOk()
             ->assertSee(Storage::disk('public')->url('branding/existing-logo.png'))
-            ->assertSee('Оставьте поле пустым, чтобы сохранить текущий логотип.');
+            ->assertSee('Текущий логотип')
+            ->assertSee('Допустимый размер файла: не более 2 МБ.');
 
         $this->actingAs($this->user('admin'))->put(
             route('dashboard.settings.school.update'),
@@ -124,6 +125,121 @@ class SchoolSettingsTest extends TestCase
         $this->assertSame('branding/existing-logo.png', $settings->logo_path);
         $this->assertSame('branding/existing-logo.png', $settings->printing_logo_path);
         Storage::disk('public')->assertExists('branding/existing-logo.png');
+    }
+
+    public function test_all_saved_document_assets_have_public_previews_and_russian_labels(): void
+    {
+        Storage::fake('public');
+        $paths = [
+            'logo_path' => 'branding/logo.png',
+            'printing_logo_path' => 'branding/print-logo.png',
+            'stamp_path' => 'branding/stamp.png',
+            'director_signature_path' => 'branding/signature.png',
+        ];
+        foreach ($paths as $path) {
+            Storage::disk('public')->put($path, 'image-content');
+        }
+        SchoolSetting::current()->update($paths);
+
+        $response = $this->actingAs($this->user('admin'))
+            ->get(route('dashboard.settings.school.edit'))
+            ->assertOk()
+            ->assertSee('Текущий логотип')
+            ->assertSee('Логотип школы для документов')
+            ->assertSee('Текущий логотип для документов')
+            ->assertSee('Официальная печать школы')
+            ->assertSee('Текущая печать')
+            ->assertSee('Текущая подпись директора');
+
+        foreach ($paths as $path) {
+            $response->assertSee(Storage::disk('public')->url($path));
+        }
+        $response->assertDontSee('Логотип для печати')
+            ->assertDontSee('Печать школы</label>');
+    }
+
+    public function test_missing_assets_show_safe_placeholders_and_document_preview_contacts(): void
+    {
+        Storage::fake('public');
+        SchoolSetting::current()->update([
+            'logo_path' => 'branding/missing-logo.png',
+            'printing_logo_path' => 'branding/missing-print-logo.png',
+            'stamp_path' => 'branding/missing-stamp.png',
+            'director_signature_path' => 'branding/missing-signature.png',
+            'school_name' => 'ЦЕНТР «НАШИ ТРАДИЦИИ»',
+            'phone_1' => '+20 106 553 6448',
+            'phone_2' => '+20 10 6217 2809',
+            'email' => 'nashitradicii@gmail.com',
+            'print_date_enabled' => true,
+            'page_numbers_enabled' => true,
+        ]);
+
+        $this->actingAs($this->user('admin'))->get(route('dashboard.settings.school.edit'))
+            ->assertOk()
+            ->assertSee('Изображение не загружено.')
+            ->assertSee('Логотип не загружен — будет использовано название школы.')
+            ->assertSee('Предварительный просмотр документа')
+            ->assertSee('ЦЕНТР «НАШИ ТРАДИЦИИ»')
+            ->assertSee('Тел.: +20 106 553 6448 / +20 10 6217 2809')
+            ->assertSee('Email: nashitradicii@gmail.com')
+            ->assertSee('Дата печати:')
+            ->assertSee('Страница 1 из 1')
+            ->assertSee('data-preview-print-date data-enabled="1"', false)
+            ->assertSee('data-preview-page-numbers data-enabled="1"', false);
+    }
+
+    public function test_saving_without_files_preserves_all_asset_paths(): void
+    {
+        $paths = [
+            'logo_path' => 'branding/logo.png',
+            'printing_logo_path' => 'branding/print-logo.png',
+            'stamp_path' => 'branding/stamp.png',
+            'director_signature_path' => 'branding/signature.png',
+        ];
+        SchoolSetting::current()->update($paths);
+
+        $this->actingAs($this->user('admin'))
+            ->put(route('dashboard.settings.school.update'), $this->payload())
+            ->assertRedirect();
+
+        $settings = SchoolSetting::current();
+        foreach ($paths as $column => $path) {
+            $this->assertSame($path, $settings->{$column});
+        }
+    }
+
+    public function test_replacing_document_logo_changes_only_the_intended_asset(): void
+    {
+        Storage::fake('public');
+        $paths = [
+            'logo_path' => 'branding/logo.png',
+            'printing_logo_path' => 'branding/old-print-logo.png',
+            'stamp_path' => 'branding/stamp.png',
+            'director_signature_path' => 'branding/signature.png',
+        ];
+        SchoolSetting::current()->update($paths);
+
+        $this->actingAs($this->user('admin'))->put(route('dashboard.settings.school.update'), $this->payload([
+            'printing_logo' => UploadedFile::fake()->image('new-print-logo.png', 300, 150),
+        ]))->assertRedirect();
+
+        $settings = SchoolSetting::current();
+        $this->assertNotSame($paths['printing_logo_path'], $settings->printing_logo_path);
+        Storage::disk('public')->assertExists($settings->printing_logo_path);
+        $this->assertSame($paths['logo_path'], $settings->logo_path);
+        $this->assertSame($paths['stamp_path'], $settings->stamp_path);
+        $this->assertSame($paths['director_signature_path'], $settings->director_signature_path);
+    }
+
+    public function test_non_administrator_cannot_update_settings(): void
+    {
+        foreach (['principal', 'school-admin', 'accountant', 'reception'] as $role) {
+            $this->actingAs($this->user($role))
+                ->put(route('dashboard.settings.school.update'), $this->payload(['school_name' => 'Запрещено']))
+                ->assertForbidden();
+        }
+
+        $this->assertNotSame('Запрещено', SchoolSetting::current()->school_name);
     }
 
     public function test_logo_size_and_php_upload_failures_return_clear_russian_errors(): void

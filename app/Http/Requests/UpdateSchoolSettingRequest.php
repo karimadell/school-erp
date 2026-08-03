@@ -40,9 +40,9 @@ class UpdateSchoolSettingRequest extends FormRequest
             // request first and produces only the opaque "failed to upload"
             // message instead of useful validation feedback.
             'logo' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:2048'],
-            'printing_logo' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
-            'stamp' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
-            'director_signature' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
+            'printing_logo' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:2048'],
+            'stamp' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:2048'],
+            'director_signature' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:2048'],
             'header_color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
             'footer_color' => ['required', 'regex:/^#[0-9A-Fa-f]{6}$/'],
             'print_date_enabled' => ['required', 'boolean'],
@@ -69,6 +69,18 @@ class UpdateSchoolSettingRequest extends FormRequest
             'logo.uploaded' => 'Не удалось загрузить логотип. Максимальный размер файла — 2 МБ.',
             'logo.max' => 'Размер логотипа не должен превышать 2 МБ.',
             'logo.mimes' => 'Логотип должен быть в формате PNG, JPG, JPEG или WEBP.',
+            'printing_logo.image' => 'Логотип для документов должен быть изображением.',
+            'printing_logo.uploaded' => 'Не удалось загрузить логотип для документов. Максимальный размер файла — 2 МБ.',
+            'printing_logo.max' => 'Размер логотипа для документов не должен превышать 2 МБ.',
+            'printing_logo.mimes' => 'Логотип для документов должен быть в формате PNG, JPG, JPEG или WEBP.',
+            'stamp.image' => 'Официальная печать должна быть изображением.',
+            'stamp.uploaded' => 'Не удалось загрузить официальную печать. Максимальный размер файла — 2 МБ.',
+            'stamp.max' => 'Размер официальной печати не должен превышать 2 МБ.',
+            'stamp.mimes' => 'Официальная печать должна быть в формате PNG, JPG, JPEG или WEBP.',
+            'director_signature.image' => 'Подпись директора должна быть изображением.',
+            'director_signature.uploaded' => 'Не удалось загрузить подпись директора. Максимальный размер файла — 2 МБ.',
+            'director_signature.max' => 'Размер подписи директора не должен превышать 2 МБ.',
+            'director_signature.mimes' => 'Подпись директора должна быть в формате PNG, JPG, JPEG или WEBP.',
             'school_year_end.after_or_equal' => 'Дата окончания учебного года не может быть раньше даты начала.',
         ];
     }

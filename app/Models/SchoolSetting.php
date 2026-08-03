@@ -41,8 +41,28 @@ class SchoolSetting extends Model
 
     public function logoUrl(): ?string
     {
-        return $this->logo_path && Storage::disk('public')->exists($this->logo_path)
-            ? Storage::disk('public')->url($this->logo_path)
+        return $this->publicAssetUrl($this->logo_path);
+    }
+
+    public function printingLogoUrl(): ?string
+    {
+        return $this->publicAssetUrl($this->printing_logo_path);
+    }
+
+    public function stampUrl(): ?string
+    {
+        return $this->publicAssetUrl($this->stamp_path);
+    }
+
+    public function directorSignatureUrl(): ?string
+    {
+        return $this->publicAssetUrl($this->director_signature_path);
+    }
+
+    private function publicAssetUrl(?string $path): ?string
+    {
+        return $path && Storage::disk('public')->exists($path)
+            ? Storage::disk('public')->url($path)
             : null;
     }
 }

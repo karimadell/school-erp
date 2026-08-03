@@ -6,6 +6,7 @@ use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\FinanceServiceController;
 use App\Http\Controllers\Dashboard\FinanceTariffController;
 use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
+use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\EnrollmentController;
@@ -242,6 +243,8 @@ Route::middleware(['auth', 'administrative'])
             Route::resource('services', FinanceServiceController::class)
                 ->parameters(['services' => 'fee'])
                 ->except(['destroy']);
+            Route::get('tariffs/price-list', [FinancePriceListPdfController::class, 'create'])->name('tariffs.price-list.create');
+            Route::get('tariffs/price-list/pdf', [FinancePriceListPdfController::class, 'download'])->name('tariffs.price-list.pdf');
             Route::resource('tariffs', FinanceTariffController::class)
                 ->parameters(['tariffs' => 'feePrice'])->only(['index', 'create', 'store', 'show']);
             Route::get('tariffs-rollover', [FinanceTariffRolloverController::class, 'create'])->name('tariffs.rollover.create');

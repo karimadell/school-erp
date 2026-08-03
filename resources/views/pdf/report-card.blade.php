@@ -55,13 +55,8 @@ th{
 
 <body>
 
-<div class="header">
-
-<div class="title">
-Табель успеваемости
-</div>
-
-</div>
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'ТАБЕЛЬ УСПЕВАЕМОСТИ'])
 
 
 <div class="info">

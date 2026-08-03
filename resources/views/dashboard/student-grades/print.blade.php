@@ -139,26 +139,11 @@
     🖨 {{ __('student_grades.print') }}
 </button>
 
-<div class="school-header">
-
-    {{-- LOGO LEFT --}}
-    <div class="logo-box">
-        <img src="{{ asset('images/logo.png') }}">
-    </div>
-
-    {{-- TITLE --}}
-    <div class="school-title">
-        <h2>Русская школа «Наши традиции»</h2>
-        <div>Хургада — Египет</div>
-        <div>School ERP Report</div>
-    </div>
-
-    {{-- LOGO RIGHT --}}
-    <div class="logo-box">
-        <img src="{{ asset('images/logo.png') }}">
-    </div>
-
-</div>
+<x-school-document-header
+    title="ОТЧЁТ ОБ УСПЕВАЕМОСТИ"
+    :academic-year="$academicYear ?? null"
+    :footer="true"
+/>
 
 <div class="report-title">
     <h3>{{ __('student_grades.print_report') }}</h3>

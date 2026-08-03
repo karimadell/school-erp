@@ -168,20 +168,8 @@
     $studentGrade = $invoice->student?->grade?->name_ru ?? $invoice->student?->grade?->name ?? '—';
 @endphp
 
-<table class="header">
-    <tr>
-        <td class="school">
-            <strong>Русская школа «Наши традиции»</strong><br>
-            Египет, Хургада, район Мубарак 6, вилла 219<br>
-            Тел.: 01062172809 / 01577782735<br>
-            Email: info@school-erp.com
-        </td>
-        <td class="title">
-            СЧЁТ / INVOICE<br>
-            <span style="font-size:13px;">{{ $invoiceNumber }}</span>
-        </td>
-    </tr>
-</table>
+@include('pdf.partials.document-footer', ['academicYear' => $invoice->academicYear])
+@include('pdf.partials.document-header', ['documentTitle' => 'СЧЁТ '.$invoiceNumber])
 
 <div class="section-title">Информация о счете</div>
 

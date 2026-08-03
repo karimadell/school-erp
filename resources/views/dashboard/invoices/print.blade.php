@@ -443,99 +443,19 @@
 
 <div class="page">
 
-    <div class="top">
+    <x-school-document-header
+        :title="'СЧЁТ '.$invoiceNumber"
+        :academic-year="$invoice->academicYear"
+        :footer="true"
+    />
 
-        <div class="school">
-
-            <div class="school-row">
-
-                <div class="logo-box">
-
-                    @if(file_exists($logoPath))
-
-                        <img
-                            src="data:image/png;base64,{{ base64_encode(file_get_contents($logoPath)) }}"
-                            class="logo"
-                            alt="Logo">
-
-                    @else
-
-                        <div style="font-size:12px;">
-                            Logo
-                        </div>
-
-                    @endif
-
-                </div>
-
-                <div class="school-text">
-
-                    <h1>
-                        Русская школа<br>
-                        «Наши традиции»
-                    </h1>
-
-                    <p>
-                        Египет, Хургада, район Мубарак 6, вилла 219
-                    </p>
-
-                    <p>
-                        Тел.: 01062172809 / 01577782735
-                    </p>
-
-                    <p>
-                        Email: info@school-erp.com
-                    </p>
-
-                </div>
-
-            </div>
-
-        </div>
-
-        <div class="invoice-head">
-
-            <h2>
-                СЧЁТ / INVOICE
-            </h2>
-
-            <table class="meta-table">
-
-                <tr>
-                    <td>№ счёта:</td>
-                    <td>{{ $invoiceNumber }}</td>
-                </tr>
-
-                <tr>
-                    <td>Дата:</td>
-                    <td>{{ $invoice->created_at?->format('d.m.Y H:i') }}</td>
-                </tr>
-
-                <tr>
-                    <td>Статус:</td>
-                    <td>{{ $statusText }}</td>
-                </tr>
-
-                <tr>
-                    <td>Валюта:</td>
-                    <td>EGP</td>
-                </tr>
-
-                <tr>
-                    <td>Способ оплаты:</td>
-                    <td>{{ $paymentMethodText }}</td>
-                </tr>
-
-                <tr>
-                    <td>Касса:</td>
-                    <td>{{ $invoice->cashAccount?->name ?? '—' }}</td>
-                </tr>
-
-            </table>
-
-        </div>
-
-    </div>
+    <table class="meta-table">
+        <tr><td>Дата:</td><td>{{ $invoice->created_at?->format('d.m.Y H:i') }}</td></tr>
+        <tr><td>Статус:</td><td>{{ $statusText }}</td></tr>
+        <tr><td>Валюта:</td><td>EGP</td></tr>
+        <tr><td>Способ оплаты:</td><td>{{ $paymentMethodText }}</td></tr>
+        <tr><td>Касса:</td><td>{{ $invoice->cashAccount?->name ?? '—' }}</td></tr>
+    </table>
 
     <div class="section-title">
         Информация о клиенте

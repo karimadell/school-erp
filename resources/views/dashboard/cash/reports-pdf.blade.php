@@ -54,6 +54,9 @@
 </head>
 <body>
 
+    @include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+    @include('pdf.partials.document-header', ['documentTitle' => 'КАССОВЫЙ ОТЧЁТ'])
+
     <h2>💰 Cash Report</h2>
 
     <hr>
@@ -129,10 +132,6 @@
             @endforelse
         </tbody>
     </table>
-
-    <div class="footer">
-        Generated on {{ now()->format('Y-m-d H:i') }}
-    </div>
 
 </body>
 </html>

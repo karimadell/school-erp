@@ -115,16 +115,7 @@
     </button>
 </div>
 
-<div class="header">
-    <div>
-        <img src="{{ asset('images/logo.png') }}" class="logo" alt="School Logo">
-    </div>
-
-    <div class="school-info">
-        <div class="school-name">Русская школа «Наши традиции»</div>
-        <div class="school-address">Хургада - Египет</div>
-    </div>
-</div>
+<x-school-document-header title="СПИСОК ПРЕПОДАВАТЕЛЕЙ" :footer="true" />
 
 <div class="title">
     👨‍🏫 Список преподавателей

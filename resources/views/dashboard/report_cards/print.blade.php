@@ -81,17 +81,7 @@ font-size:12px;
 
 <div class="report">
 
-<div class="header">
-
-<div class="school">
-ГОСУДАРСТВЕННАЯ ШКОЛА
-</div>
-
-<div class="title">
-ТАБЕЛЬ УСПЕВАЕМОСТИ
-</div>
-
-</div>
+<x-school-document-header title="ТАБЕЛЬ УСПЕВАЕМОСТИ" academic-year="2025/2026" :footer="true" />
 
 
 <div class="info">

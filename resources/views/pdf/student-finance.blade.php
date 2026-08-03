@@ -1,3 +1,6 @@
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'ФИНАНСОВЫЙ ОТЧЁТ УЧЕНИКА'])
+
 <h2>Финансовый отчет студента</h2>
 
 <p>Имя: {{ $student->full_name }}</p>

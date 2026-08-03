@@ -37,10 +37,8 @@ body {
 
 <div class="container">
 
-<div class="header">
-    <div class="title">Salary Payslip</div>
-    <div>{{ now()->format('Y-m-d') }}</div>
-</div>
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'РАСЧЁТНЫЙ ЛИСТ'])
 
 <table class="table">
 <tr>

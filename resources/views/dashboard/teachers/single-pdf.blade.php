@@ -60,11 +60,8 @@
 
 <body>
 
-{{-- Header --}}
-<div class="header">
-    <div class="title">Русская школа «Наши традиции»</div>
-    <div class="subtitle">Карточка преподавателя</div>
-</div>
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'КАРТОЧКА ПРЕПОДАВАТЕЛЯ'])
 
 {{-- Info --}}
 <div class="info">
@@ -125,10 +122,6 @@
         @endforeach
     </tbody>
 </table>
-
-<div class="footer">
-    Generated at {{ now()->format('Y-m-d H:i') }}
-</div>
 
 </body>
 </html>

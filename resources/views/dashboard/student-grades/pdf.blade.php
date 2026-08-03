@@ -59,10 +59,10 @@
 </head>
 <body>
 
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'ОТЧЁТ ОБ УСПЕВАЕМОСТИ'])
+
 <div class="header">
-
-    <img src="{{ public_path('images/logo.png') }}" class="logo">
-
     <div class="title">
         {{ $class->grade->stage->name ?? '' }} /
         {{ $class->grade->name ?? '' }} /

@@ -1,3 +1,6 @@
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'ФИНАНСОВЫЙ ОТЧЁТ ШКОЛЫ'])
+
 <h2>Финансовый отчет школы</h2>
 
 <p>Общий доход: {{ number_format($totalIncome,2) }} EGP</p>

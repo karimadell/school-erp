@@ -9,9 +9,10 @@
 </head>
 <body>
 
-<div class="box">
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'КВИТАНЦИЯ ОБ ОПЛАТЕ'])
 
-<h2>Payment Receipt</h2>
+<div class="box">
 
 <p><strong>Invoice ID:</strong> {{ $invoice_id }}</p>
 <p><strong>Student:</strong> {{ $student }}</p>

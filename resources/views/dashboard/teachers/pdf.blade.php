@@ -157,6 +157,9 @@
 
 <body>
 
+@include('pdf.partials.document-footer', ['academicYear' => $academicYear ?? null])
+@include('pdf.partials.document-header', ['documentTitle' => 'ОФИЦИАЛЬНЫЙ СПИСОК ПРЕПОДАВАТЕЛЕЙ'])
+
 @php
     $documentId = 'TR-' . now()->format('Ymd-His');
     $logoPath = public_path('images/logo.png');
@@ -166,22 +169,7 @@
     <img src="{{ $logoPath }}" class="watermark">
 @endif
 
-<div class="header">
-    @if(file_exists($logoPath))
-        <img src="{{ $logoPath }}" class="logo">
-    @endif
-
-    <div class="school-info">
-        <div class="school-name">Русская школа «Наши традиции»</div>
-        <div class="report-title">Официальный список преподавателей</div>
-    </div>
-
-    <div class="meta">
-        <div class="doc-id">Документ №: {{ $documentId }}</div>
-        <div>Дата печати: {{ now()->format('Y-m-d H:i') }}</div>
-        <div>Хургада - Египет</div>
-    </div>
-</div>
+<div class="meta"><span class="doc-id">Документ №: {{ $documentId }}</span> · Дата печати: {{ now()->format('d.m.Y H:i') }}</div>
 
 <table>
     <thead>

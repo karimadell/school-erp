@@ -35,7 +35,7 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             return $service;
         })->values()->all();
 
-        $this->merge(['services' => $services]);
+        $this->merge(['services' => $services, 'payment_type' => $this->input('payment_type', 'one_time')]);
     }
 
     public function rules(): array
@@ -69,6 +69,8 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
             'payment_method' => ['nullable', Rule::in(['cash', 'card', 'bank', 'transfer'])],
             'payment_note' => ['nullable', 'string', 'max:1000'],
+            'payment_type' => ['required', Rule::in(['one_time','plan'])],
+            'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
             'invoice_number' => ['prohibited'],
             'currency' => ['prohibited'],
             'subtotal_amount' => ['prohibited'],

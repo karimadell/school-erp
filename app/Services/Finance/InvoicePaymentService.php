@@ -6,6 +6,7 @@ use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
+use App\Models\InvoiceInstallment;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -22,6 +23,7 @@ class InvoicePaymentService
         ?User $actor = null,
         ?string $reference = null,
         ?string $notes = null,
+        ?int $installmentId = null,
     ): InvoicePayment {
         $amount = $this->money($amount);
         if (! Str::isUuid($idempotencyKey)) {
@@ -30,9 +32,9 @@ class InvoicePaymentService
         if (! in_array($paymentMethod, ['cash', 'bank', 'card', 'transfer'], true)) {
             throw ValidationException::withMessages(['payment_method' => 'Выбран недопустимый способ оплаты.']);
         }
-        $hash = hash('sha256', implode('|', [$invoiceId, $cashAccountId, $amount, $paymentMethod]));
+        $hash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
 
-        return DB::transaction(function () use ($invoiceId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash) {
+        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash) {
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
                 return $this->replay($existing, $hash);
@@ -63,6 +65,29 @@ class InvoicePaymentService
                 throw ValidationException::withMessages(['amount' => 'Платёж не может превышать остаток по счёту.']);
             }
 
+            $installment = null;
+            if (! $invoice->installments()->exists() && $installmentId === null) {
+                $installment = InvoiceInstallment::create([
+                    'invoice_id'=>$invoice->id, 'name_ru'=>'Полная оплата', 'sequence'=>1,
+                    'due_date'=>$invoice->due_date ?? today(), 'amount'=>$invoice->total_amount,
+                    'paid_amount'=>$paid, 'remaining_amount'=>$remaining, 'status'=>InvoiceInstallment::STATUS_PENDING,
+                ]);
+                $installmentId = $installment->id;
+            }
+            if ($invoice->installments()->exists()) {
+                if ($installmentId === null) {
+                    $outstandingInstallments = $invoice->installments()->where('remaining_amount','>','0')->lockForUpdate()->get();
+                    if ($outstandingInstallments->count() === 1) $installmentId = $outstandingInstallments->first()->id;
+                }
+                $installment = InvoiceInstallment::query()->lockForUpdate()->find($installmentId);
+                if (! $installment || $installment->invoice_id !== $invoice->id) {
+                    throw ValidationException::withMessages(['invoice_installment_id' => 'Выберите этап рассрочки этого счёта.']);
+                }
+                if (bccomp($amount, (string) $installment->remaining_amount, 2) > 0) {
+                    throw ValidationException::withMessages(['amount' => 'Платёж не может превышать остаток по выбранному этапу.']);
+                }
+            }
+
             $account = CashAccount::query()->lockForUpdate()->find($cashAccountId);
             if (! $account) {
                 throw ValidationException::withMessages(['cash_account_id' => 'Касса не найдена.']);
@@ -73,6 +98,7 @@ class InvoicePaymentService
 
             $payment = InvoicePayment::create([
                 'invoice_id' => $invoice->id,
+                'invoice_installment_id' => $installment?->id,
                 'cash_account_id' => $account->id,
                 'amount' => $amount,
                 'payment_method' => $paymentMethod,
@@ -105,6 +131,8 @@ class InvoicePaymentService
                 'payment_method' => $paymentMethod,
                 'cash_account_id' => $account->id,
             ])->save();
+
+            $installment?->refreshStatus();
 
             return $payment->fresh(['cashTransaction']);
         });

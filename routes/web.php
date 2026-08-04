@@ -8,6 +8,7 @@ use App\Http\Controllers\Dashboard\FinanceTariffController;
 use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
 use App\Http\Controllers\Dashboard\FinanceOperationsController;
+use App\Http\Controllers\Dashboard\PaymentPlanController;
 use App\Http\Controllers\Dashboard\StudentInvoiceController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
@@ -280,6 +281,8 @@ Route::middleware(['auth', 'administrative'])
         Route::resource('fee-prices', FeePriceController::class);
         Route::prefix('finance')->name('finance.')->group(function () {
             Route::get('workspace', [FinanceOperationsController::class, 'workspace'])->name('workspace');
+            Route::get('installments', [PaymentPlanController::class, 'reports'])->name('installments.index');
+            Route::resource('payment-plans', PaymentPlanController::class)->except(['show', 'destroy']);
             Route::resource('services', FinanceServiceController::class)
                 ->parameters(['services' => 'fee'])
                 ->except(['destroy']);

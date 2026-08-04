@@ -64,7 +64,7 @@ class FinanceOperationsController extends Controller
 
     public function student(Student $student): View
     {
-        $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','invoices.academicYear','invoices.payments.cashAccount','invoices.payments.creator','enrollments.serviceSubscriptions.fee','enrollments.serviceSubscriptions.invoiceItems']);
+        $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','invoices.academicYear','invoices.installments.payments','invoices.payments.cashAccount','invoices.payments.creator','enrollments.serviceSubscriptions.fee','enrollments.serviceSubscriptions.invoiceItems']);
         $summary = $this->summaries->summarize($student);
         $subscriptions = $student->enrollments->flatMap->serviceSubscriptions->sortByDesc('created_at')->values();
         $history = collect()
@@ -78,7 +78,7 @@ class FinanceOperationsController extends Controller
     public function createPayment(Invoice $invoice): View
     {
         abort_if($invoice->status === Invoice::STATUS_PAID || bccomp((string) $invoice->remaining_amount, '0.00', 2) <= 0, 422, 'Счёт уже полностью оплачен.');
-        $invoice->load('student');
+        $invoice->load(['student', 'installments' => fn ($query) => $query->where('remaining_amount','>','0')->orderBy('sequence')]);
         return view('dashboard.finance.payments.create', [
             'invoice' => $invoice,
             'cashAccounts' => CashAccount::where('is_active', true)->orderBy('name')->get(),
@@ -98,6 +98,7 @@ class FinanceOperationsController extends Controller
             actor: $request->user(),
             reference: 'Оплата по счёту '.$invoice->display_number,
             notes: $request->input('notes'),
+            installmentId: $request->integer('invoice_installment_id') ?: null,
         );
 
         return redirect()->route('dashboard.payments.receipt', $payment)
@@ -118,7 +119,7 @@ class FinanceOperationsController extends Controller
 
     private function receiptData(InvoicePayment $payment): array
     {
-        $payment->load(['invoice.student','invoice.academicYear','invoice.payments','invoice.items','cashAccount','creator']);
+        $payment->load(['invoice.student','invoice.academicYear','invoice.payments','invoice.items','installment','cashAccount','creator']);
         $ordered = $payment->invoice->payments->sortBy(fn ($item) => sprintf('%s-%010d', ($item->paid_at ?? $item->created_at)?->format('YmdHis.u'), $item->id));
         $through = $ordered->takeUntil(fn ($item) => $item->id === $payment->id)->push($payment)->unique('id');
         $paidThrough = $this->money($through->sum('amount'));

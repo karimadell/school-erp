@@ -219,6 +219,7 @@ class InvoiceController extends Controller
             'cashAccount',
             'payments.cashAccount',
             'payments.creator',
+            'installments.payments',
         ]);
 
         return view('dashboard.invoices.show', compact('invoice'));

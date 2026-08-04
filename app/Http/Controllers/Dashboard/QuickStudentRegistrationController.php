@@ -10,6 +10,7 @@ use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\Invoice;
 use App\Models\MealPlan;
+use App\Models\PaymentPlan;
 use App\Models\Stage;
 use App\Services\Admissions\QuickStudentRegistrationService;
 use App\Services\Finance\InvoiceCalculationService;
@@ -48,6 +49,7 @@ class QuickStudentRegistrationController extends Controller
             'cashAccounts' => CashAccount::where('is_active', true)->orderBy('name')->get(),
             'transportRoutes' => DB::table('transport_routes')->orderBy('name')->get(),
             'uniformProducts' => DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get(),
+            'paymentPlans' => PaymentPlan::active()->with('installments')->orderBy('sort_order')->get(),
         ]);
     }
 

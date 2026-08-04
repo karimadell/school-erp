@@ -10,8 +10,10 @@ use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\PaymentPlan;
 use App\Models\Student;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\InstallmentPlanService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -34,17 +36,18 @@ class StudentInvoiceController extends Controller
             ->when($year, fn ($query) => $query->where('academic_year_id', $year->id))
             ->where('is_active', true)->orderByDesc('start_date')])->orderBy('category')->orderBy('name_ru')->get();
 
-        return view('dashboard.finance.invoices.create', compact('student', 'year', 'fees'));
+        $paymentPlans = PaymentPlan::active()->with('installments')->orderBy('sort_order')->get();
+        return view('dashboard.finance.invoices.create', compact('student', 'year', 'fees', 'paymentPlans'));
     }
 
-    public function store(StoreInvoiceRequest $request, Student $student, InvoiceCalculationService $calculator): RedirectResponse
+    public function store(StoreInvoiceRequest $request, Student $student, InvoiceCalculationService $calculator, InstallmentPlanService $plans): RedirectResponse
     {
         $data = $request->validated();
         if ((int) $data['student_id'] !== $student->id) {
             throw ValidationException::withMessages(['student_id' => 'Выбранный ученик не соответствует адресу формы.']);
         }
 
-        $invoice = DB::transaction(function () use ($data, $student, $calculator, $request) {
+        $invoice = DB::transaction(function () use ($data, $student, $calculator, $request, $plans) {
             $student = Student::query()->lockForUpdate()->findOrFail($student->id);
             $year = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
             $enrollment = Enrollment::query()->where('student_id', $student->id)->where('academic_year_id', $year->id)->where('is_active', true)->lockForUpdate()->first();
@@ -101,6 +104,13 @@ class StudentInvoiceController extends Controller
                     'amount'=>$line['amount'], 'item'=>$line['item'], 'size'=>$line['size'],
                     'option_type'=>$line['option_type'], 'option_value'=>$line['option_value'],
                 ]);
+            }
+
+            if ($data['payment_type'] === 'plan') {
+                $plan = PaymentPlan::active()->lockForUpdate()->findOrFail($data['payment_plan_id']);
+                $plans->generate($invoice, $plan, $data['pricing_date']);
+            } else {
+                $plans->generateSingle($invoice, $data['due_date']);
             }
 
             AuditLog::create(['user_id'=>$request->user()->id,'action'=>'created','model'=>'Invoice','model_id'=>$invoice->id,'new_values'=>['invoice_number'=>$invoice->invoice_number,'total_amount'=>$invoice->total_amount],'ip'=>$request->ip(),'user_agent'=>$request->userAgent()]);

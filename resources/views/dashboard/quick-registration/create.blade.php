@@ -92,7 +92,8 @@
             <div><strong>Общая стоимость:</strong> <span id="grand-total">0.00 EGP</span> · <strong>Всего оплачено:</strong> <span id="grand-paid">0.00 EGP</span> · <strong>Общий остаток:</strong> <span id="grand-remaining">0.00 EGP</span></div>
         </div></section>
 
-        <section class="card shadow-sm mb-4"><div class="card-header fw-bold">4. Оплата</div><div class="card-body row g-3">
+        @include('dashboard.quick-registration.payment-plan-fields')
+        <section class="card shadow-sm mb-4"><div class="card-header fw-bold">5. Оплата</div><div class="card-body row g-3">
             <div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" class="form-select"><option value="">Без оплаты</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" @selected((string) old('cash_account_id') === (string) $account->id)>{{ $account->name }}</option>@endforeach</select></div>
             <div class="col-md-4"><label class="form-label">Способ оплаты</label><select name="payment_method" class="form-select"><option value="">Без оплаты</option><option value="cash" @selected(old('payment_method') === 'cash')>Наличные</option><option value="card" @selected(old('payment_method') === 'card')>Банковская карта</option><option value="bank" @selected(old('payment_method') === 'bank')>Банковский перевод</option></select></div>
             <div class="col-md-4"><label class="form-label">Примечание к оплате</label><input name="payment_note" value="{{ old('payment_note') }}" class="form-control"></div>

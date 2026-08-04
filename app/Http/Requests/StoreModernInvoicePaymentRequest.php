@@ -15,6 +15,7 @@ class StoreModernInvoicePaymentRequest extends FormRequest
     {
         return [
             'amount' => ['required', 'decimal:0,2', 'gt:0'],
+            'invoice_installment_id' => ['nullable', 'integer', 'exists:invoice_installments,id'],
             'cash_account_id' => ['required', 'integer', 'exists:cash_accounts,id'],
             'payment_method' => ['required', 'in:cash,card,bank'],
             'idempotency_key' => ['required', 'uuid'],
@@ -28,6 +29,7 @@ class StoreModernInvoicePaymentRequest extends FormRequest
             'amount.required' => 'Укажите сумму платежа.',
             'amount.decimal' => 'Сумма должна содержать не более двух знаков после запятой.',
             'amount.gt' => 'Сумма платежа должна быть больше нуля.',
+            'invoice_installment_id.exists' => 'Выбранный этап рассрочки не найден.',
             'cash_account_id.required' => 'Выберите кассу.',
             'cash_account_id.exists' => 'Выбранная касса не найдена.',
             'payment_method.required' => 'Выберите способ оплаты.',

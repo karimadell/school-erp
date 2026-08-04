@@ -11,6 +11,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\MealPlan;
 use App\Models\MealSubscription;
+use App\Models\PaymentPlan;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
@@ -18,6 +19,7 @@ use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoicePaymentService;
+use App\Services\Finance\InstallmentPlanService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -28,6 +30,7 @@ class QuickStudentRegistrationService
     public function __construct(
         private InvoiceCalculationService $calculator,
         private InvoicePaymentService $payments,
+        private InstallmentPlanService $installmentPlans,
     )
     {
     }
@@ -245,7 +248,18 @@ class QuickStudentRegistrationService
                 throw ValidationException::withMessages(['services' => 'Распределение оплаты по услугам не совпадает с итогом счёта.']);
             }
 
+            if (($data['payment_type'] ?? 'one_time') === 'plan') {
+                $plan = PaymentPlan::active()->lockForUpdate()->findOrFail($data['payment_plan_id']);
+                $this->installmentPlans->generate($invoice, $plan, $data['registration_date']);
+            } else {
+                $this->installmentPlans->generateSingle($invoice, $year->end_date->toDateString());
+            }
+
             if (bccomp($paidNow, '0.00', 2) > 0) {
+                $installment = $invoice->installments()->orderBy('sequence')->firstOrFail();
+                if (bccomp($paidNow, (string)$installment->remaining_amount, 2) > 0) {
+                    throw ValidationException::withMessages(['services'=>'Первоначальная оплата превышает сумму первого этапа рассрочки.']);
+                }
                 $this->payments->record(
                     invoiceId: $invoice->id,
                     cashAccountId: (int) $data['cash_account_id'],
@@ -255,6 +269,7 @@ class QuickStudentRegistrationService
                     actor: $actor,
                     reference: "Быстрая регистрация {$invoice->invoice_number}",
                     notes: $data['payment_note'] ?? null,
+                    installmentId: $installment->id,
                 );
             }
 

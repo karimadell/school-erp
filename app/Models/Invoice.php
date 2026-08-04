@@ -116,6 +116,11 @@ class Invoice extends Model
         return $this->hasMany(InvoiceItem::class);
     }
 
+    public function installments()
+    {
+        return $this->hasMany(InvoiceInstallment::class)->orderBy('sequence');
+    }
+
     public function refreshPaymentStatus(): void
     {
         $net = bcadd((string) $this->total_amount, '0', 2);

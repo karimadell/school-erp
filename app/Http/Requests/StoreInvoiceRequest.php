@@ -32,6 +32,7 @@ class StoreInvoiceRequest extends FormRequest
         $this->merge([
             'items' => $items,
             'pricing_date' => $this->input('pricing_date', now()->toDateString()),
+            'payment_type' => $this->input('payment_type', 'one_time'),
             'initial_payment_amount' => $this->input('initial_payment_amount', '0'),
             'notes' => $this->input('notes', $this->input('invoice_note')),
         ]);
@@ -61,6 +62,8 @@ class StoreInvoiceRequest extends FormRequest
             'payment_method' => ['nullable', 'in:cash,bank,card,transfer'],
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
             'notes' => ['nullable', 'string', 'max:1000'],
+            'payment_type' => ['required', 'in:one_time,plan'],
+            'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
             'subtotal' => ['prohibited'],
             'total_amount' => ['prohibited'],
             'paid_amount' => ['prohibited'],
@@ -140,6 +143,7 @@ class StoreInvoiceRequest extends FormRequest
             'initial_payment_amount.min' => 'Первоначальный платёж не может быть отрицательным.',
             'payment_method.in' => 'Выбран недопустимый способ оплаты.',
             'cash_account_id.exists' => 'Выбранная касса не найдена.',
+            'payment_plan_id.required_if' => 'Выберите план оплаты.',
             '*.prohibited' => 'Вычисляемые финансовые поля нельзя передавать вручную.',
         ];
     }

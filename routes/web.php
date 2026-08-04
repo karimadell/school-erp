@@ -9,6 +9,7 @@ use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
+use App\Http\Controllers\Dashboard\StudentProfileController;
 use App\Http\Controllers\Dashboard\EnrollmentController;
 use App\Http\Controllers\Dashboard\InvoiceController;
 use App\Http\Controllers\Dashboard\QuickStudentRegistrationController;
@@ -106,7 +107,9 @@ Route::middleware(['auth', 'administrative'])
         Route::put('administration/school-settings', [SchoolSettingController::class, 'update'])
             ->name('settings.school.update');
 
-        Route::resource('students', StudentController::class);
+        Route::resource('students', StudentController::class)->except(['show']);
+        Route::get('students/{student}/print', [StudentProfileController::class, 'print'])->name('students.print');
+        Route::get('students/{student}', [StudentProfileController::class, 'show'])->name('students.show');
 
         Route::get('students/{student}/complete-registration', [StudentProfileCompletionController::class, 'edit'])->name('students.complete-registration.edit');
         Route::put('students/{student}/complete-registration', [StudentProfileCompletionController::class, 'update'])->name('students.complete-registration.update');

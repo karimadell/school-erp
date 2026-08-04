@@ -1,0 +1,7 @@
+<?php
+namespace Tests\Feature\Students;
+use App\Services\Students\StudentProfileCompletionService; use Illuminate\Support\Facades\Storage;
+class StudentProfileDashboardTest extends StudentProfileDashboardTestCase {
+ public function test_profile_header_tabs_and_central_completion_render_in_russian():void { Storage::fake('public'); Storage::disk('public')->put('students/photo.jpg','x'); $this->student->update(['photo'=>'students/photo.jpg']); $expected=app(StudentProfileCompletionService::class)->calculate($this->student->fresh()); $this->actingAs($this->admin)->get(route('dashboard.students.show',$this->student))->assertOk()->assertSee('Профиль ученика')->assertSee('Иванов Иван Иванович')->assertSee('Предварительная регистрация')->assertSee('Очная форма')->assertSee($expected['overall_percentage'].'%')->assertSee($expected['documents_percentage'].'%')->assertSeeInOrder(['Обзор','Родители и контакты','Обучение','Услуги','Финансы','Документы','История'])->assertSee('Завершить регистрацию')->assertSee('Печать профиля')->assertDontSee('Приостановить')->assertDontSee('Выпустить'); }
+ public function test_missing_values_use_russian_empty_state_and_print_uses_branding():void { $this->actingAs($this->admin)->get(route('dashboard.students.show',$this->student))->assertOk()->assertSee('Данные не указаны.'); $this->actingAs($this->admin)->get(route('dashboard.students.print',$this->student))->assertOk()->assertSee('ЦЕНТР «НАШИ ТРАДИЦИИ»')->assertSee('ПРОФИЛЬ УЧЕНИКА')->assertSee('Готовность личного дела'); }
+}

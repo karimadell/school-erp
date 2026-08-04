@@ -30,7 +30,7 @@ class StudentProfileTest extends TestCase
         (new RolesAndPermissionsSeeder())->run();
     }
 
-    public function test_modern_student_profile_renders_all_six_russian_tabs(): void
+    public function test_modern_student_profile_renders_all_seven_russian_tabs(): void
     {
         [$student] = $this->profileData();
 
@@ -39,6 +39,7 @@ class StudentProfileTest extends TestCase
             ->assertSee('Профиль ученика')
             ->assertSee('Обзор')
             ->assertSee('Родители')
+            ->assertSee('Обучение')
             ->assertSee('Финансы')
             ->assertSee('Услуги')
             ->assertSee('Документы')
@@ -48,16 +49,18 @@ class StudentProfileTest extends TestCase
             ->assertSee('إيفان إيفانوف')
             ->assertSee('Иванов Сергей')
             ->assertSee('Редактировать')
-            ->assertSee('Перевести')
-            ->assertSee('Печать');
+            ->assertDontSee('Перевести')
+            ->assertSee('Печать профиля');
     }
 
-    public function test_manage_students_permission_protects_profile(): void
+    public function test_view_students_permission_protects_profile_and_sensitive_actions(): void
     {
         [$student] = $this->profileData();
 
         $this->actingAs($this->user('accountant'))
-            ->get(route('dashboard.students.show', $student))->assertForbidden();
+            ->get(route('dashboard.students.show', $student))
+            ->assertOk()
+            ->assertDontSee('Открыть документы');
         $this->actingAs($this->user('reception'))
             ->get(route('dashboard.students.show', $student))->assertOk();
     }
@@ -86,11 +89,12 @@ class StudentProfileTest extends TestCase
 
         $this->actingAs($this->user('admin'))->get(route('dashboard.students.show', $student))
             ->assertOk()
-            ->assertViewHas('timeline', function ($timeline) {
+            ->assertViewHas('profile', function ($profile) {
+                $timeline = $profile['timeline'];
                 $dates = $timeline->pluck('at')->map->timestamp->values();
 
                 return $dates->all() === $dates->sortDesc()->values()->all()
-                    && $timeline->first()['type'] === 'Платёж';
+                    && $timeline->first()['label'] === 'Платёж';
             });
     }
 

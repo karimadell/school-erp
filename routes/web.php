@@ -7,6 +7,8 @@ use App\Http\Controllers\Dashboard\FinanceServiceController;
 use App\Http\Controllers\Dashboard\FinanceTariffController;
 use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
+use App\Http\Controllers\Dashboard\FinanceOperationsController;
+use App\Http\Controllers\Dashboard\StudentInvoiceController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\StudentProfileController;
@@ -277,6 +279,7 @@ Route::middleware(['auth', 'administrative'])
              ->name('fees.toggle');
         Route::resource('fee-prices', FeePriceController::class);
         Route::prefix('finance')->name('finance.')->group(function () {
+            Route::get('workspace', [FinanceOperationsController::class, 'workspace'])->name('workspace');
             Route::resource('services', FinanceServiceController::class)
                 ->parameters(['services' => 'fee'])
                 ->except(['destroy']);
@@ -296,6 +299,14 @@ Route::middleware(['auth', 'administrative'])
         */
         Route::resource('invoices', InvoiceController::class)
             ->only(['index', 'create', 'store', 'show']);
+
+        Route::get('students/{student}/finance', [FinanceOperationsController::class, 'student'])->name('students.finance');
+        Route::get('students/{student}/invoices/create', [StudentInvoiceController::class, 'create'])->name('students.invoices.create');
+        Route::post('students/{student}/invoices', [StudentInvoiceController::class, 'store'])->name('students.invoices.store');
+        Route::get('invoices/{invoice}/payments/create', [FinanceOperationsController::class, 'createPayment'])->name('invoices.payments.create');
+        Route::post('invoices/{invoice}/payments', [FinanceOperationsController::class, 'storePayment'])->name('invoices.payments.store');
+        Route::get('payments/{invoicePayment}/receipt', [FinanceOperationsController::class, 'receipt'])->name('payments.receipt');
+        Route::get('payments/{invoicePayment}/receipt/pdf', [FinanceOperationsController::class, 'receiptPdf'])->name('payments.receipt.pdf');
 
         Route::get('quick-registration', [QuickStudentRegistrationController::class, 'create'])
             ->name('quick-registration.create');

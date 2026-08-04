@@ -54,6 +54,7 @@
         [
             'label' => 'Финансы',
             'items' => [
+                ['label' => 'Финансовый центр', 'icon' => 'landmark', 'route' => 'dashboard.finance.workspace', 'active' => 'dashboard.finance.workspace'],
                 ['label' => 'Счета', 'icon' => 'receipt', 'route' => 'dashboard.invoices.index', 'active' => 'dashboard.invoices.*'],
                 ['label' => 'Услуги и сборы', 'icon' => 'credit_card', 'route' => 'dashboard.finance.services.index', 'active' => 'dashboard.finance.services.*'],
                 ['label' => 'Цены на услуги', 'icon' => 'payments', 'route' => 'dashboard.finance.tariffs.index', 'active' => 'dashboard.finance.tariffs.*'],

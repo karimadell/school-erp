@@ -25,5 +25,8 @@
         <p><strong>Касса:</strong> {{ $invoice->cashAccount?->name ?? 'Без оплаты' }}</p>
     </div></div>
     <a href="{{ route('dashboard.students.complete-registration.edit', $invoice->student) }}" class="btn btn-primary">Завершить регистрацию</a>
+    @if($invoice->payments->isNotEmpty())
+        <a href="{{ route('dashboard.payments.receipt', $invoice->payments->sortByDesc('id')->first()) }}" class="btn btn-success">Открыть квитанцию</a>
+    @endif
 </div>
 @endsection

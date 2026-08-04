@@ -213,7 +213,7 @@ class InvoiceController extends Controller
     public function show(Invoice $invoice): View
     {
         $invoice->load([
-            'student.grade',
+            'student.grade', 'academicYear', 'items.fee', 'items.subscription',
             'fees',
             'cashAccount',
             'payments.cashAccount',

@@ -23,7 +23,7 @@ class StudentProfileController extends Controller
         $student->load([
             'currentEnrollment.academicYear', 'currentEnrollment.stage', 'currentEnrollment.grade',
             'currentEnrollment.schoolClass', 'currentEnrollment.enrollmentMode',
-            'enrollments.academicYear', 'enrollments.serviceSubscriptions.fee',
+            'enrollments.academicYear', 'enrollments.serviceSubscriptions.fee', 'enrollments.serviceSubscriptions.events.creator',
             'enrollments.serviceSubscriptions.invoiceItems.invoice',
             'invoices.academicYear', 'invoices.createdBy', 'invoices.payments.cashAccount',
             'invoices.payments.creator', 'files.uploader',

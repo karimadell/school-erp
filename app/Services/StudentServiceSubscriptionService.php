@@ -40,10 +40,13 @@ class StudentServiceSubscriptionService
         // Policy decision 3: reuse Enrollment's existing one-per-year
         // guarantee — a subscription is unique per (enrollment, fee), which
         // is exactly "one per (student, academic_year) per service".
-        if (StudentServiceSubscription::where('enrollment_id', $enrollment->id)
-            ->where('fee_id', $fee->id)
-            ->exists()
-        ) {
+        $startDate = $attributes['start_date'] ?? now()->toDateString();
+        $endDate = $attributes['end_date'] ?? null;
+        $existing = StudentServiceSubscription::where('enrollment_id', $enrollment->id)->where('fee_id', $fee->id)
+            ->whereIn('status', [StudentServiceSubscription::STATUS_ACTIVE, StudentServiceSubscription::STATUS_SUSPENDED])
+            ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $endDate ?? '9999-12-31'))
+            ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $startDate))->exists();
+        if ($existing) {
             throw new DuplicateSubscriptionException(
                 "Enrollment #{$enrollment->id} is already subscribed to fee #{$fee->id}."
             );

@@ -9,6 +9,7 @@ use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
 use App\Http\Controllers\Dashboard\FinanceOperationsController;
 use App\Http\Controllers\Dashboard\PaymentPlanController;
+use App\Http\Controllers\Dashboard\StudentSubscriptionController;
 use App\Http\Controllers\Dashboard\StudentInvoiceController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
@@ -282,6 +283,7 @@ Route::middleware(['auth', 'administrative'])
         Route::prefix('finance')->name('finance.')->group(function () {
             Route::get('workspace', [FinanceOperationsController::class, 'workspace'])->name('workspace');
             Route::get('installments', [PaymentPlanController::class, 'reports'])->name('installments.index');
+            Route::get('subscriptions', [StudentSubscriptionController::class, 'control'])->name('subscriptions.index');
             Route::resource('payment-plans', PaymentPlanController::class)->except(['show', 'destroy']);
             Route::resource('services', FinanceServiceController::class)
                 ->parameters(['services' => 'fee'])
@@ -304,6 +306,18 @@ Route::middleware(['auth', 'administrative'])
             ->only(['index', 'create', 'store', 'show']);
 
         Route::get('students/{student}/finance', [FinanceOperationsController::class, 'student'])->name('students.finance');
+        Route::get('students/{student}/subscriptions/renew', [StudentSubscriptionController::class, 'renew'])->name('students.subscriptions.renew');
+        Route::post('students/{student}/subscriptions/renew/preview', [StudentSubscriptionController::class, 'renewPreview'])->name('students.subscriptions.renew.preview');
+        Route::post('students/{student}/subscriptions/renew', [StudentSubscriptionController::class, 'renewStore'])->name('students.subscriptions.renew.store');
+        Route::get('students/{student}/subscriptions', [StudentSubscriptionController::class, 'index'])->name('students.subscriptions.index');
+        Route::get('students/{student}/subscriptions/create', [StudentSubscriptionController::class, 'create'])->name('students.subscriptions.create');
+        Route::post('students/{student}/subscriptions', [StudentSubscriptionController::class, 'store'])->name('students.subscriptions.store');
+        Route::get('students/{student}/subscriptions/{subscription}', [StudentSubscriptionController::class, 'show'])->name('students.subscriptions.show');
+        Route::get('students/{student}/subscriptions/{subscription}/edit', [StudentSubscriptionController::class, 'edit'])->name('students.subscriptions.edit');
+        Route::put('students/{student}/subscriptions/{subscription}', [StudentSubscriptionController::class, 'update'])->name('students.subscriptions.update');
+        Route::post('students/{student}/subscriptions/{subscription}/pause', [StudentSubscriptionController::class, 'pause'])->name('students.subscriptions.pause');
+        Route::post('students/{student}/subscriptions/{subscription}/resume', [StudentSubscriptionController::class, 'resume'])->name('students.subscriptions.resume');
+        Route::post('students/{student}/subscriptions/{subscription}/end', [StudentSubscriptionController::class, 'end'])->name('students.subscriptions.end');
         Route::get('students/{student}/invoices/create', [StudentInvoiceController::class, 'create'])->name('students.invoices.create');
         Route::post('students/{student}/invoices', [StudentInvoiceController::class, 'store'])->name('students.invoices.store');
         Route::get('invoices/{invoice}/payments/create', [FinanceOperationsController::class, 'createPayment'])->name('invoices.payments.create');

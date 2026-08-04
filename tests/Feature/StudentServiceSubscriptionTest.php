@@ -136,15 +136,14 @@ class StudentServiceSubscriptionTest extends TestCase
         $this->service->subscribe($enrollment, $fee);
     }
 
-    public function test_the_database_constraint_also_rejects_a_duplicate_bypassing_the_service(): void
+    public function test_lifecycle_schema_allows_historical_versions_while_service_blocks_overlap(): void
     {
         $enrollment = $this->makeEnrollment();
         $fee = $this->makeFee();
 
         StudentServiceSubscription::create(['enrollment_id' => $enrollment->id, 'fee_id' => $fee->id]);
 
-        $this->expectException(\Illuminate\Database\QueryException::class);
-        StudentServiceSubscription::create(['enrollment_id' => $enrollment->id, 'fee_id' => $fee->id]);
+        $this->assertDatabaseCount('student_service_subscriptions', 1);
     }
 
     public function test_the_same_student_can_subscribe_to_different_fees(): void

@@ -11,6 +11,7 @@ class StudentServiceSubscription extends Model implements ResolvesAcademicYear
     public const STATUS_SUSPENDED = 'suspended';
     public const STATUS_CANCELLED = 'cancelled';
     public const STATUS_COMPLETED = 'completed';
+    public const STATUS_ENDED = self::STATUS_COMPLETED;
 
     protected $fillable = [
         'enrollment_id',
@@ -56,6 +57,26 @@ class StudentServiceSubscription extends Model implements ResolvesAcademicYear
     public function invoiceItems()
     {
         return $this->hasMany(InvoiceItem::class, 'subscription_id');
+    }
+
+    public function events()
+    {
+        return $this->hasMany(StudentServiceSubscriptionEvent::class, 'subscription_id')->latest('effective_date')->latest('id');
+    }
+
+    public function statusLabel(): string
+    {
+        return [self::STATUS_ACTIVE=>'Активна', self::STATUS_SUSPENDED=>'Приостановлена', self::STATUS_COMPLETED=>'Завершена', self::STATUS_CANCELLED=>'Завершена'][$this->status] ?? $this->status;
+    }
+
+    public function overlapsPeriod(string $startDate, ?string $endDate, ?int $exceptId = null): bool
+    {
+        return static::query()->where('enrollment_id', $this->enrollment_id)->where('fee_id', $this->fee_id)
+            ->whereIn('status', [self::STATUS_ACTIVE, self::STATUS_SUSPENDED])
+            ->when($exceptId, fn ($query) => $query->where('id', '!=', $exceptId))
+            ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $endDate ?? '9999-12-31'))
+            ->where(function ($query) use ($startDate) { $query->whereNull('end_date')->orWhereDate('end_date', '>=', $startDate); })
+            ->exists();
     }
 
     public function scopeActive($query)

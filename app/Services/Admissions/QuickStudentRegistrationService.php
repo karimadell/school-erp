@@ -41,8 +41,8 @@ class QuickStudentRegistrationService
                 throw ValidationException::withMessages(['academic_year_id' => 'Выбранный учебный год больше не активен.']);
             }
             $registrationDate = Carbon::parse($data['registration_date']);
-            if ($registrationDate->lt($year->start_date) || $registrationDate->gt($year->end_date)) {
-                throw ValidationException::withMessages(['registration_date' => 'Дата регистрации должна находиться в пределах учебного года.']);
+            if ($registrationDate->gt($year->end_date)) {
+                throw ValidationException::withMessages(['registration_date' => 'Дата регистрации не может быть позже окончания учебного года.']);
             }
 
             $stage = Stage::query()->lockForUpdate()->findOrFail($data['stage_id']);
@@ -227,6 +227,7 @@ class QuickStudentRegistrationService
                     'amount' => $line['amount'],
                     'paid_amount' => $linePaid,
                     'remaining_amount' => $lineRemaining,
+                    'is_non_refundable' => $fee->is_non_refundable,
                     'metadata' => $metadata,
                 ]);
 

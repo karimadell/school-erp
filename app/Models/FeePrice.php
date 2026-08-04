@@ -26,9 +26,9 @@ class FeePrice extends Model
             }
             if ($price->academic_year_id) {
                 $year = AcademicYear::find($price->academic_year_id);
-                if (! $year || $price->start_date->lt($year->start_date) || $price->start_date->gt($year->end_date)
+                if (! $year || $price->start_date->gt($year->end_date)
                     || ($price->end_date && $price->end_date->gt($year->end_date))) {
-                    throw ValidationException::withMessages(['academic_year_id' => 'Период действия цены должен находиться в пределах учебного года.']);
+                    throw ValidationException::withMessages(['academic_year_id' => 'Тариф может начинаться до учебного года, но не может начинаться или заканчиваться после его окончания.']);
                 }
             }
         });

@@ -9,6 +9,8 @@ class InvoiceItem extends Model
 {
     use HasFactory;
 
+    protected $attributes = ['is_non_refundable' => false];
+
     /**
      * الحقول القابلة للـ mass assignment
      */
@@ -22,6 +24,7 @@ class InvoiceItem extends Model
         'quantity',
         'paid_amount',
         'remaining_amount',
+        'is_non_refundable',
         'metadata',
     ];
 
@@ -34,6 +37,7 @@ class InvoiceItem extends Model
         'quantity' => 'integer',
         'paid_amount' => 'decimal:2',
         'remaining_amount' => 'decimal:2',
+        'is_non_refundable' => 'boolean',
         'metadata' => 'array',
     ];
 

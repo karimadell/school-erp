@@ -10,6 +10,11 @@ class StoreFinanceServiceRequest extends FormRequest
 {
     public function authorize(): bool { return $this->user()?->can('manage fees') === true; }
 
+    protected function prepareForValidation(): void
+    {
+        $this->merge(['is_non_refundable' => $this->boolean('is_non_refundable')]);
+    }
+
     public function rules(): array
     {
         return [
@@ -19,6 +24,7 @@ class StoreFinanceServiceRequest extends FormRequest
             'payment_period' => ['nullable', Rule::in(['once', 'daily', 'monthly', 'quarterly', 'term', 'yearly', 'package'])],
             'description' => ['nullable', 'string', 'max:2000'],
             'is_active' => ['required', 'boolean'],
+            'is_non_refundable' => ['required', 'boolean'],
             'amount' => ['prohibited'], 'base_price' => ['prohibited'],
         ];
     }

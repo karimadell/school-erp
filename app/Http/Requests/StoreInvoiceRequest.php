@@ -31,6 +31,7 @@ class StoreInvoiceRequest extends FormRequest
 
         $this->merge([
             'items' => $items,
+            'pricing_date' => $this->input('pricing_date', now()->toDateString()),
             'initial_payment_amount' => $this->input('initial_payment_amount', '0'),
             'notes' => $this->input('notes', $this->input('invoice_note')),
         ]);
@@ -42,6 +43,7 @@ class StoreInvoiceRequest extends FormRequest
             'student_id' => ['required', 'integer', 'exists:students,id'],
             'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
             'due_date' => ['required', 'date'],
+            'pricing_date' => ['required', 'date'],
             'fees' => ['required', 'array', 'min:1'],
             'fees.*' => ['required', 'integer', 'distinct', 'exists:fees,id'],
             'items' => ['required', 'array', 'min:1'],
@@ -90,6 +92,9 @@ class StoreInvoiceRequest extends FormRequest
             if ($this->date('due_date')->lt($year->start_date) || $this->date('due_date')->gt($year->end_date)) {
                 $validator->errors()->add('due_date', 'Срок оплаты должен находиться в пределах выбранного учебного года.');
             }
+            if ($this->date('pricing_date')->gt($year->end_date)) {
+                $validator->errors()->add('pricing_date', 'Дата выставления счёта не может быть позже окончания выбранного учебного года.');
+            }
 
             $hasEnrollment = Enrollment::query()
                 ->where('student_id', $this->integer('student_id'))
@@ -122,6 +127,8 @@ class StoreInvoiceRequest extends FormRequest
             'academic_year_id.exists' => 'Выбранный учебный год не найден.',
             'due_date.required' => 'Укажите срок оплаты.',
             'due_date.date' => 'Срок оплаты указан в неверном формате.',
+            'pricing_date.required' => 'Укажите дату выставления счёта.',
+            'pricing_date.date' => 'Дата выставления счёта указана в неверном формате.',
             'fees.required' => 'Выберите хотя бы одну услугу.',
             'fees.min' => 'Выберите хотя бы одну услугу.',
             'fees.*.distinct' => 'Одну услугу нельзя добавлять в счёт несколько раз.',

@@ -35,7 +35,7 @@
                 <div class="col-md-4"><label class="form-label">Имя *</label><input name="student_first_name_ru" value="{{ old('student_first_name_ru') }}" class="form-control" required></div>
                 <div class="col-md-4"><label class="form-label">Отчество</label><input name="student_patronymic_ru" value="{{ old('student_patronymic_ru') }}" class="form-control"></div>
                 <div class="col-md-4"><label class="form-label">Телефон *</label><input name="phone" value="{{ old('phone') }}" class="form-control" required></div>
-                <div class="col-md-4"><label class="form-label">Дата регистрации *</label><input type="date" name="registration_date" value="{{ old('registration_date', now()->toDateString()) }}" class="form-control" required></div>
+                <div class="col-md-4"><label class="form-label">Дата регистрации *</label><input type="date" name="registration_date" value="{{ old('registration_date', now()->toDateString()) }}" class="form-control" required><div class="form-text">По этой дате система выбирает действующий тариф.</div></div>
                 <div class="col-md-4"><label class="form-label">Учебный год *</label><select name="academic_year_id" class="form-select" required><option value="">Выберите учебный год</option>@foreach($academicYears as $year)<option value="{{ $year->id }}" @selected((string) old('academic_year_id', $defaultAcademicYearId) === (string) $year->id)>{{ $year->name }}</option>@endforeach</select></div>
                 <div class="col-md-3"><label class="form-label">Ступень *</label><select name="stage_id" id="stage" class="form-select" required><option value="">Выберите ступень</option>@foreach($stages as $stage)<option value="{{ $stage->id }}" @selected((string) old('stage_id') === (string) $stage->id)>{{ $stage->name }}</option>@endforeach</select></div>
                 <div class="col-md-3"><label class="form-label">Класс *</label><select name="grade_id" id="grade" class="form-select" required><option value="">Сначала выберите ступень.</option>@foreach($stages as $stage)@foreach($stage->grades as $grade)<option value="{{ $grade->id }}" data-stage="{{ $stage->id }}" @selected((string) old('grade_id') === (string) $grade->id)>{{ $grade->name }}</option>@endforeach @endforeach</select></div>
@@ -77,6 +77,7 @@
                                 <div class="col-md-2"><label class="form-label">Стоимость</label><div class="resolved-total fw-semibold">0.00 EGP</div></div>
                                 <div class="col-md-2"><label class="form-label">Оплачено</label><input type="number" min="0" step="0.01" name="services[{{ $index }}][paid_now]" value="{{ $oldService['paid_now'] ?? '0.00' }}" class="form-control paid-now"><div class="invalid-feedback payment-overflow">Оплаченная сумма не может превышать стоимость услуги.</div></div>
                                 <div class="col-md-2"><label class="form-label">Остаток</label><div class="remaining fw-semibold">0.00 EGP</div></div>
+                                <div class="col-12 tariff-period small text-muted"></div>
                             </div>
                         </div>
                     @empty
@@ -148,15 +149,24 @@ async function updateRow(row) {
 
     let unit = null, total = null;
     const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {'Accept': 'application/json'}});
-    if (response.ok) { const result = await response.json(); unit = Number(result.unit_price); total = Number(result.amount); }
+    let tariffPeriod = '';
+    if (response.ok) {
+        const result = await response.json(); unit = Number(result.unit_price); total = Number(result.amount);
+        const displayDate = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU') : null;
+        if (result.valid_from) tariffPeriod = `Действует с ${displayDate(result.valid_from)}${result.valid_to ? ` по ${displayDate(result.valid_to)}` : ''}`;
+    }
     if (unit === null || total === null) {
-        row.querySelector('.resolved-unit').textContent = 'Цена не настроена';
+        row.querySelector('.resolved-unit').textContent = 'Тариф не настроен.';
         row.querySelector('.resolved-total').textContent = '—';
         row.querySelector('.remaining').textContent = '—';
+        row.querySelector('.tariff-period').textContent = 'На выбранную дату тариф не настроен.';
+        row.dataset.pricingAvailable = 'false';
         row.dataset.total = row.dataset.paid = row.dataset.remaining = '0';
         updateSummary();
         return;
     }
+    row.dataset.pricingAvailable = 'true';
+    row.querySelector('.tariff-period').textContent = tariffPeriod;
     const paidInput = row.querySelector('.paid-now');
     const paid = Number(paidInput?.value || 0);
     const overpaid = cents(paid) > cents(total);
@@ -186,8 +196,9 @@ grade.addEventListener('change', () => rows.filter(row => row.querySelector('.se
 document.getElementById('quick-registration-form').addEventListener('submit', event => {
     const noneSelected = !rows.some(row => row.querySelector('.service-toggle').checked);
     const overpaid = rows.some(row => row.querySelector('.paid-now')?.classList.contains('is-invalid'));
+    const unavailable = rows.some(row => row.querySelector('.service-toggle').checked && row.dataset.pricingAvailable !== 'true');
     document.getElementById('service-selection-error').classList.toggle('d-none', !noneSelected);
-    if (noneSelected || overpaid) event.preventDefault();
+    if (noneSelected || overpaid || unavailable) event.preventDefault();
 });
 </script>
 @endsection

@@ -84,9 +84,6 @@ class QuickStudentRegistrationController extends Controller
         $pricingDate = isset($data['registration_date'])
             ? \Illuminate\Support\Carbon::parse($data['registration_date'])
             : now();
-        if ($pricingDate->lt($year->start_date) || $pricingDate->gt($year->end_date)) {
-            $pricingDate = $year->start_date;
-        }
         $tuitionCategories = [
             Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
             Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL,
@@ -119,6 +116,8 @@ class QuickStudentRegistrationController extends Controller
             'unit_price' => $calculation['line_items'][0]['unit_price'],
             'amount' => $calculation['line_items'][0]['amount'],
             'currency' => InvoiceCalculationService::CURRENCY,
+            'valid_from' => $calculation['line_items'][0]['tariff_valid_from'],
+            'valid_to' => $calculation['line_items'][0]['tariff_valid_to'],
         ]);
     }
 

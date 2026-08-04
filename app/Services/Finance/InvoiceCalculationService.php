@@ -50,7 +50,8 @@ class InvoiceCalculationService
                 ]);
             }
 
-            $amount = $this->resolvePrice($fee, $item, $pricingDate, $academicYearId);
+            $resolvedPrice = $this->resolvePrice($fee, $item, $pricingDate, $academicYearId);
+            $amount = $resolvedPrice['amount'];
             $quantity = (int) ($item['quantity'] ?? 1);
 
             if ($quantity < 1) {
@@ -85,6 +86,8 @@ class InvoiceCalculationService
                 'item' => $item['item'] ?? null,
                 'option_type' => $item['option_type'] ?? null,
                 'option_value' => $item['option_value'] ?? null,
+                'tariff_valid_from' => $resolvedPrice['valid_from'],
+                'tariff_valid_to' => $resolvedPrice['valid_to'],
             ];
         }
 
@@ -124,7 +127,8 @@ class InvoiceCalculationService
     }
 
     /** @param array<string, mixed> $selection */
-    private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId): string
+    /** @return array{amount:string, valid_from:?string, valid_to:?string} */
+    private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId): array
     {
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
@@ -170,11 +174,15 @@ class InvoiceCalculationService
 
         if (! $price && $academicYearId && $fee->prices()->exists()) {
             throw ValidationException::withMessages([
-                'fees' => "Для услуги «{$fee->name_ru}» не настроена активная цена на выбранный учебный год и дату.",
+                'fees' => 'На выбранную дату тариф не настроен.',
             ]);
         }
 
-        return $this->money($price?->getRawOriginal('amount') ?? $fee->getRawOriginal('amount') ?? $fee->getRawOriginal('base_price') ?? '0');
+        return [
+            'amount' => $this->money($price?->getRawOriginal('amount') ?? $fee->getRawOriginal('amount') ?? $fee->getRawOriginal('base_price') ?? '0'),
+            'valid_from' => $price?->start_date?->toDateString(),
+            'valid_to' => $price?->end_date?->toDateString(),
+        ];
     }
 
     private function gradeGroupFor(mixed $gradeId): ?string

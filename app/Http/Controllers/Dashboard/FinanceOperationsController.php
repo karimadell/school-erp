@@ -118,7 +118,7 @@ class FinanceOperationsController extends Controller
 
     private function receiptData(InvoicePayment $payment): array
     {
-        $payment->load(['invoice.student','invoice.academicYear','invoice.payments','cashAccount','creator']);
+        $payment->load(['invoice.student','invoice.academicYear','invoice.payments','invoice.items','cashAccount','creator']);
         $ordered = $payment->invoice->payments->sortBy(fn ($item) => sprintf('%s-%010d', ($item->paid_at ?? $item->created_at)?->format('YmdHis.u'), $item->id));
         $through = $ordered->takeUntil(fn ($item) => $item->id === $payment->id)->push($payment)->unique('id');
         $paidThrough = $this->money($through->sum('amount'));

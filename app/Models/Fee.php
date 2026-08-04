@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class Fee extends Model
 {
+    protected $attributes = ['is_non_refundable' => false];
+
     public const CATEGORY_TUITION = 'tuition';
     public const CATEGORY_TUITION_REGULAR = 'tuition_regular';
     public const CATEGORY_TUITION_FAMILY = 'tuition_family';
@@ -42,6 +44,7 @@ class Fee extends Model
         'effective_from',
         'description',
         'is_active',
+        'is_non_refundable',
         'billing_period',
         'exempt_from_balance_block',
     ];
@@ -51,6 +54,7 @@ class Fee extends Model
         'base_price' => 'decimal:2',
         'effective_from' => 'date',
         'is_active' => 'boolean',
+        'is_non_refundable' => 'boolean',
         'exempt_from_balance_block' => 'boolean',
     ];
 

@@ -296,6 +296,10 @@
     </tr>
 </table>
 
+@if($invoice->items->contains('is_non_refundable', true))
+    <div style="margin-top:12px;padding:10px;border:1px solid #b7791f;background:#fff8db;font-weight:bold;">Регистрационный взнос возврату не подлежит.</div>
+@endif
+
 @if($invoice->payments && $invoice->payments->count())
     <div class="section-title">История оплат</div>
 

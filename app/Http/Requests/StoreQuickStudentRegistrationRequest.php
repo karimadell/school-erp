@@ -99,8 +99,8 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             }
             if ($year && $this->filled('registration_date')) {
                 $date = Carbon::parse($this->input('registration_date'));
-                if ($date->lt($year->start_date) || $date->gt($year->end_date)) {
-                    $validator->errors()->add('registration_date', 'Дата регистрации должна находиться в пределах выбранного учебного года.');
+                if ($date->gt($year->end_date)) {
+                    $validator->errors()->add('registration_date', 'Дата регистрации не может быть позже окончания выбранного учебного года.');
                 }
             }
 

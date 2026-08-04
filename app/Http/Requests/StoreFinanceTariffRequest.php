@@ -33,8 +33,8 @@ class StoreFinanceTariffRequest extends FormRequest
             if ($validator->errors()->isNotEmpty()) return;
             $year = AcademicYear::find($this->integer('academic_year_id'));
             $start = $this->date('start_date'); $end = $this->filled('end_date') ? $this->date('end_date') : null;
-            if (! $year || $start->lt($year->start_date) || $start->gt($year->end_date) || ($end && $end->gt($year->end_date))) {
-                $validator->errors()->add('start_date', 'Период тарифа должен находиться в пределах учебного года.'); return;
+            if (! $year || $start->gt($year->end_date) || ($end && $end->gt($year->end_date))) {
+                $validator->errors()->add('start_date', 'Тариф может начинаться до учебного года, но не может действовать после его окончания.'); return;
             }
             $dimensions = ['fee_id', 'academic_year_id', 'grade_id', 'grade_group', 'payment_period', 'option_type', 'option_value', 'item', 'size'];
             $query = FeePrice::query()->where('is_active', true);

@@ -506,6 +506,10 @@
         <tr><td>Остаток:</td><td>{{ number_format($invoice->remaining_amount ?? 0, 2) }} EGP</td></tr>
     </table>
 
+    @if($invoice->items->contains('is_non_refundable', true))
+        <div class="note" style="margin-top:16px;font-weight:700;">Регистрационный взнос возврату не подлежит.</div>
+    @endif
+
 </div>
 
 </body>

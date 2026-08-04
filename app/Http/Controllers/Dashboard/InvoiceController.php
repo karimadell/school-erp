@@ -129,6 +129,7 @@ class InvoiceController extends Controller
                     'fee_id' => $line['fee_id'],
                     'description' => $line['description'],
                     'amount' => $line['amount'],
+                    'is_non_refundable' => Fee::findOrFail($line['fee_id'])->is_non_refundable,
                 ]);
 
                 // Transitional compatibility: classic invoice views still
@@ -227,6 +228,7 @@ class InvoiceController extends Controller
     {
         $invoice->load([
             'student.grade',
+            'items',
             'fees',
             'cashAccount',
             'payments.cashAccount',
@@ -239,6 +241,7 @@ class InvoiceController extends Controller
     {
         $invoice->load([
             'student.grade',
+            'items',
             'fees',
             'cashAccount',
             'payments.cashAccount',

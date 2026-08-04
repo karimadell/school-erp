@@ -177,6 +177,7 @@ class SchoolEnrollmentService
                         'amount' => $line['amount'],
                         'paid_amount' => '0.00',
                         'remaining_amount' => $line['amount'],
+                        'is_non_refundable' => $fee->is_non_refundable,
                         'metadata' => $metadata,
                     ]);
                     $invoice->fees()->attach($fee->id, [

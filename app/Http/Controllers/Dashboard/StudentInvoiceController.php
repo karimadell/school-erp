@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Illuminate\Support\Carbon;
 
 class StudentInvoiceController extends Controller
 {
@@ -56,7 +57,17 @@ class StudentInvoiceController extends Controller
                 throw ValidationException::withMessages(['fees' => 'Регистрационный взнос уже начислен ученику за этот учебный год.']);
             }
 
-            $calculation = $calculator->calculate($data['items'], null, null, '0', now()->toDateString(), $year->id);
+            $items = collect($data['items'])->map(function (array $item) use ($enrollment) {
+                $fee = Fee::findOrFail($item['fee_id']);
+                if (in_array($fee->category, [Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR, Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL], true)
+                    && blank($item['grade_group'] ?? null)) {
+                    $item['grade_id'] = $enrollment->grade_id;
+                }
+                $item['enrollment_mode_id'] = $enrollment->enrollment_mode_id;
+
+                return $item;
+            })->all();
+            $calculation = $calculator->calculate($items, null, null, '0', $data['pricing_date'], $year->id);
             $invoiceData = [
                 'student_id'=>$student->id, 'academic_year_id'=>$year->id, 'customer_name'=>$student->full_name,
                 'currency'=>'EGP', 'subtotal_amount'=>$calculation['subtotal'], 'total_amount'=>$calculation['total_amount'],
@@ -67,18 +78,24 @@ class StudentInvoiceController extends Controller
             if (Schema::hasColumn('invoices', 'note')) {
                 $invoiceData['note'] = $data['notes'] ?? null;
             }
-            $invoice = Invoice::create($invoiceData);
+            $invoice = new Invoice($invoiceData);
+            $invoice->created_at = Carbon::parse($data['pricing_date'])->startOfDay();
+            $invoice->save();
             $invoice->invoice_number = Invoice::numberFor($invoice->id, $invoice->created_at->format('Y'));
             $invoice->save();
 
             foreach ($calculation['line_items'] as $line) {
-                $selection = collect($data['items'])->firstWhere('fee_id', $line['fee_id']);
+                $selection = collect($items)->firstWhere('fee_id', $line['fee_id']);
+                $fee = Fee::findOrFail($line['fee_id']);
                 $subscription = $enrollment->serviceSubscriptions()->where('fee_id', $line['fee_id'])->where('status', 'active')->first();
                 InvoiceItem::create([
                     'invoice_id'=>$invoice->id, 'fee_id'=>$line['fee_id'], 'subscription_id'=>$subscription?->id,
                     'description'=>$line['description'], 'unit_price'=>$line['unit_price'], 'quantity'=>$line['quantity'],
                     'amount'=>$line['amount'], 'paid_amount'=>'0.00', 'remaining_amount'=>$line['amount'],
-                    'metadata'=>collect($selection)->except(['fee_id','quantity'])->filter(fn ($value) => filled($value))->all(),
+                    'is_non_refundable'=>$fee->is_non_refundable,
+                    'metadata'=>collect($selection)->except(['fee_id','quantity'])->merge([
+                        'pricing_date'=>$data['pricing_date'], 'tariff_valid_from'=>$line['tariff_valid_from'], 'tariff_valid_to'=>$line['tariff_valid_to'],
+                    ])->filter(fn ($value) => filled($value))->all(),
                 ]);
                 $invoice->fees()->attach($line['fee_id'], [
                     'amount'=>$line['amount'], 'item'=>$line['item'], 'size'=>$line['size'],

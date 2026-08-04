@@ -25,7 +25,7 @@ class QuickStudentRegistrationPricingTest extends QuickRegistrationUxTestCase
             'grade_id' => $grade->id,
             'enrollment_mode_id' => $mode->id,
             'payment_period' => 'yearly',
-            'registration_date' => '2026-08-04',
+            'registration_date' => '2026-09-10',
         ])->assertOk()->assertJson(['unit_price' => '40500.00', 'amount' => '40500.00', 'currency' => 'EGP']);
 
         $this->get(route('dashboard.quick-registration.create'))

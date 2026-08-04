@@ -33,7 +33,7 @@ class ClassController extends Controller
     {
         $grades = Grade::with('stage')
             ->orderBy('stage_id')
-            ->orderBy('id')
+            ->ordered()
             ->get();
 
         $stages = \App\Models\Stage::orderBy('id')->get();
@@ -86,7 +86,7 @@ class ClassController extends Controller
 
         $grades = Grade::with('stage')
             ->orderBy('stage_id')
-            ->orderBy('id')
+            ->ordered()
             ->get();
 
         $stages = \App\Models\Stage::orderBy('id')->get();

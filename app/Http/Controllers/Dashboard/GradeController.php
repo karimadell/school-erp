@@ -18,7 +18,7 @@ class GradeController extends Controller
     {
         $grades = Grade::with('stage')
             ->orderBy('stage_id')
-            ->orderBy('id')
+            ->ordered()
             ->get();
 
         return view('dashboard.grades.index', compact('grades'));

@@ -37,7 +37,7 @@ class QuickStudentRegistrationController extends Controller
             'academicYears' => $academicYears,
             'defaultAcademicYearId' => $academicYears->count() === 1 ? $academicYears->first()->id : null,
             'stages' => Stage::with([
-                'grades' => fn ($query) => $query->orderBy('level')->orderBy('id'),
+                'grades' => fn ($query) => $query->ordered(),
                 'grades.classes' => fn ($query) => $query->where('is_active', true)->orderBy('code'),
             ])
                 ->where('is_active', true)->orderBy('order')->get(),

@@ -8,7 +8,6 @@ use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\Student;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Schema;
 
 class FeeController extends Controller
 {
@@ -38,9 +37,7 @@ class FeeController extends Controller
 
     public function create()
     {
-        $grades = Schema::hasColumn('grades', 'name_ru')
-            ? Grade::orderBy('name_ru')->get()
-            : Grade::orderBy('name')->get();
+        $grades = Grade::ordered()->get();
 
         return view('dashboard.fees.create', compact('grades'));
     }
@@ -72,9 +69,7 @@ class FeeController extends Controller
 
     public function edit(Fee $fee)
     {
-        $grades = Schema::hasColumn('grades', 'name_ru')
-            ? Grade::orderBy('name_ru')->get()
-            : Grade::orderBy('name')->get();
+        $grades = Grade::ordered()->get();
 
         return view('dashboard.fees.edit', compact('fee', 'grades'));
     }

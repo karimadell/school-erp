@@ -49,7 +49,7 @@ class SchoolEnrollmentController extends Controller
         }
 
         $stages = Stage::query()->where('is_active', true)->with([
-            'grades' => fn ($query) => $query->orderBy('level')->orderBy('id'),
+            'grades' => fn ($query) => $query->ordered(),
             'grades.classes' => fn ($query) => $query->where('is_active', true)->orderBy('code'),
         ])->orderBy('order')->get();
 

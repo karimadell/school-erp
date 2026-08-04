@@ -54,7 +54,7 @@ class InvoiceController extends Controller
             'students' => Student::with('grade')->orderBy('name')->get(),
             'academicYears' => AcademicYear::query()->where('is_active', true)->orderByDesc('start_date')->get(),
             'cashAccounts' => CashAccount::orderBy('name')->get(),
-            'grades' => Grade::orderBy('id')->get(),
+            'grades' => Grade::ordered()->get(),
             'fees' => $feesQuery
                 ->orderBy('category')
                 ->orderBy('name_ru')

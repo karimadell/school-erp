@@ -35,7 +35,7 @@ class FinanceTariffController extends Controller
 
     public function create(Request $request): View
     {
-        return view('dashboard.finance.tariffs.create', ['services' => Fee::active()->orderBy('name_ru')->get(), 'years' => AcademicYear::orderByDesc('start_date')->get(), 'grades' => Grade::orderBy('id')->get(), 'selectedFeeId' => $request->integer('fee_id') ?: null]);
+        return view('dashboard.finance.tariffs.create', ['services' => Fee::active()->orderBy('name_ru')->get(), 'years' => AcademicYear::orderByDesc('start_date')->get(), 'grades' => Grade::ordered()->get(), 'selectedFeeId' => $request->integer('fee_id') ?: null]);
     }
 
     public function store(StoreFinanceTariffRequest $request): RedirectResponse

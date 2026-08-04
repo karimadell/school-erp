@@ -43,7 +43,7 @@ class CurriculumController extends Controller
         return view('dashboard.curricula.index', [
             'curricula' => $curricula,
             'academicYears' => AcademicYear::orderByDesc('start_date')->get(),
-            'grades' => Grade::orderBy('id')->get(),
+            'grades' => Grade::ordered()->get(),
         ]);
     }
 
@@ -91,7 +91,7 @@ class CurriculumController extends Controller
     {
         return [
             'academicYears' => AcademicYear::orderByDesc('start_date')->get(),
-            'grades' => Grade::orderBy('id')->get(),
+            'grades' => Grade::ordered()->get(),
             'subjects' => Subject::orderBy('name_ru')->get(),
         ];
     }

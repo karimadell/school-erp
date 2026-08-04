@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 
 class Grade extends Model
 {
@@ -10,6 +11,20 @@ class Grade extends Model
         'name',
         'stage_id',
     ];
+
+    protected function casts(): array
+    {
+        return ['level' => 'integer'];
+    }
+
+    /** Apply the canonical numeric school-grade order. */
+    public function scopeOrdered(Builder $query): Builder
+    {
+        return $query
+            ->orderByRaw('CASE WHEN grades.level IS NULL THEN 1 ELSE 0 END')
+            ->orderBy('grades.level')
+            ->orderBy('grades.id');
+    }
 
     /*
     |--------------------------------------------------------------------------

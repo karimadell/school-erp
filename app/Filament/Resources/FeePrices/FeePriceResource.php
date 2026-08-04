@@ -4,6 +4,7 @@ namespace App\Filament\Resources\FeePrices;
 
 use App\Filament\Resources\FeePrices\FeePriceResource\Pages;
 use App\Models\AcademicYear;
+use App\Models\Grade;
 use App\Models\FeePrice;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
@@ -43,7 +44,7 @@ class FeePriceResource extends Resource
             TextInput::make('currency')->label('Валюта')->default('EGP')->readOnly()->required(),
             DatePicker::make('start_date')->label('Действует с')->required(),
             DatePicker::make('end_date')->label('Действует до')->afterOrEqual('start_date'),
-            Select::make('grade_id')->label('Класс')->relationship('grade', 'name')->searchable()->preload(),
+            Select::make('grade_id')->label('Класс')->options(fn () => Grade::ordered()->pluck('name', 'id'))->searchable()->preload(),
             TextInput::make('grade_group')->label('Группа классов')->maxLength(100),
             Select::make('payment_period')->label('Период оплаты')->options([
                 'once' => 'Разово', 'daily' => 'Ежедневно', 'monthly' => 'Ежемесячно',

@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Curricula\Schemas;
 
+use App\Models\Grade;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
@@ -35,7 +36,7 @@ class CurriculumForm
 
             Select::make('grade_id')
                 ->label(__('curriculum.grade'))
-                ->relationship('grade', 'name')
+                ->options(fn () => Grade::ordered()->pluck('name', 'id'))
                 ->searchable()
                 ->preload()
                 ->required(),

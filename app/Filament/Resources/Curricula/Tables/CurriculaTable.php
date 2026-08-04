@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Curricula\Tables;
 
+use App\Models\Grade;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
@@ -66,7 +67,7 @@ class CurriculaTable
 
                 SelectFilter::make('grade_id')
                     ->label(__('curriculum.grade'))
-                    ->relationship('grade', 'name'),
+                    ->options(fn () => Grade::ordered()->pluck('name', 'id')),
 
                 SelectFilter::make('type')
                     ->label(__('curriculum.type'))

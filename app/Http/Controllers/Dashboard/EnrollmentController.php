@@ -54,7 +54,7 @@ class EnrollmentController extends Controller
 
             'grades' => Grade::with('stage')
                 ->orderBy('stage_id')
-                ->orderBy('id')
+                ->ordered()
                 ->get(),
 
             'classes' => SchoolClass::with('grade')
@@ -165,7 +165,7 @@ class EnrollmentController extends Controller
 
             'grades' => Grade::with('stage')
                 ->orderBy('stage_id')
-                ->orderBy('id')
+                ->ordered()
                 ->get(),
 
             'classes' => SchoolClass::with('grade')

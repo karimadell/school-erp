@@ -4,6 +4,8 @@ namespace App\Services\Finance;
 
 use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Models\EnrollmentMode;
+use App\Models\Grade;
 use App\Models\Invoice;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
@@ -132,13 +134,39 @@ class InvoiceCalculationService
             ->whereDate('start_date', '<=', $date)
             ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $date));
 
-        foreach (['grade_id', 'grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'] as $field) {
+        $gradeGroup = $selection['grade_group'] ?? $this->gradeGroupFor($selection['grade_id'] ?? null);
+        if (filled($selection['grade_group'] ?? null)) {
+            $query->where('grade_group', $selection['grade_group']);
+        } elseif (filled($selection['grade_id'] ?? null)) {
+            $query->where(function ($query) use ($selection, $gradeGroup) {
+                $query->where('grade_id', (int) $selection['grade_id']);
+                if ($gradeGroup) {
+                    $query->orWhere(fn ($query) => $query->whereNull('grade_id')->where('grade_group', $gradeGroup));
+                }
+                $query->orWhere(fn ($query) => $query->whereNull('grade_id')->whereNull('grade_group'));
+            });
+        }
+
+        foreach (['payment_period', 'size', 'item', 'option_value'] as $field) {
             if (filled($selection[$field] ?? null)) {
                 $query->where($field, $selection[$field]);
             }
         }
 
-        $price = $query->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->first();
+        if (filled($selection['enrollment_mode_id'] ?? null)) {
+            $mode = EnrollmentMode::find((int) $selection['enrollment_mode_id']);
+            $modeTypes = ['enrollment_mode', 'Форма', 'Форма обучения'];
+            $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->unique()->values();
+            $hasModePrices = (clone $query)->whereIn('option_type', $modeTypes)->exists();
+            if ($hasModePrices) {
+                $query->whereIn('option_type', $modeTypes)->whereIn('option_value', $modeValues);
+            }
+        }
+
+        $price = $query
+            ->when(filled($selection['grade_id'] ?? null), fn ($query) => $query
+                ->orderByRaw('CASE WHEN grade_id = ? THEN 0 WHEN grade_group IS NOT NULL THEN 1 ELSE 2 END', [(int) $selection['grade_id']]))
+            ->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->first();
 
         if (! $price && $academicYearId && $fee->prices()->exists()) {
             throw ValidationException::withMessages([
@@ -147,6 +175,22 @@ class InvoiceCalculationService
         }
 
         return $this->money($price?->getRawOriginal('amount') ?? $fee->getRawOriginal('amount') ?? $fee->getRawOriginal('base_price') ?? '0');
+    }
+
+    private function gradeGroupFor(mixed $gradeId): ?string
+    {
+        if (! filled($gradeId)) {
+            return null;
+        }
+
+        return match (Grade::find((int) $gradeId)?->level) {
+            0 => 'Подготовительный класс',
+            1, 2, 3, 4 => '1–4 классы',
+            5, 6 => '5–6 классы',
+            7, 8 => '7–8 классы',
+            9, 10, 11 => '9–11 классы',
+            default => null,
+        };
     }
 
     private function discountAmount(string $subtotal, ?string $type, string|int|float|null $value): string

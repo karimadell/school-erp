@@ -83,7 +83,7 @@ class QuickStudentRegistrationService
                 ])->filter()->implode("\n"),
             ]);
 
-            $normalizedServices = collect($data['services'])->map(function (array $service) use ($grade) {
+            $normalizedServices = collect($data['services'])->map(function (array $service) use ($grade, $mode) {
                 $fee = Fee::query()->lockForUpdate()->findOrFail($service['fee_id']);
                 $product = null;
                 $route = null;
@@ -110,6 +110,7 @@ class QuickStudentRegistrationService
 
                 return array_merge($service, [
                     '_fee_category' => $fee->category,
+                    'enrollment_mode_id' => $mode->id,
                     'quantity' => (int) $service['quantity'],
                     'grade_id' => in_array($fee->category, [
                         Fee::CATEGORY_TUITION,

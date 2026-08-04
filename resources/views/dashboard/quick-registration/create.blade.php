@@ -40,7 +40,7 @@
                 <div class="col-md-3"><label class="form-label">Ступень *</label><select name="stage_id" id="stage" class="form-select" required><option value="">Выберите ступень</option>@foreach($stages as $stage)<option value="{{ $stage->id }}" @selected((string) old('stage_id') === (string) $stage->id)>{{ $stage->name }}</option>@endforeach</select></div>
                 <div class="col-md-3"><label class="form-label">Класс *</label><select name="grade_id" id="grade" class="form-select" required><option value="">Сначала выберите ступень.</option>@foreach($stages as $stage)@foreach($stage->grades as $grade)<option value="{{ $grade->id }}" data-stage="{{ $stage->id }}" @selected((string) old('grade_id') === (string) $grade->id)>{{ $grade->name }}</option>@endforeach @endforeach</select></div>
                 <div class="col-md-3"><label class="form-label">Буква класса *</label><select name="class_id" id="school-class" class="form-select" required><option value="">Сначала выберите класс.</option>@foreach($stages as $stage)@foreach($stage->grades as $grade)@foreach($grade->classes as $class)<option value="{{ $class->id }}" data-grade="{{ $grade->id }}" @selected((string) old('class_id') === (string) $class->id)>{{ $class->name_ru ?: $class->code }}</option>@endforeach @endforeach @endforeach</select></div>
-                <div class="col-md-3"><label class="form-label">Форма обучения *</label><select name="enrollment_mode_id" class="form-select" required><option value="">Выберите форму обучения</option>@foreach($modes as $mode)<option value="{{ $mode->id }}" @selected((string) old('enrollment_mode_id', $defaultEnrollmentModeId) === (string) $mode->id)>{{ $mode->name_ru }}</option>@endforeach</select></div>
+                <div class="col-md-3"><label class="form-label">Форма обучения *</label><select name="enrollment_mode_id" id="enrollment-mode" class="form-select" required><option value="">Выберите форму обучения</option>@foreach($modes as $mode)<option value="{{ $mode->id }}" @selected((string) old('enrollment_mode_id', $defaultEnrollmentModeId) === (string) $mode->id)>{{ $mode->name_ru }}</option>@endforeach</select></div>
                 <div class="col-12"><label class="form-label">Примечание</label><textarea name="notes" class="form-control" rows="2">{{ old('notes') }}</textarea></div>
             </div>
         </section>
@@ -52,10 +52,10 @@
                     <h5 class="mt-3 mb-3">{{ $group['title'] }}</h5>
                     @forelse($group['fees'] as $fee)
                         @php $index = $fees->search(fn ($candidate) => $candidate->id === $fee->id); $oldService = $oldServices->get((string) $fee->id, []); @endphp
-                        <div class="service-row border rounded p-3 mb-3" data-service-row data-fee-id="{{ $fee->id }}" data-name="{{ $fee->name_ru }}" data-fallback-price="{{ number_format($fee->current_amount, 2, '.', '') }}">
+                        <div class="service-row border rounded p-3 mb-3" data-service-row data-fee-id="{{ $fee->id }}" data-name="{{ $fee->name_ru }}">
                             <div class="form-check">
                                 <input class="form-check-input service-toggle" type="checkbox" name="services[{{ $index }}][fee_id]" value="{{ $fee->id }}" id="fee-{{ $fee->id }}" @checked($oldService !== [])>
-                                <label class="form-check-label fw-bold" for="fee-{{ $fee->id }}">{{ $fee->name_ru }} — {{ number_format($fee->current_amount, 2, '.', '') }} EGP</label>
+                                <label class="form-check-label fw-bold" for="fee-{{ $fee->id }}">{{ $fee->name_ru }} — {{ $fee->prices->isNotEmpty() ? 'цена определяется по выбранным параметрам' : number_format($fee->current_amount, 2, '.', '').' EGP' }}</label>
                             </div>
                             <div class="service-fields row g-3 mt-1 d-none">
                                 @if($groupKey !== 'uniform')<input type="hidden" name="services[{{ $index }}][quantity]" value="1" class="quantity">@endif
@@ -108,6 +108,9 @@ const money = value => `${(cents(value) / 100).toFixed(2)} EGP`;
 const stage = document.getElementById('stage');
 const grade = document.getElementById('grade');
 const schoolClass = document.getElementById('school-class');
+const academicYear = document.querySelector('[name="academic_year_id"]');
+const enrollmentMode = document.getElementById('enrollment-mode');
+const registrationDate = document.querySelector('[name="registration_date"]');
 const filterAcademics = () => {
     grade.querySelectorAll('option[data-stage]').forEach(option => option.hidden = option.dataset.stage !== stage.value);
     if (grade.selectedOptions[0]?.hidden) grade.value = '';
@@ -135,15 +138,25 @@ async function updateRow(row) {
     body.append('fee_id', row.dataset.feeId);
     body.append('quantity', row.querySelector('.quantity')?.value || 1);
     body.append('academic_year_id', document.querySelector('[name="academic_year_id"]').value);
+    body.append('enrollment_mode_id', enrollmentMode.value);
+    if (registrationDate.value) body.append('registration_date', registrationDate.value);
     if (grade.value) body.append('grade_id', grade.value);
     ['grade_group', 'payment_period', 'transport_area'].forEach(name => { const input = row.querySelector(`[name$="[${name}]"]`); if (input?.value) body.append(name, input.value); });
     const firstLast = row.querySelector('[name$="[first_last_month]"]'); if (firstLast?.checked) body.append('first_last_month', '1');
     const mealPlan = row.querySelector('[name$="[meal_plan_id]"]'); if (mealPlan?.value) body.append('meal_plan_id', mealPlan.value);
     const product = row.querySelector('.uniform-product')?.selectedOptions[0]; if (product?.value) { body.append('item', product.dataset.item); body.append('size', product.dataset.size); }
 
-    let unit = Number(row.dataset.fallbackPrice); let total = unit * Number(row.querySelector('.quantity')?.value || 1);
+    let unit = null, total = null;
     const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {'Accept': 'application/json'}});
     if (response.ok) { const result = await response.json(); unit = Number(result.unit_price); total = Number(result.amount); }
+    if (unit === null || total === null) {
+        row.querySelector('.resolved-unit').textContent = 'Цена не настроена';
+        row.querySelector('.resolved-total').textContent = '—';
+        row.querySelector('.remaining').textContent = '—';
+        row.dataset.total = row.dataset.paid = row.dataset.remaining = '0';
+        updateSummary();
+        return;
+    }
     const paidInput = row.querySelector('.paid-now');
     const paid = Number(paidInput?.value || 0);
     const overpaid = cents(paid) > cents(total);
@@ -169,6 +182,7 @@ function updateSummary() {
 }
 rows.forEach(row => { row.querySelectorAll('input, select').forEach(input => { input.addEventListener('change', () => updateRow(row)); input.addEventListener('input', () => updateRow(row)); }); updateRow(row); });
 grade.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow));
+[academicYear, schoolClass, enrollmentMode, registrationDate].forEach(input => input.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow)));
 document.getElementById('quick-registration-form').addEventListener('submit', event => {
     const noneSelected = !rows.some(row => row.querySelector('.service-toggle').checked);
     const overpaid = rows.some(row => row.querySelector('.paid-now')?.classList.contains('is-invalid'));

@@ -30,7 +30,7 @@ class QuickStudentRegistrationController extends Controller
     {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
         $modes = EnrollmentMode::active()->ordered()->get();
-        $fees = Fee::with(['prices' => fn ($query) => $query->active()->current()->orderByDesc('start_date')])
+        $fees = Fee::with(['prices' => fn ($query) => $query->active()->orderByDesc('start_date')])
             ->active()->orderBy('category')->orderBy('name_ru')->get();
 
         return view('dashboard.quick-registration.create', [
@@ -75,8 +75,18 @@ class QuickStudentRegistrationController extends Controller
             'first_last_month' => ['nullable', 'boolean'],
             'meal_plan_id' => ['nullable', 'integer', 'exists:meal_plans,id'],
             'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
+            'enrollment_mode_id' => ['required', 'integer', 'exists:enrollment_modes,id'],
+            'registration_date' => ['nullable', 'date'],
         ]);
         $fee = Fee::findOrFail($data['fee_id']);
+        $year = AcademicYear::findOrFail($data['academic_year_id']);
+        $mode = EnrollmentMode::active()->findOrFail($data['enrollment_mode_id']);
+        $pricingDate = isset($data['registration_date'])
+            ? \Illuminate\Support\Carbon::parse($data['registration_date'])
+            : now();
+        if ($pricingDate->lt($year->start_date) || $pricingDate->gt($year->end_date)) {
+            $pricingDate = $year->start_date;
+        }
         $tuitionCategories = [
             Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
             Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL,
@@ -84,6 +94,7 @@ class QuickStudentRegistrationController extends Controller
         $calculation = $calculator->calculate(items: [[
             'fee_id' => $fee->id,
             'quantity' => $data['quantity'],
+            'enrollment_mode_id' => $mode->id,
             'grade_id' => in_array($fee->category, $tuitionCategories, true) && blank($data['grade_group'] ?? null)
                 ? ($data['grade_id'] ?? null)
                 : null,
@@ -102,7 +113,7 @@ class QuickStudentRegistrationController extends Controller
                 Fee::CATEGORY_FOOD => isset($data['meal_plan_id']) ? (string) $data['meal_plan_id'] : null,
                 default => null,
             },
-        ]], academicYearId: (int) $data['academic_year_id']);
+        ]], pricingDate: $pricingDate->toDateString(), academicYearId: (int) $data['academic_year_id']);
 
         return response()->json([
             'unit_price' => $calculation['line_items'][0]['unit_price'],

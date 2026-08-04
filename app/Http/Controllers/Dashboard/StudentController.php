@@ -47,7 +47,15 @@ class StudentController extends Controller
 
     public function create()
     {
-        $classes = SchoolClass::orderBy('name_ru')->get();
+        $classes = SchoolClass::query()
+            ->select('classes.*')
+            ->join('grades', 'grades.id', '=', 'classes.grade_id')
+            ->orderByRaw('CASE WHEN grades.level IS NULL THEN 1 ELSE 0 END')
+            ->orderBy('grades.level')
+            ->orderBy('grades.id')
+            ->orderBy('classes.code')
+            ->orderBy('classes.id')
+            ->get();
 
         return view('dashboard.students.create', compact('classes'));
     }

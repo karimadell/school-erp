@@ -11,6 +11,7 @@ use App\Http\Controllers\Dashboard\FinanceOperationsController;
 use App\Http\Controllers\Dashboard\PaymentPlanController;
 use App\Http\Controllers\Dashboard\StudentSubscriptionController;
 use App\Http\Controllers\Dashboard\StudentInvoiceController;
+use App\Http\Controllers\Dashboard\MassBillingController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\StudentProfileController;
@@ -295,6 +296,15 @@ Route::middleware(['auth', 'administrative'])
             Route::get('tariffs-rollover', [FinanceTariffRolloverController::class, 'create'])->name('tariffs.rollover.create');
             Route::post('tariffs-rollover/preview', [FinanceTariffRolloverController::class, 'preview'])->name('tariffs.rollover.preview');
             Route::post('tariffs-rollover', [FinanceTariffRolloverController::class, 'store'])->name('tariffs.rollover.store');
+
+            Route::get('mass-billing', [MassBillingController::class, 'index'])->name('mass-billing.index');
+            Route::get('mass-billing/create', [MassBillingController::class, 'create'])->name('mass-billing.create');
+            Route::post('mass-billing', [MassBillingController::class, 'store'])->name('mass-billing.store');
+            Route::get('mass-billing/{batch}', [MassBillingController::class, 'show'])->name('mass-billing.show');
+            Route::get('mass-billing/{batch}/edit', [MassBillingController::class, 'edit'])->name('mass-billing.edit');
+            Route::put('mass-billing/{batch}', [MassBillingController::class, 'update'])->name('mass-billing.update');
+            Route::post('mass-billing/{batch}/preview', [MassBillingController::class, 'preview'])->name('mass-billing.preview');
+            Route::post('mass-billing/{batch}/execute', [MassBillingController::class, 'execute'])->name('mass-billing.execute');
         });
 
         /*

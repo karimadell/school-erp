@@ -56,6 +56,13 @@ class RolesAndPermissionsSeeder extends Seeder
 
             // Finance
             'view invoices', 'manage invoices',
+            // F4D-A Mass Billing: separated into view (read history/results),
+            // manage (draft/edit/preview) and execute (issue many invoices at
+            // once) so the sensitive execute step is gated independently of
+            // read/manage access.
+            'view mass billing',
+            'manage mass billing',
+            'execute mass billing',
             'manage fees',
             'manage fee prices',
             'manage expenses',
@@ -115,6 +122,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'view students',
             'view enrollments',
             'view invoices', 'manage invoices',
+            'view mass billing',
+            'manage mass billing',
+            'execute mass billing',
             'manage fees',
             'manage fee prices',
             'manage expenses',

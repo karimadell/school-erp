@@ -2,14 +2,18 @@
 
 namespace App\Http\Controllers\Dashboard;
 
+use App\Exceptions\DuplicateOpenInvoiceException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreChargeAndCollectRequest;
 use App\Http\Requests\StoreModernInvoicePaymentRequest;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
+use App\Models\Fee;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\SchoolSetting;
 use App\Models\Student;
+use App\Services\Finance\ChargeAndCollectService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\StudentFinanceSummaryService;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -23,7 +27,7 @@ class FinanceOperationsController extends Controller
     public function __construct(private StudentFinanceSummaryService $summaries)
     {
         $this->middleware('permission:view invoices')->only(['workspace', 'student', 'receipt', 'receiptPdf']);
-        $this->middleware('permission:manage invoices')->only(['createPayment', 'storePayment']);
+        $this->middleware('permission:manage invoices')->only(['createPayment', 'storePayment', 'chargeCreate', 'chargeStore']);
     }
 
     public function workspace(Request $request): View
@@ -115,6 +119,46 @@ class FinanceOperationsController extends Controller
         $data = $this->receiptData($invoicePayment);
         return Pdf::loadView('dashboard.finance.payments.receipt-pdf', $data)
             ->setPaper('a4')->download(($invoicePayment->payment_number ?: 'payment').'.pdf');
+    }
+
+    public function chargeCreate(Student $student): View
+    {
+        $student->load(['currentEnrollment.academicYear']);
+        $year = $student->currentEnrollment?->academicYear;
+
+        return view('dashboard.finance.charge.create', [
+            'student' => $student,
+            'year' => $year,
+            'fees' => Fee::active()->with('prices')->orderBy('category')->orderBy('name_ru')->get(),
+            'cashAccounts' => CashAccount::where('is_active', true)->orderBy('name')->get(),
+            'idempotencyKey' => (string) Str::uuid(),
+        ]);
+    }
+
+    public function chargeStore(StoreChargeAndCollectRequest $request, Student $student, ChargeAndCollectService $service): RedirectResponse
+    {
+        try {
+            $result = $service->chargeAndCollect(
+                $student,
+                $request->validated(),
+                $request->user(),
+                $request->ip(),
+                $request->userAgent(),
+            );
+        } catch (DuplicateOpenInvoiceException $exception) {
+            return back()
+                ->withInput()
+                ->withErrors(['fee_id' => $exception->getMessage()])
+                ->with('existing_invoice_id', $exception->invoiceId);
+        }
+
+        if ($result['payment']) {
+            return redirect()->route('dashboard.payments.receipt', $result['payment'])
+                ->with('success', 'Счёт создан, оплата принята.');
+        }
+
+        return redirect()->route('dashboard.invoices.show', $result['invoice'])
+            ->with('success', 'Счёт создан без оплаты.');
     }
 
     private function receiptData(InvoicePayment $payment): array

@@ -330,6 +330,11 @@ Route::middleware(['auth', 'administrative'])
         Route::post('students/{student}/subscriptions/{subscription}/end', [StudentSubscriptionController::class, 'end'])->name('students.subscriptions.end');
         Route::get('students/{student}/invoices/create', [StudentInvoiceController::class, 'create'])->name('students.invoices.create');
         Route::post('students/{student}/invoices', [StudentInvoiceController::class, 'store'])->name('students.invoices.store');
+
+        // Phase 2 — cashier charge & collect (issue a charge and take payment in
+        // one atomic action; permission-gated in FinanceOperationsController).
+        Route::get('students/{student}/charge', [FinanceOperationsController::class, 'chargeCreate'])->name('students.charge.create');
+        Route::post('students/{student}/charge', [FinanceOperationsController::class, 'chargeStore'])->name('students.charge.store');
         Route::get('invoices/{invoice}/payments/create', [FinanceOperationsController::class, 'createPayment'])->name('invoices.payments.create');
         Route::post('invoices/{invoice}/payments', [FinanceOperationsController::class, 'storePayment'])->name('invoices.payments.store');
         Route::get('payments/{invoicePayment}/receipt', [FinanceOperationsController::class, 'receipt'])->name('payments.receipt');

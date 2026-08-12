@@ -9,6 +9,13 @@ use Illuminate\Http\Request;
 
 class CashReportController extends Controller
 {
+    public function __construct()
+    {
+        // Phase 0 safety lockdown: cash reports must require the dedicated
+        // cash-reports read permission.
+        $this->middleware('permission:view cash reports');
+    }
+
     public function index(Request $request)
     {
         $accounts = CashAccount::orderBy('name')->get();

@@ -40,15 +40,22 @@ class Expense extends Model
 
         static::created(function ($expense) {
 
+            // Phase 0 safety fix: the previous hook wrote type='expense', which
+            // is not a valid cash_transactions.type ('in','out') and was
+            // ignored by the balance hook, so expenses never reduced the cash
+            // account. Post a valid outgoing, expense-category transaction so
+            // the linked balance is decremented exactly once.
             CashTransaction::create([
 
-                'type' => 'expense',
+                'type' => CashTransaction::TYPE_OUT,
 
-                'amount' => -$expense->amount,
+                'category' => CashTransaction::CATEGORY_EXPENSE,
+
+                'amount' => $expense->amount,
 
                 'cash_account_id' => $expense->cash_account_id,
 
-                'description' => 'Expense: ' . $expense->title
+                'description' => 'Расход: ' . $expense->title
 
             ]);
 

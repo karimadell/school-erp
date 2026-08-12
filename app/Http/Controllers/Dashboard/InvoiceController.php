@@ -277,46 +277,12 @@ class InvoiceController extends Controller
 
     public function refund(Request $request, Invoice $invoice): RedirectResponse
     {
-        $data = $request->validate([
-            'amount' => ['required', 'numeric', 'min:0.01'],
-            'cash_account_id' => ['required', 'exists:cash_accounts,id'],
-        ]);
-
-        $refundAmount = min((float) $data['amount'], (float) $invoice->paid_amount);
-
-        if ($refundAmount <= 0) {
-            return back()->withErrors(['amount' => __('invoices.no_refundable_amount')]);
-        }
-
-        DB::transaction(function () use ($invoice, $data, $refundAmount) {
-            $invoice->paid_amount = max((float) $invoice->paid_amount - $refundAmount, 0);
-            $invoice->refreshPaymentStatus();
-
-            $cashAccount = CashAccount::lockForUpdate()->findOrFail($data['cash_account_id']);
-
-            // Balance is adjusted exactly once, by CashTransaction's own
-            // created-event hook (see CashTransaction::booted()) — do not
-            // also mutate $cashAccount->balance here, or the refund is
-            // posted twice.
-            CashTransaction::create([
-                'cash_account_id' => $cashAccount->id,
-                'amount' => $refundAmount,
-                'type' => 'out',
-                'description' => 'Refund invoice #' . $invoice->id,
-            ]);
-
-            InvoicePayment::create([
-                'invoice_id' => $invoice->id,
-                'cash_account_id' => $cashAccount->id,
-                'amount' => -$refundAmount,
-                'payment_method' => 'refund',
-                'paid_at' => now(),
-                'reference' => 'Refund invoice #' . $invoice->id,
-                'created_by' => auth()->id(),
-            ]);
-        });
-
-        return back()->with('success', __('invoices.refunded'));
+        // Phase 0 safety lockdown: this refund path used float math, wrote a
+        // negative InvoicePayment with an unsupported method, had no
+        // idempotency, and ignored non-refundable line items. A canonical,
+        // idempotent refund service is scheduled for Phase 1; until then
+        // refunds are disabled rather than allowed to corrupt balances.
+        abort(410, 'Устаревшая форма возврата отключена. Безопасный возврат будет добавлен в следующем этапе.');
     }
 
     public function generateMonthlyInvoices(): void

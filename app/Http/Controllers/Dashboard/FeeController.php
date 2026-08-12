@@ -115,72 +115,17 @@ class FeeController extends Controller
         return back()->with('success', 'تم تغيير حالة الخدمة بنجاح');
     }
 
+    // Phase 0 safety lockdown: these methods created raw invoices (no invoice
+    // number, no academic year, no items, no created_by, float pricing) outside
+    // InvoiceIssuanceService, and were not wired to any route. Invoices for a
+    // fee must be issued via canonical individual invoicing or Mass Billing.
     public function assignToStudent(Request $request)
     {
-        $request->validate([
-            'student_id' => 'required|exists:students,id',
-            'fee_id' => 'required|exists:fees,id',
-        ]);
-
-        $student = Student::findOrFail($request->student_id);
-        $fee = Fee::findOrFail($request->fee_id);
-
-        $amount = method_exists($fee, 'currentPrice')
-            ? $fee->currentPrice(now()->toDateString())
-            : (float) ($fee->amount ?? $fee->base_price ?? 0);
-
-        $invoice = Invoice::create([
-            'student_id' => $student->id,
-            'customer_name' => $student->name,
-            'total_amount' => $amount,
-            'paid_amount' => 0,
-            'remaining_amount' => $amount,
-            'status' => Invoice::STATUS_UNPAID,
-        ]);
-
-        $invoice->fees()->attach($fee->id, [
-            'amount' => $amount,
-        ]);
-
-        return back()->with('success', 'تم إنشاء فاتورة');
+        abort(410, 'Устаревшее начисление услуги отключено. Используйте создание счёта или массовое начисление.');
     }
 
     public function bulkAssign(Request $request)
     {
-        $request->validate([
-            'fee_id' => 'required|exists:fees,id',
-        ]);
-
-        $fee = Fee::findOrFail($request->fee_id);
-
-        $students = Student::query()
-            ->when($request->class_id, fn ($q) => $q->where('class_id', $request->class_id))
-            ->when($request->students, fn ($q) => $q->whereIn('id', $request->students))
-            ->get();
-
-        $created = 0;
-
-        foreach ($students as $student) {
-            $amount = method_exists($fee, 'currentPrice')
-                ? $fee->currentPrice(now()->toDateString())
-                : (float) ($fee->amount ?? $fee->base_price ?? 0);
-
-            $invoice = Invoice::create([
-                'student_id' => $student->id,
-                'customer_name' => $student->name,
-                'total_amount' => $amount,
-                'paid_amount' => 0,
-                'remaining_amount' => $amount,
-                'status' => Invoice::STATUS_UNPAID,
-            ]);
-
-            $invoice->fees()->attach($fee->id, [
-                'amount' => $amount,
-            ]);
-
-            $created++;
-        }
-
-        return back()->with('success', "$created invoices created");
+        abort(410, 'Устаревшее массовое начисление услуги отключено. Используйте массовое начисление счетов.');
     }
 }

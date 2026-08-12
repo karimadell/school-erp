@@ -175,35 +175,10 @@ class CashAccountController extends Controller
     // تحويل بين الخزن
     public function transfer(Request $request)
     {
-        $request->validate([
-            'from_account_id' => 'required|exists:cash_accounts,id',
-            'to_account_id' => 'required|exists:cash_accounts,id',
-            'amount' => 'required|numeric|min:1',
-            'description' => 'nullable|string'
-        ]);
-
-        $from = CashAccount::findOrFail($request->from_account_id);
-        $to   = CashAccount::findOrFail($request->to_account_id);
-
-        if ($from->balance < $request->amount) {
-            return back()->with('error','Insufficient balance in source account');
-        }
-
-        // خصم من الخزنة الأولى
-        $from->balance -= $request->amount;
-        $from->save();
-
-        // إضافة للخزنة الثانية
-        $to->balance += $request->amount;
-        $to->save();
-
-        CashTransfer::create([
-            'from_account_id' => $request->from_account_id,
-            'to_account_id' => $request->to_account_id,
-            'amount' => $request->amount,
-            'description' => $request->description
-        ]);
-
-        return back()->with('success','Transfer completed successfully');
+        // Phase 0 safety lockdown: this duplicate transfer mutated account
+        // balances directly (float math, no locking, no permission gate). The
+        // canonical, gated transfer is CashTransferController@store
+        // (route dashboard.cash.transfer.store); the UI already posts there.
+        abort(410, 'Устаревшая форма перевода отключена. Используйте безопасный перевод между кассами.');
     }
 }

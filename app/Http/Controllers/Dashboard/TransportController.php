@@ -72,7 +72,7 @@ class TransportController extends Controller
             ->exists();
 
         if ($exists) {
-            return back()->with('error', 'Student already subscribed');
+            return back()->with('error', 'Ученик уже подписан на маршрут.');
         }
 
         TransportSubscription::create([
@@ -81,30 +81,11 @@ class TransportController extends Controller
             'status' => 'active'
         ]);
 
-        $fee = Fee::where('category', 'transport')
-            ->where('is_active', 1)
-            ->first();
-
-        if ($fee) {
-            $invoiceExists = Invoice::where('student_id', $request->student_id)
-                ->where('fee_id', $fee->id)
-                ->whereMonth('due_date', now()->month)
-                ->whereYear('due_date', now()->year)
-                ->exists();
-
-            if (! $invoiceExists) {
-                Invoice::create([
-                    'student_id' => $request->student_id,
-                    'fee_id' => $fee->id,
-                    'amount' => $fee->amount,
-                    'service' => 'transport',
-                    'status' => 'unpaid',
-                    'due_date' => now(),
-                ]);
-            }
-        }
-
-        return back()->with('success', 'Student subscribed + invoice created');
+        // Phase 0 safety lockdown: the transport subscription no longer creates
+        // a raw legacy invoice as a side effect. Transport billing must go
+        // through the canonical invoice/mass-billing services; the subscription
+        // itself remains non-financial.
+        return back()->with('success', 'Ученик подписан на маршрут.');
     }
 
     public function subscriptions(Request $request)
@@ -189,43 +170,11 @@ class TransportController extends Controller
 
     public function monthlyInvoices()
     {
-        $fee = Fee::where('category', 'transport')
-            ->where('is_active', 1)
-            ->first();
-
-        if (! $fee) {
-            return back()->with('error', 'No active transport fee found');
-        }
-
-        $subscriptions = TransportSubscription::where('status', 'active')->get();
-
-        $created = 0;
-        $month = Carbon::now()->month;
-        $year = Carbon::now()->year;
-
-        foreach ($subscriptions as $sub) {
-            $exists = Invoice::where('student_id', $sub->student_id)
-                ->where('fee_id', $fee->id)
-                ->whereMonth('due_date', $month)
-                ->whereYear('due_date', $year)
-                ->exists();
-
-            if ($exists) {
-                continue;
-            }
-
-            Invoice::create([
-                'student_id' => $sub->student_id,
-                'fee_id' => $fee->id,
-                'amount' => $fee->amount,
-                'service' => 'transport',
-                'status' => 'unpaid',
-                'due_date' => now()->startOfMonth(),
-            ]);
-
-            $created++;
-        }
-
-        return back()->with('success', "$created monthly transport invoices created");
+        // Phase 0 safety lockdown: this created raw legacy invoices (bare
+        // amount/service columns, no invoice number, no academic year, no
+        // items, no created_by) outside InvoiceIssuanceService. Recurring
+        // transport billing must be rebuilt on the canonical service; until
+        // then it is disabled rather than allowed to write orphan invoices.
+        abort(410, 'Автоматическое создание транспортных счетов отключено до перевода на безопасный сервис начисления.');
     }
 }

@@ -9,6 +9,14 @@ use App\Models\CashTransaction;
 
 class CashTransactionController extends Controller
 {
+    public function __construct()
+    {
+        // Phase 0 safety lockdown: every cash action is gated. This module has
+        // no separate read-only cash permission, so reads fall back to the same
+        // 'manage cash' gate.
+        $this->middleware('permission:manage cash');
+    }
+
     public function income()
     {
         $accounts = CashAccount::orderBy('name')->get();
@@ -23,28 +31,38 @@ class CashTransactionController extends Controller
         return view('dashboard.cash.expenses', compact('accounts'));
     }
 
+    // Phase 0 safety lockdown: raw cash-in bypassed the invoice/payment
+    // services and created untraceable (orphan) money. Income must be recorded
+    // only through InvoicePaymentService against a real invoice.
     public function storeIncome(Request $request)
     {
-        CashTransaction::create([
-            'cash_account_id' => $request->cash_account_id,
-            'type' => 'in',
-            'amount' => $request->amount,
-            'notes' => $request->notes,
-        ]);
-
-        return redirect()->back()->with('success', 'Income added');
+        abort(410, 'Прямое внесение прихода отключено. Приход регистрируется только оплатой счёта.');
     }
 
+    // Phase 0 safety lockdown: raw cash-out bypassed the Expense document.
+    // Expenses must be recorded through the Expense workflow, which posts a
+    // linked cash transaction.
     public function storeExpense(Request $request)
     {
-        CashTransaction::create([
-            'cash_account_id' => $request->cash_account_id,
-            'type' => 'out',
-            'amount' => $request->amount,
-            'notes' => $request->notes,
-        ]);
+        abort(410, 'Прямое списание расхода отключено. Используйте оформление расхода.');
+    }
 
-        return redirect()->back()->with('success', 'Expense added');
+    // Phase 0 safety lockdown: these routes referenced undefined actions and
+    // could never post a valid transaction. Neutralised so they return a clean
+    // response instead of a runtime error, and cannot insert raw cash.
+    public function index(Request $request)
+    {
+        abort(410, 'Прямое движение по кассе отключено. Используйте оплату счетов и оформление расходов.');
+    }
+
+    public function storeIn(Request $request)
+    {
+        abort(410, 'Прямое внесение прихода отключено. Приход регистрируется только оплатой счёта.');
+    }
+
+    public function storeOut(Request $request)
+    {
+        abort(410, 'Прямое списание расхода отключено. Используйте оформление расхода.');
     }
 
     public function reports(Request $request)

@@ -10,6 +10,13 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class DebtController extends Controller
 {
+    public function __construct()
+    {
+        // Phase 0 safety lockdown: the debt list is a read view over invoices
+        // and must require the invoice-read permission.
+        $this->middleware('permission:view invoices')->only(['index', 'show']);
+    }
+
     public function index(Request $request)
     {
         $query = Student::with([
@@ -64,17 +71,9 @@ class DebtController extends Controller
 
     public function receipt($invoiceId)
     {
-        $invoice = \App\Models\Invoice::with('student')->findOrFail($invoiceId);
-
-        $data = [
-            'student' => $invoice->student->name,
-            'amount' => $invoice->amount,
-            'date' => now()->format('Y-m-d'),
-            'invoice_id' => $invoice->id,
-        ];
-
-        $pdf = Pdf::loadView('dashboard.debts.receipt', $data);
-
-        return $pdf->download('receipt.pdf');
+        // Phase 0 safety lockdown: this receipt was generated from the legacy
+        // `amount` column and ignored actual payments/remaining balance. The
+        // canonical, per-payment receipt is at dashboard.payments.receipt.
+        abort(410, 'Устаревшая квитанция отключена. Используйте квитанцию об оплате счёта.');
     }
 }

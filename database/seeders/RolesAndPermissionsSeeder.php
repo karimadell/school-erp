@@ -162,6 +162,24 @@ class RolesAndPermissionsSeeder extends Seeder
             'view student balances',
         ]);
 
+        // 4b. Cashier — front-desk collections. May issue a charge and collect
+        // payment (charge & collect), view invoices and student balances. By
+        // separation of duties, a cashier may NOT reverse money: no
+        // 'refund payments', no 'void invoices', and no cash-account/report
+        // administration ('manage cash' / 'view cash reports').
+        $cashier = Role::firstOrCreate(['name' => 'cashier']);
+        $cashier->syncPermissions([
+            'view students',
+            'view invoices', 'manage invoices',
+            'view student balances',
+            // Phase 3: a cashier physically operates the drawer, so they open,
+            // close and reconcile their own shift (a cash collection now
+            // requires an open shift). Accepting a variance stays out of reach.
+            'view cash sessions',
+            'open cash sessions',
+            'close cash sessions',
+        ]);
+
         // 5. Teacher — Teacher Portal only. No admin-panel permissions of
         // any kind; record-level scoping to assigned classes/students is
         // enforced via TeacherAssignment (Batch 8).

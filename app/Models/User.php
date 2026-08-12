@@ -98,7 +98,7 @@ class User extends Authenticatable implements FilamentUser
      */
     public static function administrativeRoles(): array
     {
-        return ['super-admin', 'admin', 'school-admin', 'accountant', 'reception', 'principal'];
+        return ['super-admin', 'admin', 'school-admin', 'accountant', 'cashier', 'reception', 'principal'];
     }
 
     /**

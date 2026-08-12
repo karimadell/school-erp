@@ -14,6 +14,10 @@ use Illuminate\Validation\ValidationException;
 
 class InvoicePaymentService
 {
+    public function __construct(private CashSessionService $sessions)
+    {
+    }
+
     public function record(
         int $invoiceId,
         int $cashAccountId,
@@ -96,6 +100,20 @@ class InvoicePaymentService
                 throw ValidationException::withMessages(['cash_account_id' => 'Выбранная касса неактивна.']);
             }
 
+            // Phase 3 — strict cash-session rule: physical cash cannot enter a
+            // drawer without an open shift. Non-cash methods (bank/card/transfer)
+            // do not touch the physical drawer and keep their existing behaviour.
+            $cashSessionId = null;
+            if ($paymentMethod === CashTransaction::METHOD_CASH && $account->isCashDrawer()) {
+                $session = $this->sessions->activeFor($account, lock: true);
+                if (! $session) {
+                    throw ValidationException::withMessages([
+                        'payment_method' => 'Для приёма наличных нужна открытая кассовая смена.',
+                    ]);
+                }
+                $cashSessionId = $session->id;
+            }
+
             $payment = InvoicePayment::create([
                 'invoice_id' => $invoice->id,
                 'invoice_installment_id' => $installment?->id,
@@ -114,6 +132,8 @@ class InvoicePaymentService
 
             CashTransaction::create([
                 'cash_account_id' => $account->id,
+                'cash_session_id' => $cashSessionId, // FK-at-creation; null for non-cash
+                'created_by' => $actor?->id,
                 'invoice_payment_id' => $payment->id,
                 'amount' => $amount,
                 'type' => CashTransaction::TYPE_IN,

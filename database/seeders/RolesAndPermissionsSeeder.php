@@ -71,6 +71,13 @@ class RolesAndPermissionsSeeder extends Seeder
             'view student balances',
             'manage cash',
             'view cash reports',
+            // Phase 3 — cash-drawer sessions. Separated by risk: view (read
+            // history/detail), open (start a shift), close (reconcile), and a
+            // dedicated higher-risk permission to accept a non-zero variance.
+            'view cash sessions',
+            'open cash sessions',
+            'close cash sessions',
+            'close cash sessions with variance',
 
             // Leadership oversight
             'view audit logs',
@@ -129,6 +136,12 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage fee prices',
             'manage expenses',
             'manage student service subscriptions',
+            // Phase 3: an accountant runs the drawer day to day — open, close
+            // and reconcile — but accepting a variance is a separately-gated,
+            // higher-risk action reserved for admin/school-admin/principal.
+            'view cash sessions',
+            'open cash sessions',
+            'close cash sessions',
         ]);
 
         // 4. Reception — students/enrollments create+view+update only (no

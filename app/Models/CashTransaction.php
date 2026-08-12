@@ -45,6 +45,8 @@ class CashTransaction extends Model
 
     protected $fillable = [
         'cash_account_id',
+        'cash_session_id', // Phase 3: owning cash-drawer session (nullable)
+        'created_by',      // Phase 3: cashier who posted the movement (nullable)
         'invoice_id',
         'invoice_payment_id',
         'amount',
@@ -73,6 +75,19 @@ class CashTransaction extends Model
     public function account()
     {
         return $this->belongsTo(CashAccount::class, 'cash_account_id');
+    }
+
+    // Phase 3: owning cash-drawer session (nullable — set at creation for new
+    // cash movements, null for non-cash and historical rows).
+    public function cashSession()
+    {
+        return $this->belongsTo(CashSession::class, 'cash_session_id');
+    }
+
+    // Phase 3: the user who posted the movement (nullable for historical rows).
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 
     public function invoice()

@@ -60,6 +60,17 @@ class CashAccount extends Model
         return $this->hasMany(CashTransaction::class);
     }
 
+    // Phase 3: الحساب ← الكاش سيشنز (كل الورديات على هذه الكسة)
+    public function cashSessions()
+    {
+        return $this->hasMany(CashSession::class);
+    }
+
+    public function isCashDrawer(): bool
+    {
+        return $this->type === self::TYPE_CASH;
+    }
+
     // الحساب الرئيسي (Parent)
     public function parent()
     {

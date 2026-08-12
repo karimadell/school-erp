@@ -49,6 +49,8 @@ class InvoiceCreationTest extends TestCase
             'status' => 'active', 'is_active' => true,
         ]);
         $this->account = CashAccount::create(['name' => 'Основная касса', 'type' => 'cash']);
+        // Phase 3: a cash collection requires an open drawer session.
+        app(\App\Services\Finance\CashSessionService::class)->open($this->account, $this->user);
         $this->fee = Fee::create(['name_ru' => 'Обучение', 'amount' => '1000.00', 'is_active' => true]);
     }
 

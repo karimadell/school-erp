@@ -4,6 +4,7 @@ namespace Tests\Feature\Finance;
 
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
+use App\Models\CashSession;
 use App\Models\Enrollment;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
@@ -29,6 +30,7 @@ abstract class FinanceOperationsTestCase extends TestCase
     protected Enrollment $enrollment;
     protected Fee $fee;
     protected CashAccount $cash;
+    protected CashSession $cashSession;
 
     protected function setUp(): void
     {
@@ -46,6 +48,28 @@ abstract class FinanceOperationsTestCase extends TestCase
         $this->fee = Fee::create(['name_ru'=>'Обучение','category'=>'tuition','amount'=>'1.00','is_active'=>true]);
         FeePrice::create(['fee_id'=>$this->fee->id,'academic_year_id'=>$this->year->id,'grade_id'=>$grade->id,'payment_period'=>'yearly','amount'=>'1200.00','currency'=>'EGP','start_date'=>'2026-08-01','end_date'=>'2027-06-30','is_active'=>true]);
         $this->cash = CashAccount::create(['name'=>'Основная касса','type'=>'cash','balance'=>'0.00','is_active'=>true]);
+        // Phase 3: a cash collection now requires an open shift, so the shared
+        // fixture opens one on the primary drawer. Tests that need the
+        // no-open-session path close it first (see closeCashSession()).
+        $this->cashSession = app(\App\Services\Finance\CashSessionService::class)->open($this->cash, $this->accountant);
+    }
+
+    protected function openCashSession(?CashAccount $account = null, ?User $actor = null): CashSession
+    {
+        return app(\App\Services\Finance\CashSessionService::class)
+            ->open($account ?? $this->cash, $actor ?? $this->accountant);
+    }
+
+    protected function closeCashSession(?CashSession $session = null): void
+    {
+        ($session ?? $this->cashSession)->forceFill([
+            'status' => CashSession::STATUS_CLOSED,
+            'closing_counted' => '0.00',
+            'expected_cash' => '0.00',
+            'variance' => '0.00',
+            'closed_by' => $this->accountant->id,
+            'closed_at' => now(),
+        ])->save();
     }
 
     protected function invoice(string $total='1200.00', ?string $dueDate=null): Invoice

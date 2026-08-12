@@ -61,6 +61,7 @@
                 ['label' => 'Цены на услуги', 'icon' => 'payments', 'route' => 'dashboard.finance.tariffs.index', 'active' => 'dashboard.finance.tariffs.*'],
                 // Платежи: no standalone page — payments happen as an action from within Счета.
                 ['label' => 'Касса', 'icon' => 'landmark', 'route' => 'dashboard.cash.ledger', 'active' => 'dashboard.cash.ledger'],
+                ['label' => 'Кассовые смены', 'icon' => 'briefcase', 'route' => auth()->user()?->can('view cash sessions') ? 'dashboard.cash.sessions.index' : null, 'active' => 'dashboard.cash.sessions.*'],
                 ['label' => 'Кассовые счета', 'icon' => 'briefcase', 'route' => 'dashboard.cash.accounts', 'active' => 'dashboard.cash.accounts'],
                 ['label' => 'Расходы', 'icon' => 'trending_down', 'route' => 'dashboard.cash.expenses', 'active' => 'dashboard.cash.expenses'],
                 ['label' => 'Финансовые отчёты', 'icon' => 'pie_chart', 'route' => 'dashboard.cash.reports', 'active' => 'dashboard.cash.reports'],

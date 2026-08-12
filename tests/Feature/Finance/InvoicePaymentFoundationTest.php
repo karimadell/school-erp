@@ -36,6 +36,15 @@ class InvoicePaymentFoundationTest extends TestCase
             'paid_amount' => '0.00', 'remaining_amount' => '1000.00', 'status' => Invoice::STATUS_UNPAID,
         ]);
         $this->account = CashAccount::create(['name' => 'Касса', 'type' => 'cash']);
+        // Phase 3: a cash collection requires an open drawer session.
+        \App\Models\CashSession::create([
+            'cash_account_id' => $this->account->id,
+            'opened_by' => \App\Models\User::factory()->create(['is_active' => true])->id,
+            'opened_at' => now(),
+            'opening_expected' => '0.00',
+            'opening_expected_source' => \App\Models\CashSession::SOURCE_ACCOUNT_BALANCE,
+            'status' => \App\Models\CashSession::STATUS_OPEN,
+        ]);
     }
 
     private function pay(string $amount, ?string $key = null): InvoicePayment

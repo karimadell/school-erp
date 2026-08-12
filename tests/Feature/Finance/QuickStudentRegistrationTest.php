@@ -49,6 +49,8 @@ class QuickStudentRegistrationTest extends TestCase
         $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => '1-А', 'name_ar' => '1-A', 'name_ru' => '1-А', 'is_active' => true]);
         $this->mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
         $this->account = CashAccount::create(['name' => 'Касса', 'type' => 'cash']);
+        // Phase 3: a cash collection requires an open drawer session.
+        app(\App\Services\Finance\CashSessionService::class)->open($this->account, $this->accountant);
         $this->registrationFee = $this->fee('Регистрационный взнос', Fee::CATEGORY_REGISTRATION, '1000.00');
     }
 

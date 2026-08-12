@@ -8,6 +8,7 @@ use App\Http\Controllers\Dashboard\FinanceTariffController;
 use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
 use App\Http\Controllers\Dashboard\FinanceOperationsController;
+use App\Http\Controllers\Dashboard\CashSessionController;
 use App\Http\Controllers\Dashboard\PaymentPlanController;
 use App\Http\Controllers\Dashboard\StudentSubscriptionController;
 use App\Http\Controllers\Dashboard\StudentInvoiceController;
@@ -421,6 +422,20 @@ Route::middleware(['auth', 'administrative'])
 
                 Route::get('reports', [CashTransactionController::class, 'reports'])
                     ->name('reports');
+
+                // Phase 3 — cash-drawer sessions (кассовые смены). Permissions
+                // are gated inside CashSessionController; the variance-close
+                // check is enforced in CashSessionService.
+                Route::get('sessions', [CashSessionController::class, 'index'])
+                    ->name('sessions.index');
+                Route::get('sessions/open', [CashSessionController::class, 'create'])
+                    ->name('sessions.create');
+                Route::post('sessions', [CashSessionController::class, 'store'])
+                    ->name('sessions.store');
+                Route::get('sessions/{cashSession}', [CashSessionController::class, 'show'])
+                    ->name('sessions.show');
+                Route::post('sessions/{cashSession}/close', [CashSessionController::class, 'close'])
+                    ->name('sessions.close');
             });
 
         Route::get('transport', [TransportController::class, 'index'])

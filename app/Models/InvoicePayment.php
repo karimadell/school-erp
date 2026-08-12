@@ -79,4 +79,21 @@ class InvoicePayment extends Model
     {
         return $this->hasOne(CashTransaction::class);
     }
+
+    public function refunds()
+    {
+        return $this->hasMany(PaymentRefund::class);
+    }
+
+    /** Amount already refunded against this specific payment. */
+    public function refundedAmount(): string
+    {
+        return bcadd((string) $this->refunds()->sum('amount'), '0', 2);
+    }
+
+    /** Amount of this payment still eligible to be refunded. */
+    public function refundableAmount(): string
+    {
+        return bcsub((string) $this->amount, $this->refundedAmount(), 2);
+    }
 }

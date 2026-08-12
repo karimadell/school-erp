@@ -25,6 +25,7 @@ class CashTransaction extends Model
     const CATEGORY_INCOME   = 'income';
     const CATEGORY_EXPENSE  = 'expense';
     const CATEGORY_TRANSFER = 'transfer';
+    const CATEGORY_REFUND   = 'refund';
 
     /*
     |--------------------------------------------------------------------------

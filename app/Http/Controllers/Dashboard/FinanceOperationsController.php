@@ -13,8 +13,11 @@ use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\SchoolSetting;
 use App\Models\Student;
+use App\Models\PaymentRefund;
 use App\Services\Finance\ChargeAndCollectService;
+use App\Services\Finance\InvoiceCancellationService;
 use App\Services\Finance\InvoicePaymentService;
+use App\Services\Finance\InvoiceRefundService;
 use App\Services\Finance\StudentFinanceSummaryService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
@@ -26,8 +29,10 @@ class FinanceOperationsController extends Controller
 {
     public function __construct(private StudentFinanceSummaryService $summaries)
     {
-        $this->middleware('permission:view invoices')->only(['workspace', 'student', 'receipt', 'receiptPdf']);
+        $this->middleware('permission:view invoices')->only(['workspace', 'student', 'receipt', 'receiptPdf', 'refundReceipt']);
         $this->middleware('permission:manage invoices')->only(['createPayment', 'storePayment', 'chargeCreate', 'chargeStore']);
+        $this->middleware('permission:void invoices')->only(['voidInvoice']);
+        $this->middleware('permission:refund payments')->only(['createRefund', 'storeRefund']);
     }
 
     public function workspace(Request $request): View
@@ -159,6 +164,63 @@ class FinanceOperationsController extends Controller
 
         return redirect()->route('dashboard.invoices.show', $result['invoice'])
             ->with('success', 'Счёт создан без оплаты.');
+    }
+
+    public function voidInvoice(Request $request, Invoice $invoice, InvoiceCancellationService $service): RedirectResponse
+    {
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:500'],
+        ]);
+
+        $service->void($invoice, $data['reason'], $request->user());
+
+        return redirect()->route('dashboard.invoices.show', $invoice)
+            ->with('success', 'Счёт аннулирован.');
+    }
+
+    public function createRefund(InvoicePayment $invoicePayment): View
+    {
+        abort_if(bccomp($invoicePayment->refundableAmount(), '0.00', 2) <= 0, 422, 'По этому платежу нет суммы, доступной к возврату.');
+
+        $invoicePayment->load(['invoice.student', 'cashAccount']);
+
+        return view('dashboard.finance.refunds.create', [
+            'payment' => $invoicePayment,
+            'refundable' => $invoicePayment->refundableAmount(),
+            'idempotencyKey' => (string) Str::uuid(),
+        ]);
+    }
+
+    public function storeRefund(Request $request, InvoicePayment $invoicePayment, InvoiceRefundService $service): RedirectResponse
+    {
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'reason' => ['required', 'string', 'max:500'],
+            'idempotency_key' => ['required', 'uuid'],
+        ]);
+
+        $existing = PaymentRefund::where('idempotency_key', $data['idempotency_key'])->exists();
+
+        $refund = $service->refund(
+            invoicePaymentId: $invoicePayment->id,
+            amount: (string) $data['amount'],
+            reason: (string) $data['reason'],
+            idempotencyKey: (string) $data['idempotency_key'],
+            actor: $request->user(),
+        );
+
+        return redirect()->route('dashboard.refunds.receipt', $refund)
+            ->with('success', $existing ? 'Повторная отправка не создала новый возврат.' : 'Возврат оформлен.');
+    }
+
+    public function refundReceipt(PaymentRefund $paymentRefund): View
+    {
+        $paymentRefund->load(['originalPayment', 'invoice.student', 'invoice.academicYear', 'cashAccount', 'executor']);
+
+        return view('dashboard.finance.refunds.receipt', [
+            'refund' => $paymentRefund,
+            'settings' => SchoolSetting::current(),
+        ]);
     }
 
     private function receiptData(InvoicePayment $payment): array

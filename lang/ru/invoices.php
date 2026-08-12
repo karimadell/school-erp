@@ -121,4 +121,23 @@ return [
 'size' => 'Размер',
 'select_cash_account' => 'Выберите кассу',
 
+// Phase 1 — void / refund corrections
+'void_invoice' => 'Аннулировать счёт',
+'void_reason' => 'Причина аннулирования',
+'void_confirm' => 'Аннулировать этот счёт? Действие необратимо.',
+'invoice_cancelled' => 'Счёт аннулирован',
+'cancelled_by' => 'Аннулировал',
+'cancelled_at' => 'Дата аннулирования',
+'cancellation_reason' => 'Причина аннулирования',
+'create_refund' => 'Оформить возврат',
+'refund_submit' => 'Оформить возврат',
+'refund_reason' => 'Причина возврата',
+'refundable' => 'Доступно к возврату',
+'refund_number' => 'Возврат №',
+'refund_date' => 'Дата возврата',
+'refund_executor' => 'Исполнитель',
+'refund_success' => 'Возврат оформлен.',
+'original_payment' => 'Исходный платёж',
+'refund_receipt' => 'Квитанция возврата',
+
 ];

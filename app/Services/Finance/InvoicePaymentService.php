@@ -2,6 +2,7 @@
 
 namespace App\Services\Finance;
 
+use App\Models\AuditLog;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\Invoice;
@@ -47,6 +48,10 @@ class InvoicePaymentService
             $invoice = Invoice::query()->lockForUpdate()->find($invoiceId);
             if (! $invoice) {
                 throw ValidationException::withMessages(['invoice_id' => 'Счёт не найден.']);
+            }
+
+            if ($invoice->status === Invoice::STATUS_CANCELLED) {
+                throw ValidationException::withMessages(['invoice_id' => 'Счёт аннулирован и не может быть оплачен.']);
             }
 
             // Recheck after serializing on the invoice row so concurrent retries
@@ -153,6 +158,21 @@ class InvoicePaymentService
             ])->save();
 
             $installment?->refreshStatus();
+
+            AuditLog::create([
+                'user_id' => $actor?->id,
+                'action' => 'payment_recorded',
+                'model' => 'InvoicePayment',
+                'model_id' => $payment->id,
+                'new_values' => [
+                    'payment_number' => $payment->payment_number,
+                    'invoice_id' => $invoice->id,
+                    'amount' => $amount,
+                    'payment_method' => $paymentMethod,
+                ],
+                'ip' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+            ]);
 
             return $payment->fresh(['cashTransaction']);
         });

@@ -341,6 +341,13 @@ Route::middleware(['auth', 'administrative'])
         Route::get('payments/{invoicePayment}/receipt', [FinanceOperationsController::class, 'receipt'])->name('payments.receipt');
         Route::get('payments/{invoicePayment}/receipt/pdf', [FinanceOperationsController::class, 'receiptPdf'])->name('payments.receipt.pdf');
 
+        // Phase 1 — canonical invoice void + payment refunds (permission-gated
+        // inside FinanceOperationsController; never call the legacy refund).
+        Route::post('invoices/{invoice}/void', [FinanceOperationsController::class, 'voidInvoice'])->name('invoices.void');
+        Route::get('payments/{invoicePayment}/refund', [FinanceOperationsController::class, 'createRefund'])->name('payments.refund.create');
+        Route::post('payments/{invoicePayment}/refund', [FinanceOperationsController::class, 'storeRefund'])->name('payments.refund.store');
+        Route::get('refunds/{paymentRefund}/receipt', [FinanceOperationsController::class, 'refundReceipt'])->name('refunds.receipt');
+
         Route::get('quick-registration', [QuickStudentRegistrationController::class, 'create'])
             ->name('quick-registration.create');
         Route::post('quick-registration', [QuickStudentRegistrationController::class, 'store'])

@@ -78,6 +78,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'open cash sessions',
             'close cash sessions',
             'close cash sessions with variance',
+            // Phase 1 — corrections. Sensitive, gated independently of
+            // 'manage invoices' so voiding and refunding are separable duties.
+            'void invoices',
+            'refund payments',
 
             // Leadership oversight
             'view audit logs',
@@ -136,6 +140,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage fee prices',
             'manage expenses',
             'manage student service subscriptions',
+            'void invoices',
+            'refund payments',
             // Phase 3: an accountant runs the drawer day to day — open, close
             // and reconcile — but accepting a variance is a separately-gated,
             // higher-risk action reserved for admin/school-admin/principal.

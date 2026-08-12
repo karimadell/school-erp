@@ -11,6 +11,7 @@ class Invoice extends Model
     public const STATUS_UNPAID = 'unpaid';
     public const STATUS_PARTIAL = 'partial';
     public const STATUS_PAID = 'paid';
+    public const STATUS_CANCELLED = 'cancelled';
 
     protected $fillable = [
         'student_id',
@@ -32,6 +33,9 @@ class Invoice extends Model
         'due_date',
         'note',
         'created_by',
+        'cancelled_at',
+        'cancelled_by',
+        'cancellation_reason',
     ];
 
     protected $casts = [
@@ -43,6 +47,7 @@ class Invoice extends Model
         'remaining_amount' => 'decimal:2',
         'paid_at' => 'datetime',
         'due_date' => 'date',
+        'cancelled_at' => 'datetime',
     ];
 
     protected $attributes = [
@@ -88,6 +93,16 @@ class Invoice extends Model
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
+    }
+
+    public function refunds()
+    {
+        return $this->hasMany(PaymentRefund::class);
+    }
+
     public function cashAccount()
     {
         return $this->belongsTo(CashAccount::class);
@@ -121,10 +136,37 @@ class Invoice extends Model
         return $this->hasMany(InvoiceInstallment::class)->orderBy('sequence');
     }
 
+    public function isCancelled(): bool
+    {
+        return $this->status === self::STATUS_CANCELLED;
+    }
+
+    /** Total money refunded against this invoice (across all its payments). */
+    public function refundedAmount(): string
+    {
+        return bcadd((string) $this->refunds()->sum('amount'), '0', 2);
+    }
+
+    /** Net money actually held: gross payments minus refunds. */
+    public function netPaidAmount(): string
+    {
+        $gross = bcadd((string) $this->payments()->reorder()->sum('amount'), '0', 2);
+
+        return bcsub($gross, $this->refundedAmount(), 2);
+    }
+
     public function refreshPaymentStatus(): void
     {
+        // A cancelled invoice is terminal: never resurrect it by recomputing
+        // its status from payments/refunds.
+        if ($this->isCancelled()) {
+            return;
+        }
+
         $net = bcadd((string) $this->total_amount, '0', 2);
-        $paid = bcadd((string) $this->payments()->reorder()->sum('amount'), '0', 2);
+        // Net paid reflects refunds so that outstanding debt increases again
+        // when money is returned to the parent.
+        $paid = $this->netPaidAmount();
         $remaining = bcsub($net, $paid, 2);
 
         $this->paid_amount = $paid;

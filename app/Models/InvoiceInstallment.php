@@ -18,6 +18,7 @@ class InvoiceInstallment extends Model
     public function invoice() { return $this->belongsTo(Invoice::class); }
     public function plan() { return $this->belongsTo(PaymentPlan::class, 'payment_plan_id'); }
     public function payments() { return $this->hasMany(InvoicePayment::class); }
+    public function refunds() { return $this->hasMany(PaymentRefund::class); }
 
     public function derivedStatus($asOf = null): string
     {
@@ -36,7 +37,11 @@ class InvoiceInstallment extends Model
 
     public function refreshStatus(): void
     {
-        $paid = bcadd((string) $this->payments()->sum('amount'), '0', 2);
+        // Net of refunds allocated to this installment so a reversal restores
+        // the installment's outstanding amount.
+        $gross = bcadd((string) $this->payments()->sum('amount'), '0', 2);
+        $refunded = bcadd((string) $this->refunds()->sum('amount'), '0', 2);
+        $paid = bcsub($gross, $refunded, 2);
         $this->forceFill(['paid_amount'=>$paid, 'remaining_amount'=>bcsub((string)$this->amount,$paid,2)])->saveQuietly();
         $this->forceFill(['status'=>$this->derivedStatus()])->saveQuietly();
     }

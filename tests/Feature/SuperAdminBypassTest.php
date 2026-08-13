@@ -15,12 +15,13 @@ use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
 /**
- * Alpha testing: proves 'admin' (Super Admin) is a true, automatic bypass of
- * every permission check — including a permission that exists but is
- * assigned to no role, which the seeded-permission-list assertions in
- * AuthorizationMatrixTest can't distinguish from "admin just happens to
- * hold every permission the seeder currently lists". Also proves non-admin
- * roles are unaffected by the bypass.
+ * Alpha testing: proves 'super-admin' is a true, automatic bypass of every
+ * permission check — including a permission that exists but is assigned to
+ * no role, which the seeded-permission-list assertions in
+ * AuthorizationMatrixTest can't distinguish from "the role just happens to
+ * hold every permission the seeder currently lists" (ADR-004: 'super-admin'
+ * is the canonical bypass; 'admin' merely holds the full seeded permission
+ * set). Also proves non-super-admin roles are unaffected by the bypass.
  */
 class SuperAdminBypassTest extends TestCase
 {
@@ -37,7 +38,7 @@ class SuperAdminBypassTest extends TestCase
 
     public function test_super_admin_can_do_a_brand_new_permission_assigned_to_no_role(): void
     {
-        $admin = $this->userWithRole('admin');
+        $admin = $this->userWithRole('super-admin');
 
         $permission = Permission::create(['name' => 'brand new alpha permission']);
 
@@ -46,7 +47,7 @@ class SuperAdminBypassTest extends TestCase
 
     public function test_super_admin_bypass_covers_direct_hasPermissionTo_and_hasAnyPermission_calls(): void
     {
-        $admin = $this->userWithRole('admin');
+        $admin = $this->userWithRole('super-admin');
 
         Permission::create(['name' => 'another unassigned permission']);
 

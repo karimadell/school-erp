@@ -45,6 +45,11 @@ class AcademicYear extends Model
         return $this->hasMany(BellSchedule::class);
     }
 
+    public function classrooms()
+    {
+        return $this->hasMany(PhysicalClassroom::class);
+    }
+
     public function classTeachers()
     {
         return $this->hasMany(ClassTeacher::class);

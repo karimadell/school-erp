@@ -36,6 +36,7 @@ use App\Models\AcademicCalendar;
 use App\Models\CalendarEvent;
 use App\Models\BellSchedule;
 use App\Models\BellSchedulePeriod;
+use App\Models\PhysicalClassroom;
 
 // Observer
 use App\Observers\AuditObserver;
@@ -132,6 +133,7 @@ class AppServiceProvider extends ServiceProvider
         CalendarEvent::observe(AcademicYearLockObserver::class);
         BellSchedule::observe(AcademicYearLockObserver::class);
         BellSchedulePeriod::observe(AcademicYearLockObserver::class);
+        PhysicalClassroom::observe(AcademicYearLockObserver::class);
 
         // Batch 11 / C3: registered after AcademicYearLockObserver for
         // both models — if the academic year can't be resolved at all,

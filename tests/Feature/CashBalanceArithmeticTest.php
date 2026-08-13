@@ -6,8 +6,11 @@ use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\CashTransfer;
 use App\Models\Invoice;
+use App\Models\InvoicePayment;
 use App\Models\Student;
 use App\Models\User;
+use App\Services\Finance\CashSessionService;
+use App\Services\Finance\InvoicePaymentService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -40,11 +43,42 @@ class CashBalanceArithmeticTest extends TestCase
         (new RolesAndPermissionsSeeder)->run();
         $user = User::factory()->create(['is_active' => true]);
         $user->assignRole('reception');
-        Permission::firstOrCreate(['name' => 'manage invoices']);
-        Permission::firstOrCreate(['name' => 'view invoices']);
-        $user->givePermissionTo('manage invoices', 'view invoices');
+        foreach (['manage invoices', 'view invoices', 'refund payments'] as $permission) {
+            Permission::firstOrCreate(['name' => $permission]);
+        }
+        // 'refund payments' is the canonical refund endpoint's own permission
+        // (FinanceOperationsController::storeRefund) — separate from 'manage
+        // invoices' so refund authority is grantable independently (ADR-008 era).
+        $user->givePermissionTo('manage invoices', 'view invoices', 'refund payments');
 
         return $user;
+    }
+
+    /**
+     * Phase 3: cash payments/refunds require an open shift on the drawer.
+     * Opening it via the service is the established finance-test pattern
+     * (see FinanceOperationsTestCase) and creates no CashTransaction of its
+     * own, so single-posting assertions stay exact.
+     */
+    protected function openCashSession(CashAccount $account, User $actor): void
+    {
+        app(CashSessionService::class)->open($account, $actor);
+    }
+
+    /**
+     * Record a real cash payment through the canonical service so a refund
+     * has a genuine InvoicePayment to reverse.
+     */
+    protected function recordCashPayment(Invoice $invoice, CashAccount $account, User $actor, string $amount, string $idempotencyKey): InvoicePayment
+    {
+        return app(InvoicePaymentService::class)->record(
+            invoiceId: $invoice->id,
+            cashAccountId: $account->id,
+            paymentMethod: 'cash',
+            amount: $amount,
+            idempotencyKey: $idempotencyKey,
+            actor: $actor,
+        );
     }
 
     protected function cashManager(): User
@@ -87,12 +121,16 @@ class CashBalanceArithmeticTest extends TestCase
     {
         $user = $this->invoiceManager();
         $account = $this->makeCashAccount(balance: 500);
+        $this->openCashSession($account, $user);
         $invoice = $this->makeInvoice($account, total: 1000, paid: 0);
 
         $response = $this->actingAs($user)->post(route('dashboard.invoices.pay', $invoice), [
             'amount' => 300,
             'cash_account_id' => $account->id,
             'payment_method' => 'cash',
+            // ADR-008: every money write requires an idempotency key (uuid).
+            // Deterministic literal so the test posts a single, well-formed key.
+            'idempotency_key' => '11111111-1111-4111-8111-111111111111',
         ]);
 
         $response->assertSessionHasNoErrors();
@@ -103,16 +141,20 @@ class CashBalanceArithmeticTest extends TestCase
     {
         $user = $this->invoiceManager();
         $account = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($account, $user);
         $invoice = $this->makeInvoice($account, total: 1000, paid: 0);
 
         $this->actingAs($user)->post(route('dashboard.invoices.pay', $invoice), [
             'amount' => 250,
             'cash_account_id' => $account->id,
             'payment_method' => 'cash',
+            // ADR-008: idempotency key (uuid) required on every money write.
+            'idempotency_key' => '22222222-2222-4222-8222-222222222222',
         ]);
 
         // Exactly one ledger row and exactly one balance movement — not
-        // 500 (the old, doubled behavior).
+        // 500 (the old, doubled behavior). Opening the shift adds no
+        // CashTransaction, so this count reflects the single payment only.
         $this->assertSame(1, CashTransaction::where('cash_account_id', $account->id)->count());
         $this->assertSame('250.00', $account->fresh()->balance);
     }
@@ -125,33 +167,48 @@ class CashBalanceArithmeticTest extends TestCase
 
     public function test_a_refund_decreases_the_account_by_exactly_the_refund_amount(): void
     {
+        // The legacy invoices.refund path is disabled (410); the canonical
+        // workflow refunds a specific InvoicePayment. Arithmetic intent is
+        // preserved: a refund lowers the drawer by exactly the refunded amount.
         $user = $this->invoiceManager();
-        $account = $this->makeCashAccount(balance: 1000);
-        $invoice = $this->makeInvoice($account, total: 1000, paid: 400);
+        $account = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($account, $user);
+        $invoice = $this->makeInvoice($account, total: 1000, paid: 0);
 
-        $response = $this->actingAs($user)->post(route('dashboard.invoices.refund', $invoice), [
+        $payment = $this->recordCashPayment($invoice, $account, $user, '400.00', '33333333-3333-4333-8333-333333333333');
+        $this->assertSame('400.00', $account->fresh()->balance);
+
+        $response = $this->actingAs($user)->post(route('dashboard.payments.refund.store', $payment), [
             'amount' => 150,
-            'cash_account_id' => $account->id,
+            'reason' => 'Частичный возврат',
+            'idempotency_key' => '44444444-4444-4444-8444-444444444444',
         ]);
 
         $response->assertSessionHasNoErrors();
-        $this->assertSame('850.00', $account->fresh()->balance);
+        // 400 - 150: decreased by exactly the refund amount.
+        $this->assertSame('250.00', $account->fresh()->balance);
     }
 
     public function test_a_refund_is_posted_once_and_does_not_double_count(): void
     {
         $user = $this->invoiceManager();
-        $account = $this->makeCashAccount(balance: 1000);
-        $invoice = $this->makeInvoice($account, total: 1000, paid: 600);
+        $account = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($account, $user);
+        $invoice = $this->makeInvoice($account, total: 1000, paid: 0);
 
-        $this->actingAs($user)->post(route('dashboard.invoices.refund', $invoice), [
+        $payment = $this->recordCashPayment($invoice, $account, $user, '600.00', '55555555-5555-4555-8555-555555555555');
+
+        $this->actingAs($user)->post(route('dashboard.payments.refund.store', $payment), [
             'amount' => 200,
-            'cash_account_id' => $account->id,
+            'reason' => 'Возврат',
+            'idempotency_key' => '66666666-6666-4666-8666-666666666666',
         ]);
 
+        // Exactly one 'out' movement for the refund (the payment itself is
+        // 'in'), and the balance dropped by exactly 200 — not doubled.
         $this->assertSame(1, CashTransaction::where('cash_account_id', $account->id)->where('type', 'out')->count());
-        // 1000 - 200 (not 1000 - 400, which the old doubled bug produced).
-        $this->assertSame('800.00', $account->fresh()->balance);
+        // 600 - 200 (not 600 - 400, which the old doubled bug produced).
+        $this->assertSame('400.00', $account->fresh()->balance);
     }
 
     /*

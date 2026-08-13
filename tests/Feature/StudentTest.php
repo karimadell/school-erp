@@ -101,7 +101,9 @@ class StudentTest extends TestCase
         $response = $this->actingAs($user)->get(route('dashboard.students.show', $student));
 
         $response->assertOk();
-        $response->assertViewHas('currentEnrollment', function ($currentEnrollment) use ($year) {
+        // The students.show route is served by StudentProfileController, whose
+        // payload nests the enrollment at profile.current_enrollment.
+        $response->assertViewHas('profile.current_enrollment', function ($currentEnrollment) use ($year) {
             return $currentEnrollment?->academic_year_id === $year->id;
         });
     }
@@ -114,7 +116,7 @@ class StudentTest extends TestCase
         $response = $this->actingAs($user)->get(route('dashboard.students.show', $student));
 
         $response->assertOk();
-        $response->assertViewHas('currentEnrollment', null);
+        $response->assertViewHas('profile.current_enrollment', null);
     }
 
     public function test_financial_route_is_not_registered(): void

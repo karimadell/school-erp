@@ -3,6 +3,7 @@
 namespace Tests\Feature\Auth;
 
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -19,7 +20,13 @@ class AuthenticationTest extends TestCase
 
     public function test_users_can_authenticate_using_the_login_screen(): void
     {
-        $user = User::factory()->create();
+        // Login was hardened (AuthenticatedSessionController): a user with valid
+        // credentials but no portal access is authenticated then logged straight
+        // back out. A real dashboard user is active and holds an administrative
+        // role, so seed the roles and use one here to exercise the success path.
+        (new RolesAndPermissionsSeeder)->run();
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('accountant');
 
         $response = $this->post('/login', [
             'email' => $user->email,

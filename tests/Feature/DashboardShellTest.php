@@ -55,7 +55,10 @@ class DashboardShellTest extends TestCase
 
         $response->assertOk();
 
-        foreach (['Экзамены', 'Родители', 'Документы', 'Сотрудники', 'Резервные копии', 'Настройки школы'] as $hidden) {
+        // 'Настройки школы' (School Settings) has since shipped and is a live,
+        // admin-gated sidebar entry (SchoolSettingController), so it is no
+        // longer among the hidden, unimplemented placeholders below.
+        foreach (['Экзамены', 'Родители', 'Документы', 'Сотрудники', 'Резервные копии'] as $hidden) {
             $response->assertDontSee($hidden);
         }
     }

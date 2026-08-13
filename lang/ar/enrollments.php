@@ -18,6 +18,8 @@ return [
     'notes' => 'ملاحظات',
 
     'select_student' => 'اختر الطالب',
+    'select_academic_year' => 'اختر السنة الدراسية',
+    'no_academic_year' => 'لا توجد سنة دراسية متاحة',
     'select_stage' => 'اختر المرحلة',
     'select_grade' => 'اختر الصف',
     'select_class' => 'اختر الفصل',

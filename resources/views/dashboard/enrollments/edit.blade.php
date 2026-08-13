@@ -39,13 +39,19 @@
 
                     {{-- Academic Year --}}
                     <div class="col-md-6">
-                        <label class="form-label">{{ __('enrollments.academic_year') }}</label>
+                        <label class="form-label">{{ __('enrollments.academic_year') }} *</label>
 
-                        <input type="text"
-                               name="academic_year"
-                               class="form-control"
-                               value="{{ old('academic_year', $enrollment->academic_year) }}"
-                               placeholder="2025/2026">
+                        <select name="academic_year_id" class="form-select" required>
+                            <option value="">{{ __('enrollments.select_academic_year') }}</option>
+                            @forelse($academicYears as $year)
+                                <option value="{{ $year->id }}"
+                                        @selected(old('academic_year_id', $enrollment->academic_year_id) == $year->id)>
+                                    {{ $year->name }}
+                                </option>
+                            @empty
+                                <option value="" disabled>{{ __('enrollments.no_academic_year') }}</option>
+                            @endforelse
+                        </select>
                     </div>
 
                     {{-- Date --}}

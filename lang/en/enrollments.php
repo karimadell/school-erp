@@ -18,6 +18,8 @@ return [
     'notes' => 'Notes',
 
     'select_student' => 'Select Student',
+    'select_academic_year' => 'Select Academic Year',
+    'no_academic_year' => 'No academic year available',
     'select_stage' => 'Select Stage',
     'select_grade' => 'Select Grade',
     'select_class' => 'Select Class',

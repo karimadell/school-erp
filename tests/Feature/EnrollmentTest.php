@@ -11,6 +11,7 @@ use App\Models\Stage;
 use App\Models\Student;
 use App\Models\User;
 use App\Support\AcademicYearLock;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -33,10 +34,20 @@ class EnrollmentTest extends TestCase
      * 'create enrollments'/'update enrollments'. This fixture grants
      * everything so tests focused on business logic (not authorization
      * itself) aren't blocked by the permission layer.
+     *
+     * The user must also clear EnsureAdministrativePortalAccess, which
+     * requires an *active* user holding an administrative role — otherwise
+     * the /dashboard routes log the request out before the controller runs.
+     * (This mirrors the seeder+role pattern used by the other passing
+     * dashboard feature tests, e.g. EnrollmentWorkflowTest.)
      */
     protected function authorizedUser(): User
     {
-        $user = User::factory()->create();
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('admin');
+
         foreach (['view enrollments', 'create enrollments', 'update enrollments', 'delete enrollments'] as $permission) {
             Permission::findOrCreate($permission, 'web');
         }
@@ -452,6 +463,83 @@ class EnrollmentTest extends TestCase
             'model' => 'Enrollment',
             'model_id' => $enrollment->id,
         ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | UAT fix: the create/edit forms posted a hand-typed `academic_year`
+    | string but never `academic_year_id`, so a visibly-selected year still
+    | failed the required academic_year_id rule. The forms now submit
+    | academic_year_id and the label is derived server-side.
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_enrollment_creation_succeeds_with_academic_year_id(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->enroll($student, $year, $class)->assertSessionDoesntHaveErrors();
+
+        $this->assertDatabaseHas('enrollments', [
+            'student_id' => $student->id,
+            'academic_year_id' => $year->id,
+        ]);
+    }
+
+    public function test_academic_year_label_is_derived_from_the_selected_year(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        // A hand-typed academic_year label must be ignored: the stored label is
+        // always the selected year's name, keeping id and label consistent.
+        $this->actingAs($this->authorizedUser())
+            ->post(route('dashboard.enrollments.store', $student), [
+                'academic_year_id' => $year->id,
+                'academic_year' => 'ПОДДЕЛКА/9999',
+                'stage_id' => $class->grade->stage_id,
+                'grade_id' => $class->grade_id,
+                'class_id' => $class->id,
+                'status' => 'active',
+            ])->assertSessionDoesntHaveErrors();
+
+        $this->assertSame('2026 / 2027', Enrollment::where('academic_year_id', $year->id)->firstOrFail()->academic_year);
+    }
+
+    public function test_create_form_renders_an_academic_year_id_select(): void
+    {
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->actingAs($this->authorizedUser())
+            ->get(route('dashboard.enrollments.create', $student))
+            ->assertOk()
+            ->assertSee('name="academic_year_id"', false)
+            ->assertSee('2026 / 2027');
+    }
+
+    public function test_status_labels_are_localized_in_russian_on_the_create_form(): void
+    {
+        app()->setLocale('ru');
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+
+        $this->actingAs($this->authorizedUser())
+            ->get(route('dashboard.enrollments.create', $student))
+            ->assertOk()
+            ->assertSee('Активен')
+            ->assertDontSee('enrollments.status_active');
     }
 
     public function test_a_write_rejected_by_the_academic_year_lock_produces_no_audit_row(): void

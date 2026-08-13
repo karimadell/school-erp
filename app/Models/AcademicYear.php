@@ -40,6 +40,11 @@ class AcademicYear extends Model
         return $this->hasOne(AcademicCalendar::class);
     }
 
+    public function bellSchedules()
+    {
+        return $this->hasMany(BellSchedule::class);
+    }
+
     public function classTeachers()
     {
         return $this->hasMany(ClassTeacher::class);

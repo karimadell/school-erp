@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Filament\Resources\AcademicCalendars\AcademicCalendarResource;
 use App\Models\AcademicCalendar;
 use App\Models\AcademicYear;
+use App\Models\BellSchedule;
 use App\Models\CalendarEvent;
 use App\Models\User;
 use App\Services\AcademicCalendarService;
@@ -24,6 +25,8 @@ class AcademicCalendarTest extends TestCase
 
     private AcademicCalendarService $service;
 
+    private BellSchedule $defaultBellSchedule;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -34,10 +37,17 @@ class AcademicCalendarTest extends TestCase
             'end_date' => '2027-06-30',
             'is_active' => true,
         ]);
+        $this->defaultBellSchedule = BellSchedule::create([
+            'academic_year_id' => $this->year->id,
+            'name' => 'Normal',
+            'shift' => 1,
+            'is_default' => true,
+            'is_active' => true,
+        ]);
         $this->calendar = AcademicCalendar::create([
             'academic_year_id' => $this->year->id,
             'weekly_days_off' => ['fri', 'sat'],
-            'default_bell_schedule_id' => 10,
+            'default_bell_schedule_id' => $this->defaultBellSchedule->id,
         ]);
         $this->service = app(AcademicCalendarService::class);
     }
@@ -147,22 +157,32 @@ class AcademicCalendarTest extends TestCase
 
     public function test_bell_schedule_override_wins_and_inactive_events_are_ignored(): void
     {
+        $override = BellSchedule::create([
+            'academic_year_id' => $this->year->id, 'name' => 'Exam', 'shift' => 1,
+            'is_default' => false, 'is_active' => true,
+        ]);
+        $inactiveOverride = BellSchedule::create([
+            'academic_year_id' => $this->year->id, 'name' => 'Winter', 'shift' => 1,
+            'is_default' => false, 'is_active' => true,
+        ]);
         $this->event([
             'type' => CalendarEvent::TYPE_BELL_SCHEDULE_OVERRIDE,
-            'bell_schedule_id' => 20,
+            'bell_schedule_id' => $override->id,
+            'shift' => 1,
             'start_date' => '2026-11-01',
             'end_date' => '2026-11-01',
         ]);
         $this->event([
             'type' => CalendarEvent::TYPE_BELL_SCHEDULE_OVERRIDE,
-            'bell_schedule_id' => 30,
+            'bell_schedule_id' => $inactiveOverride->id,
+            'shift' => 1,
             'start_date' => '2026-11-02',
             'end_date' => '2026-11-02',
             'is_active' => false,
         ]);
 
-        $this->assertSame(20, $this->service->bellScheduleFor('2026-11-01'));
-        $this->assertSame(10, $this->service->bellScheduleFor('2026-11-02'));
+        $this->assertSame($override->id, $this->service->bellScheduleFor('2026-11-01'));
+        $this->assertSame($this->defaultBellSchedule->id, $this->service->bellScheduleFor('2026-11-02'));
     }
 
     public function test_explicit_academic_year_never_resolves_a_date_outside_its_boundaries(): void

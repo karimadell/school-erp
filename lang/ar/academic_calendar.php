@@ -37,5 +37,7 @@ return [
         'teaching_override_effect' => 'حدد تأثير استثناء اليوم الدراسي.',
         'bell_schedule_required' => 'يلزم تحديد جدول جرس لاستثناء جدول الجرس.',
         'bell_override_single_day' => 'لا يمكن تطبيق استثناء جدول الجرس إلا على يوم واحد.',
+        'bell_schedule_year_mismatch' => 'يجب أن ينتمي جدول الجرس إلى العام الدراسي نفسه.',
+        'bell_schedule_shift_mismatch' => 'يجب أن تتطابق فترة الحدث مع فترة جدول الجرس.',
     ],
 ];

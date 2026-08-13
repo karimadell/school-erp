@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\AcademicCalendar;
 use App\Models\AcademicYear;
+use App\Models\BellSchedule;
 use App\Models\CalendarEvent;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -49,12 +50,32 @@ class AcademicCalendarService
             return null;
         }
 
-        $override = $this->eventsFor($calendar, $date)
-            ->first(fn (CalendarEvent $event) => $event->bell_schedule_id !== null
-                && ($event->shift === null || $shift === null || $event->shift === $shift)
-            );
+        $overrides = $this->eventsFor($calendar, $date)
+            ->filter(fn (CalendarEvent $event) => $event->bell_schedule_id !== null);
 
-        return $override?->bell_schedule_id ?? $calendar->default_bell_schedule_id;
+        $override = $shift === null
+            ? $overrides->first()
+            : $overrides->firstWhere('shift', $shift)
+                ?? $overrides->first(fn (CalendarEvent $event) => $event->shift === null && $event->bellSchedule?->shift === $shift
+                );
+
+        if ($override) {
+            return $override->bell_schedule_id;
+        }
+
+        $calendarDefault = $calendar->defaultBellSchedule;
+        if ($calendarDefault?->is_active && ($shift === null || $calendarDefault->shift === $shift)) {
+            return $calendarDefault->id;
+        }
+
+        $effectiveShift = $shift ?? 1;
+
+        return BellSchedule::query()
+            ->where('academic_year_id', $calendar->academic_year_id)
+            ->where('shift', $effectiveShift)
+            ->where('is_active', true)
+            ->where('is_default', true)
+            ->value('id');
     }
 
     public function calendarFor(CarbonInterface|string $date, AcademicYear|int|null $academicYear = null): ?AcademicCalendar

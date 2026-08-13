@@ -96,6 +96,16 @@ class CalendarEvent extends Model implements ResolvesAcademicYear
                 }
             }
 
+            if ($event->bellSchedule && $event->calendar) {
+                if ($event->bellSchedule->academic_year_id !== $event->calendar->academic_year_id) {
+                    $errors['bell_schedule_id'] = __('academic_calendar.validation.bell_schedule_year_mismatch');
+                }
+
+                if ($event->shift !== null && $event->bellSchedule->shift !== $event->shift) {
+                    $errors['bell_schedule_id'] = __('academic_calendar.validation.bell_schedule_shift_mismatch');
+                }
+            }
+
             if ($errors !== []) {
                 throw ValidationException::withMessages($errors);
             }
@@ -110,5 +120,10 @@ class CalendarEvent extends Model implements ResolvesAcademicYear
     public function resolveAcademicYear(): ?AcademicYear
     {
         return $this->calendar?->academicYear;
+    }
+
+    public function bellSchedule()
+    {
+        return $this->belongsTo(BellSchedule::class);
     }
 }

@@ -5,7 +5,7 @@ namespace App\Filament\Resources\AcademicCalendars\Schemas;
 use App\Models\AcademicCalendar;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 class AcademicCalendarForm
@@ -33,11 +33,17 @@ class AcademicCalendarForm
                 ->required()
                 ->columns(4),
 
-            TextInput::make('default_bell_schedule_id')
+            Select::make('default_bell_schedule_id')
                 ->label(__('academic_calendar.fields.default_bell_schedule_id'))
-                ->helperText(__('academic_calendar.help.default_bell_schedule_id'))
-                ->numeric()
-                ->minValue(1)
+                ->relationship(
+                    'defaultBellSchedule',
+                    'name',
+                    modifyQueryUsing: fn ($query, Get $get) => $query
+                        ->where('academic_year_id', $get('academic_year_id'))
+                        ->where('is_active', true),
+                )
+                ->searchable()
+                ->preload()
                 ->nullable(),
         ]);
     }

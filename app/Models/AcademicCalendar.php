@@ -41,6 +41,13 @@ class AcademicCalendar extends Model implements ResolvesAcademicYear
             }
 
             $calendar->weekly_days_off = $days;
+
+            if ($calendar->defaultBellSchedule
+                && $calendar->defaultBellSchedule->academic_year_id !== $calendar->academic_year_id) {
+                throw ValidationException::withMessages([
+                    'default_bell_schedule_id' => __('academic_calendar.validation.bell_schedule_year_mismatch'),
+                ]);
+            }
         });
     }
 
@@ -52,6 +59,11 @@ class AcademicCalendar extends Model implements ResolvesAcademicYear
     public function events()
     {
         return $this->hasMany(CalendarEvent::class);
+    }
+
+    public function defaultBellSchedule()
+    {
+        return $this->belongsTo(BellSchedule::class, 'default_bell_schedule_id');
     }
 
     public function resolveAcademicYear(): ?AcademicYear

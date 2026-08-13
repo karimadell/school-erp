@@ -37,5 +37,7 @@ return [
         'teaching_override_effect' => 'Select the teaching-day override effect.',
         'bell_schedule_required' => 'A bell schedule is required for a bell schedule override.',
         'bell_override_single_day' => 'A bell schedule override may only apply to one day.',
+        'bell_schedule_year_mismatch' => 'The bell schedule must belong to the same academic year.',
+        'bell_schedule_shift_mismatch' => 'The event shift must match the bell schedule shift.',
     ],
 ];

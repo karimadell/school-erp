@@ -46,7 +46,12 @@ class EventsRelationManager extends RelationManager
                 CalendarEvent::EFFECT_SHORTENED => __('academic_calendar.effects.shortened'),
             ])->required(fn (Get $get) => $get('type') === CalendarEvent::TYPE_TEACHING_OVERRIDE)
                 ->visible(fn (Get $get) => in_array($get('type'), [CalendarEvent::TYPE_TEACHING_OVERRIDE, CalendarEvent::TYPE_SCHOOL_EVENT], true)),
-            TextInput::make('bell_schedule_id')->label(__('academic_calendar.fields.bell_schedule_id'))->numeric()->minValue(1)
+            Select::make('bell_schedule_id')->label(__('academic_calendar.fields.bell_schedule_id'))
+                ->relationship('bellSchedule', 'name', modifyQueryUsing: fn ($query) => $query
+                    ->where('academic_year_id', $this->getOwnerRecord()->academic_year_id)
+                    ->where('is_active', true))
+                ->searchable()
+                ->preload()
                 ->required(fn (Get $get) => $get('type') === CalendarEvent::TYPE_BELL_SCHEDULE_OVERRIDE)
                 ->visible(fn (Get $get) => in_array($get('type'), [CalendarEvent::TYPE_BELL_SCHEDULE_OVERRIDE, CalendarEvent::TYPE_TEACHING_OVERRIDE], true)),
             TextInput::make('shift')->label(__('academic_calendar.fields.shift'))->numeric()->minValue(1)->nullable(),

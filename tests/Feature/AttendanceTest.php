@@ -12,12 +12,29 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class AttendanceTest extends TestCase
 {
     use RefreshDatabase;
+
+    /**
+     * The attendance routes are gated only by EnsureAdministrativePortalAccess
+     * (no per-action permission), so any active user with an administrative
+     * role may use them. 'reception' is a non-teacher staff role, so it stays
+     * on the admin portal instead of being redirected to the teacher panel.
+     */
+    protected function staffUser(): User
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
+
+        return $user;
+    }
 
     protected function makeEnrollment(string $studentName = 'Test Student'): Enrollment
     {
@@ -46,7 +63,7 @@ class AttendanceTest extends TestCase
 
     public function test_index_page_renders(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         $this->actingAs($user)->get(route('dashboard.attendance.index'))->assertOk();
     }
@@ -57,7 +74,7 @@ class AttendanceTest extends TestCase
      */
     public function test_dashboard_nav_links_to_attendance_reports_and_dashboard(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.attendance.index'));
 
@@ -69,7 +86,7 @@ class AttendanceTest extends TestCase
 
     public function test_take_page_renders_with_class_students_and_periods(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
         Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
 
@@ -84,7 +101,7 @@ class AttendanceTest extends TestCase
 
     public function test_daily_attendance_can_be_stored_via_dashboard(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
 
         $response = $this->actingAs($user)->post(route('dashboard.attendance.store'), [
@@ -105,7 +122,7 @@ class AttendanceTest extends TestCase
 
     public function test_all_supported_daily_statuses_can_be_stored(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         foreach (['present', 'absent', 'late', 'excused'] as $status) {
             $enrollment = $this->makeEnrollment("Student {$status}");
@@ -129,7 +146,7 @@ class AttendanceTest extends TestCase
 
     public function test_valid_period_status_can_be_stored(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
         $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
 
@@ -157,7 +174,7 @@ class AttendanceTest extends TestCase
      */
     public function test_invalid_daily_status_is_rejected(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
 
         $response = $this->actingAs($user)->post(route('dashboard.attendance.store'), [
@@ -175,7 +192,7 @@ class AttendanceTest extends TestCase
 
     public function test_invalid_period_status_is_rejected(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
         $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
 
@@ -200,7 +217,7 @@ class AttendanceTest extends TestCase
      */
     public function test_take_page_renders_without_fallback_expressions_or_translation_leaks(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $stage = Stage::create(['name' => 'Primary']);
         $grade = Grade::create(['name' => 'Grade 1', 'stage_id' => $stage->id]);
         $class = SchoolClass::create([
@@ -231,7 +248,7 @@ class AttendanceTest extends TestCase
 
     public function test_class_report_page_renders(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
 
         $response = $this->actingAs($user)->get(route('dashboard.attendance.reports.class', [
@@ -248,14 +265,14 @@ class AttendanceTest extends TestCase
      */
     public function test_student_report_page_renders(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         $this->actingAs($user)->get(route('dashboard.attendance.reports.student'))->assertOk();
     }
 
     public function test_student_report_page_renders_with_data(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment('Ivan Ivanov');
 
         Attendance::create([
@@ -279,14 +296,14 @@ class AttendanceTest extends TestCase
      */
     public function test_attendance_dashboard_page_renders(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         $this->actingAs($user)->get(route('dashboard.attendance.dashboard'))->assertOk();
     }
 
     public function test_attendance_dashboard_page_renders_with_data(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
 
         Attendance::create([
@@ -311,7 +328,7 @@ class AttendanceTest extends TestCase
      */
     public function test_attendance_pages_render_without_translation_key_leaks_in_all_locales(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $enrollment = $this->makeEnrollment();
         Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
 
@@ -365,7 +382,7 @@ class AttendanceTest extends TestCase
 
     public function test_take_page_roster_only_includes_enrollments_from_the_active_academic_year(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $stage = Stage::create(['name' => 'Primary']);
         $grade = Grade::create(['name' => 'Grade 1', 'stage_id' => $stage->id]);
         $class = SchoolClass::create([
@@ -420,7 +437,7 @@ class AttendanceTest extends TestCase
         // Confirms the active-year restriction introduces no other
         // behavior: an enrollment mode of distance_learning does not, by
         // itself, exclude a student from the daily roster.
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $stage = Stage::create(['name' => 'Primary']);
         $grade = Grade::create(['name' => 'Grade 1', 'stage_id' => $stage->id]);
         $class = SchoolClass::create([

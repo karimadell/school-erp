@@ -12,6 +12,7 @@ use App\Models\Stage;
 use App\Models\Student;
 use App\Models\Subject;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use App\Support\AcademicYearLock;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -59,7 +60,11 @@ class StudentGradeQuarterValidationTest extends TestCase
 
     protected function postGrade(Exam $exam, Student $student, $quarterId)
     {
-        $user = User::factory()->create();
+        // Active + administrative role clears EnsureAdministrativePortalAccess;
+        // the student-grades controller has no further permission gate.
+        (new RolesAndPermissionsSeeder)->run();
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
 
         return $this->actingAs($user)->post(route('dashboard.student-grades.store'), [
             'student_id' => $student->id,

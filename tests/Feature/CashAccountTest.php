@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\CashAccount;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -12,9 +13,24 @@ class CashAccountTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Portal-eligible but unprivileged ('reception', active): clears
+     * EnsureAdministrativePortalAccess but lacks 'manage cash', so the
+     * negative tests exercise the real 403 gate, not a portal redirect.
+     */
+    protected function portalUser(): User
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
+
+        return $user;
+    }
+
     protected function authorizedUser(): User
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         // Matches the permission actually seeded in
         // RolesAndPermissionsSeeder.php and checked by
@@ -117,7 +133,7 @@ class CashAccountTest extends TestCase
 
     public function test_unauthorized_user_cannot_edit(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
         $account = CashAccount::create(['name' => 'Guarded', 'type' => 'main', 'balance' => 0]);
 
         $response = $this->actingAs($user)
@@ -142,7 +158,7 @@ class CashAccountTest extends TestCase
 
     public function test_unauthorized_user_cannot_create_an_account(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)
             ->post(route('dashboard.cash.accounts.store'), [
@@ -168,7 +184,7 @@ class CashAccountTest extends TestCase
 
     public function test_unauthorized_user_cannot_delete_an_account(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
         $account = CashAccount::create(['name' => 'Protected', 'type' => 'main', 'balance' => 0]);
 
         $response = $this->actingAs($user)

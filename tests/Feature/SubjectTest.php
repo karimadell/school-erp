@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Subject;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -12,9 +13,24 @@ class SubjectTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Portal-eligible but unprivileged ('reception', active): clears
+     * EnsureAdministrativePortalAccess but lacks 'manage subjects', so the
+     * negative tests exercise the real 403 gate, not a portal redirect.
+     */
+    protected function portalUser(): User
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
+
+        return $user;
+    }
+
     protected function authorizedUser(): User
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         Permission::findOrCreate('manage subjects', 'web');
         $user->givePermissionTo('manage subjects');
@@ -24,7 +40,7 @@ class SubjectTest extends TestCase
 
     public function test_any_authenticated_user_can_view_the_index(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.subjects.index'));
 
@@ -33,7 +49,7 @@ class SubjectTest extends TestCase
 
     public function test_unauthorized_user_cannot_open_create_page(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.subjects.create'));
 
@@ -42,7 +58,7 @@ class SubjectTest extends TestCase
 
     public function test_unauthorized_user_cannot_store_a_subject(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->post(route('dashboard.subjects.store'), [
             'name_ru' => 'Mathematics',

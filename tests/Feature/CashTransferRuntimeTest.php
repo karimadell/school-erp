@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\CashAccount;
 use App\Models\CashTransfer;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -44,7 +45,11 @@ class CashTransferRuntimeTest extends TestCase
 
     protected function cashManager(): User
     {
-        $user = User::factory()->create();
+        // Active + administrative role clears EnsureAdministrativePortalAccess;
+        // 'manage cash' authorizes the transfer controller itself.
+        (new RolesAndPermissionsSeeder)->run();
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
         Permission::firstOrCreate(['name' => 'manage cash']);
         $user->givePermissionTo('manage cash');
 

@@ -9,6 +9,7 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -31,6 +32,21 @@ class ReportCardTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * The report-card routes are gated only by
+     * EnsureAdministrativePortalAccess (no per-action permission), so an
+     * active user with an administrative role ('reception') suffices.
+     */
+    protected function staffUser(): User
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
+
+        return $user;
+    }
+
     protected function makeStudent(): Student
     {
         $stage = Stage::create(['name' => 'Primary']);
@@ -42,7 +58,7 @@ class ReportCardTest extends TestCase
 
     public function test_index_no_longer_fatally_errors_and_shows_the_unavailable_message(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.report_cards.index'));
 
@@ -52,7 +68,7 @@ class ReportCardTest extends TestCase
 
     public function test_show_no_longer_fatally_errors_and_shows_the_unavailable_message(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $student = $this->makeStudent();
 
         $response = $this->actingAs($user)->get(route('dashboard.report_cards.show', $student->id));
@@ -63,7 +79,7 @@ class ReportCardTest extends TestCase
 
     public function test_print_no_longer_fatally_errors_and_shows_the_unavailable_message(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $student = $this->makeStudent();
 
         $response = $this->actingAs($user)->get(route('dashboard.report_cards.print', $student->id));
@@ -76,7 +92,7 @@ class ReportCardTest extends TestCase
     {
         // Deliberately not looking up the student at all (that would be
         // report-card-specific logic, out of scope for this containment fix).
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         $this->actingAs($user)->get(route('dashboard.report_cards.show', 999999))->assertOk();
         $this->actingAs($user)->get(route('dashboard.report_cards.print', 999999))->assertOk();
@@ -114,7 +130,7 @@ class ReportCardTest extends TestCase
 
     public function test_download_pdf_no_longer_crashes_and_sends_a_notification(): void
     {
-        $user = User::factory()->create();
+        $user = $this->staffUser();
         $student = $this->makeStudent();
 
         Livewire::actingAs($user)
@@ -128,7 +144,7 @@ class ReportCardTest extends TestCase
     public function test_download_pdf_without_a_loaded_student_still_returns_null_unchanged(): void
     {
         // Pre-existing guard clause, must remain unaffected by this fix.
-        $user = User::factory()->create();
+        $user = $this->staffUser();
 
         Livewire::actingAs($user)
             ->test(ReportCard::class)

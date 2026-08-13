@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Teacher;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -12,9 +13,26 @@ class TeacherTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * A portal-eligible but unprivileged user: active and holding an
+     * administrative role ('reception') so EnsureAdministrativePortalAccess
+     * lets the request through to the controller, but WITHOUT 'manage
+     * teachers' — so the authorization gate itself is what the negative
+     * tests exercise (a real 403), not a portal redirect.
+     */
+    protected function portalUser(): User
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
+
+        return $user;
+    }
+
     protected function authorizedUser(): User
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         Permission::findOrCreate('manage teachers', 'web');
         $user->givePermissionTo('manage teachers');
@@ -24,7 +42,7 @@ class TeacherTest extends TestCase
 
     public function test_any_authenticated_user_can_view_the_index(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.teachers.index'));
 
@@ -33,7 +51,7 @@ class TeacherTest extends TestCase
 
     public function test_unauthorized_user_cannot_open_create_page(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.teachers.create'));
 
@@ -42,7 +60,7 @@ class TeacherTest extends TestCase
 
     public function test_unauthorized_user_cannot_store_a_teacher(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->post(route('dashboard.teachers.store'), [
             'first_name' => 'Anna',

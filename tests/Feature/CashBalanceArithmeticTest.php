@@ -8,6 +8,7 @@ use App\Models\CashTransfer;
 use App\Models\Invoice;
 use App\Models\Student;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -29,9 +30,16 @@ class CashBalanceArithmeticTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Active + administrative role ('reception') clears
+     * EnsureAdministrativePortalAccess; the explicit permissions below are
+     * what actually authorize each finance action.
+     */
     protected function invoiceManager(): User
     {
-        $user = User::factory()->create();
+        (new RolesAndPermissionsSeeder)->run();
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
         Permission::firstOrCreate(['name' => 'manage invoices']);
         Permission::firstOrCreate(['name' => 'view invoices']);
         $user->givePermissionTo('manage invoices', 'view invoices');
@@ -41,7 +49,9 @@ class CashBalanceArithmeticTest extends TestCase
 
     protected function cashManager(): User
     {
-        $user = User::factory()->create();
+        (new RolesAndPermissionsSeeder)->run();
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
         Permission::firstOrCreate(['name' => 'manage cash']);
         $user->givePermissionTo('manage cash');
 

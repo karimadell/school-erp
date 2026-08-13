@@ -6,6 +6,7 @@ use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\CashTransfer;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -26,9 +27,24 @@ class CashTransferAuthorizationTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Portal-eligible but unprivileged ('reception', active): clears
+     * EnsureAdministrativePortalAccess but lacks 'manage cash', so the
+     * negative tests exercise the real 403 gate, not a portal redirect.
+     */
+    protected function portalUser(): User
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
+
+        return $user;
+    }
+
     protected function cashManager(): User
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
         Permission::firstOrCreate(['name' => 'manage cash']);
         $user->givePermissionTo('manage cash');
 
@@ -49,7 +65,7 @@ class CashTransferAuthorizationTest extends TestCase
 
     public function test_an_authenticated_user_without_manage_cash_is_forbidden_on_every_transfer_route(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $this->actingAs($user)->get(route('dashboard.cash.transfer.form'))->assertForbidden();
         $this->actingAs($user)->get(route('dashboard.cash.transfers'))->assertForbidden();
@@ -92,7 +108,7 @@ class CashTransferAuthorizationTest extends TestCase
 
     public function test_an_unauthorized_submission_creates_no_transfer_and_changes_no_balance(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
 

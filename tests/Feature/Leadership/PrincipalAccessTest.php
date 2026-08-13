@@ -44,8 +44,8 @@ class PrincipalAccessTest extends TestCase
         foreach ([
             'view students', 'create students', 'update students', 'delete students',
             'manage teachers', 'view enrollments', 'manage subjects', 'manage stages',
-            'manage grades', 'manage classes', 'manage academic years', 'manage curriculum',
-            'manage journal entries', 'view timetable', 'manage timetable', 'view invoices',
+            'manage grades', 'manage classes', 'manage academic years',
+            'manage journal entries', 'view invoices',
             'manage invoices', 'manage fees', 'manage fee prices', 'manage expenses',
             'manage student service subscriptions', 'override service prices',
             'view student balances', 'manage cash', 'view cash reports', 'view audit logs',
@@ -54,8 +54,15 @@ class PrincipalAccessTest extends TestCase
             $this->assertTrue($principal->can($permission), "Principal lacks [{$permission}].");
         }
 
-        $this->assertFalse($principal->can('manage permissions'));
-        $this->assertFalse($principal->can('unlock historical academic year'));
+        // Curriculum and Timetable are admin-only configuration (ADR-016) —
+        // withheld from principal exactly as from school-admin, alongside the
+        // protected system permissions.
+        foreach ([
+            'manage permissions', 'unlock historical academic year',
+            'manage curriculum', 'view timetable', 'manage timetable',
+        ] as $permission) {
+            $this->assertFalse($principal->can($permission), "Principal should NOT have [{$permission}].");
+        }
     }
 
     public function test_principal_can_review_users_roles_and_audit_logs(): void

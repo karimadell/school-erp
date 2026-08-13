@@ -15,6 +15,7 @@ use App\Models\Teacher;
 use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -215,5 +216,36 @@ class TimetableGridAuthorizationTest extends TestCase
         Permission::firstOrCreate(['name' => 'view timetable']);
         $this->assertFalse($user->hasPermissionTo('view timetable'));
         $this->assertTrue(TimetableGrid::canAccess());
+    }
+
+    /**
+     * ADR-016: Timetable is admin-only configuration. 'admin' (and
+     * 'super-admin') retain access; 'school-admin' and 'principal' are
+     * denied, even though principal otherwise mirrors admin's full academic-
+     * management set. Locks the seeded role -> timetable-permission matrix.
+     */
+    public function test_timetable_access_follows_the_admin_only_seeded_role_matrix(): void
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $this->actingAs($this->userWithRole('admin'));
+        $this->assertTrue(TimetableGrid::canAccess());
+
+        $this->actingAs($this->userWithRole('super-admin'));
+        $this->assertTrue(TimetableGrid::canAccess());
+
+        $this->actingAs($this->userWithRole('school-admin'));
+        $this->assertFalse(TimetableGrid::canAccess());
+
+        $this->actingAs($this->userWithRole('principal'));
+        $this->assertFalse(TimetableGrid::canAccess());
+    }
+
+    private function userWithRole(string $role): User
+    {
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole($role);
+
+        return $user;
     }
 }

@@ -130,7 +130,11 @@ class AuthorizationMatrixTest extends TestCase
             $this->assertTrue($user->can($permission), "school-admin should have [{$permission}].");
         }
 
-        foreach (['manage users', 'manage roles', 'manage permissions'] as $permission) {
+        foreach ([
+            'manage users', 'manage roles', 'manage permissions',
+            // Curriculum and Timetable are admin-only configuration (ADR-016).
+            'manage curriculum', 'view timetable', 'manage timetable',
+        ] as $permission) {
             $this->assertFalse($user->can($permission), "school-admin should NOT have [{$permission}].");
         }
     }
@@ -199,14 +203,21 @@ class AuthorizationMatrixTest extends TestCase
         foreach ([
             'view students', 'create students', 'manage teachers', 'manage subjects',
             'manage stages', 'manage grades', 'manage classes', 'manage academic years',
-            'manage curriculum', 'manage journal entries', 'view timetable', 'manage timetable',
+            'manage journal entries',
             'manage fees', 'manage fee prices', 'manage invoices', 'manage expenses',
             'manage cash', 'view cash reports', 'manage users', 'manage roles', 'view audit logs',
         ] as $permission) {
             $this->assertTrue($user->can($permission), "principal should have [{$permission}].");
         }
 
-        foreach (['manage permissions', 'unlock historical academic year'] as $permission) {
+        // Curriculum and Timetable are administrator-configuration permissions
+        // (admin / super-admin only), like the protected system permissions.
+        // Principal — despite mirroring every other academic-management
+        // permission — is excluded, exactly as school-admin is. See ADR-016.
+        foreach ([
+            'manage permissions', 'unlock historical academic year',
+            'manage curriculum', 'view timetable', 'manage timetable',
+        ] as $permission) {
             $this->assertFalse($user->can($permission), "principal should NOT have [{$permission}].");
         }
     }

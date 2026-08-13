@@ -192,6 +192,17 @@ class RolesAndPermissionsSeeder extends Seeder
         $principal->syncPermissions(array_values(array_diff($permissions, [
             'unlock historical academic year',
             'manage permissions',
+            // Curriculum and Timetable are administrator-configuration
+            // permissions (the year's academic backbone), held only by 'admin'
+            // and 'super-admin'. Admin-only per the accepted decision — not
+            // extended to principal, exactly as they are withheld from
+            // school-admin above — even though principal otherwise mirrors
+            // admin's full operational academic-management set. Extending
+            // these to principal is a separate, explicit future decision.
+            // See docs/TIMETABLE_ARCHITECTURE_DECISIONS.md and ADR-016.
+            'manage curriculum',
+            'view timetable',
+            'manage timetable',
         ])));
     }
 }

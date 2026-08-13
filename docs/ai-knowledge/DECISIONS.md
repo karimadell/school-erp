@@ -16,6 +16,35 @@
 
 ## Entries
 
+### ADR-016 — Curriculum & Timetable are admin-only configuration; principal excluded (Accepted)
+- Context: `RolesAndPermissionsSeeder` gave the `principal` role `manage
+  curriculum`, `view timetable`, and `manage timetable` — because its
+  `array_diff` excluded only `unlock historical academic year` and `manage
+  permissions`. This contradicted the accepted decision (docs/TIMETABLE_
+  ARCHITECTURE_DECISIONS.md and the seeder's own school-admin comments) that
+  curriculum and timetable are admin-only, and it left principal with more
+  academic-configuration authority than school-admin. Two tests
+  (CurriculumTest / CurriculumDashboardTest) already encoded "principal
+  cannot"; the seeder was the outlier.
+- Decision: Curriculum and Timetable are administrator-configuration
+  permissions (`manage curriculum`, `view timetable`, `manage timetable`),
+  held only by `admin` and `super-admin` (the latter via the ADR-004 bypass).
+  No operational role — `school-admin`, `principal`, `accountant`,
+  `reception`, `cashier` — holds them. `principal`'s seeded exclusion list now
+  mirrors `school-admin`'s for these three. Curriculum is the single academic
+  backbone (ADR-010) with high blast radius; timetable is downstream of it.
+  Extending either permission to another role remains a separate, explicit
+  future decision — never inferred.
+- Consequences: This is a tightening (removes an unintended grant), so no
+  authorization is weakened. Principal retains its full operational academic-
+  management set (subjects, stages, grades, classes, academic years, journal
+  entries) and finance/user/role management. Enforcement is unchanged — the
+  `CurriculumPolicy` (`manage curriculum`) and `TimetableGrid` inline guards
+  (`view timetable` / `manage timetable`) already gate on these permissions;
+  only who the seeder grants them to changed. Locked by AuthorizationMatrixTest
+  (principal/school-admin "should NOT have"), CurriculumTest/
+  CurriculumDashboardTest, and TimetableGridAuthorizationTest's role matrix.
+
 ### ADR-015 — Tariffs open for prepayment at rollover, not on year start (Accepted)
 - Context: A `FeePrice` already separates *which* year it belongs to
   (`academic_year_id`) from *when the version is valid* (`start_date`/`end_date`).

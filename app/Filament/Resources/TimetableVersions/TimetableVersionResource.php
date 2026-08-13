@@ -5,6 +5,7 @@ namespace App\Filament\Resources\TimetableVersions;
 use App\Filament\Resources\TimetableVersions\Pages\CreateTimetableVersion;
 use App\Filament\Resources\TimetableVersions\Pages\EditTimetableVersion;
 use App\Filament\Resources\TimetableVersions\Pages\ListTimetableVersions;
+use App\Filament\Resources\TimetableVersions\RelationManagers\EntriesRelationManager;
 use App\Filament\Resources\TimetableVersions\Schemas\TimetableVersionForm;
 use App\Filament\Resources\TimetableVersions\Tables\TimetableVersionsTable;
 use App\Models\TimetableVersion;
@@ -48,6 +49,11 @@ class TimetableVersionResource extends Resource
     public static function table(Table $table): Table
     {
         return TimetableVersionsTable::configure($table);
+    }
+
+    public static function getRelations(): array
+    {
+        return [EntriesRelationManager::class];
     }
 
     public static function canViewAny(): bool

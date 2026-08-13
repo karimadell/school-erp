@@ -4,7 +4,10 @@ namespace App\Models;
 
 use App\Contracts\ResolvesAcademicYear;
 use App\Models\Academic\Timetable as AcademicTimetable;
+use App\Services\TimetableEntryValidator;
+use App\Services\TimetableEntryWriteLock;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class TimetableEntry extends Model implements ResolvesAcademicYear
@@ -26,7 +29,7 @@ class TimetableEntry extends Model implements ResolvesAcademicYear
             ]);
 
             if (TimetableVersion::query()->whereKey($versionIds)
-                ->where('status', TimetableVersion::STATUS_PUBLISHED)->exists()) {
+                ->where('status', '!=', TimetableVersion::STATUS_DRAFT)->exists()) {
                 throw ValidationException::withMessages(['version' => __('timetable_version.validation.published_immutable')]);
             }
         };
@@ -37,51 +40,31 @@ class TimetableEntry extends Model implements ResolvesAcademicYear
             }
 
             $guardPublished($entry);
-            $entry->validateReferences();
+            app(TimetableEntryValidator::class)->validate($entry, requireComplete: false);
         });
 
         static::deleting($guardPublished);
     }
 
-    private function validateReferences(): void
+    public function save(array $options = [])
     {
-        $version = TimetableVersion::find($this->timetable_version_id);
-        $timetable = AcademicTimetable::find($this->academic_timetable_id);
-
-        if ($version && $timetable && $timetable->timetable_version_id !== $version->id) {
-            throw ValidationException::withMessages([
-                'academic_timetable_id' => __('timetable_version.validation.header_version_mismatch'),
+        return DB::transaction(function () use ($options) {
+            app(TimetableEntryWriteLock::class)->lock([
+                $this->exists ? $this->getOriginal('timetable_version_id') : null,
+                $this->timetable_version_id,
             ]);
-        }
 
-        if (! $version) {
-            return;
-        }
+            return parent::save($options);
+        });
+    }
 
-        $yearId = $version->academic_year_id;
-        $yearReferences = [
-            'bell_schedule_id' => [BellSchedule::class, $this->bell_schedule_id],
-            'classroom_id' => [PhysicalClassroom::class, $this->classroom_id],
-            'teacher_assignment_id' => [TeacherAssignment::class, $this->teacher_assignment_id],
-            'curriculum_id' => [Curriculum::class, $this->curriculum_id],
-        ];
+    public function delete()
+    {
+        return DB::transaction(function () {
+            app(TimetableEntryWriteLock::class)->lock($this->timetable_version_id);
 
-        foreach ($yearReferences as $field => [$model, $id]) {
-            if ($id && $model::query()->whereKey($id)->where('academic_year_id', '!=', $yearId)->exists()) {
-                throw ValidationException::withMessages([
-                    $field => __('timetable_version.validation.cross_year_reference'),
-                ]);
-            }
-        }
-
-        if ($this->bell_schedule_period_id && BellSchedulePeriod::query()
-            ->whereKey($this->bell_schedule_period_id)
-            ->where('bell_schedule_id', '!=', $this->bell_schedule_id)
-            ->exists()) {
-            throw ValidationException::withMessages([
-                'bell_schedule_period_id' => __('timetable_version.validation.period_schedule_mismatch'),
-            ]);
-        }
+            return parent::delete();
+        });
     }
 
     public function version()

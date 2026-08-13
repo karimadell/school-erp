@@ -24,7 +24,7 @@ class Timetable extends Model implements ResolvesAcademicYear
             ]);
 
             if (TimetableVersion::query()->whereKey($versionIds)
-                ->where('status', TimetableVersion::STATUS_PUBLISHED)->exists()) {
+                ->where('status', '!=', TimetableVersion::STATUS_DRAFT)->exists()) {
                 throw ValidationException::withMessages([
                     'version' => __('timetable_version.validation.published_immutable'),
                 ]);

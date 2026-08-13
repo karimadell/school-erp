@@ -4,6 +4,7 @@ namespace App\Services\Finance;
 
 use App\Models\AcademicYear;
 use App\Models\FeePrice;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -44,6 +45,7 @@ class AcademicYearTariffRolloverService
             [$source, $target] = $this->years($sourceYearId, $targetYearId, true);
             $sourceTariffs = FeePrice::query()->where('academic_year_id', $source->id)->orderBy('id')->lockForUpdate()->get();
             $targetTariffs = FeePrice::query()->where('academic_year_id', $target->id)->lockForUpdate()->get();
+            $rollForwardStart = CarbonImmutable::now()->startOfDay();
             $created = 0;
             $skipped = 0;
 
@@ -57,7 +59,13 @@ class AcademicYearTariffRolloverService
 
                 $attributes = $sourceTariff->only(self::COPY_FIELDS);
                 $attributes['academic_year_id'] = $target->id;
-                $attributes['start_date'] = $target->start_date->toDateString();
+                // Open the copied tariff's window at rollover time so parents can be
+                // invoiced and pay tuition months before classes begin. The school's
+                // start date scopes the price via academic_year_id — it must never gate
+                // invoicing. Clamp to the year start so the window is never opened after
+                // classes have already begun (a late/mid-year rollover), and never after
+                // the year end (which end_date preserves for version validity).
+                $attributes['start_date'] = $rollForwardStart->min($target->start_date)->toDateString();
                 $attributes['end_date'] = $target->end_date->toDateString();
                 $copy = FeePrice::create($attributes);
                 $targetTariffs->push($copy);

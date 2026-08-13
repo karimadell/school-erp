@@ -10,6 +10,8 @@ use App\Models\InvoiceItem;
 use App\Models\Student;
 use App\Models\User;
 use App\Services\Finance\AcademicYearTariffRolloverService;
+use App\Services\Finance\InvoiceCalculationService;
+use Carbon\CarbonImmutable;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -41,8 +43,44 @@ class AcademicYearTariffRolloverTest extends TestCase
         ]);
     }
 
+    protected function tearDown(): void
+    {
+        CarbonImmutable::setTestNow();
+        parent::tearDown();
+    }
+
+    public function test_rolled_over_tariff_is_payable_before_the_academic_year_starts(): void
+    {
+        // A school rolls next year's price list over in June, then invoices a parent
+        // in July — long before the 1 September start. The rolled tariff must resolve.
+        CarbonImmutable::setTestNow('2026-06-15 09:00:00');
+        app(AcademicYearTariffRolloverService::class)->copy($this->sourceYear->id, $this->targetYear->id);
+
+        $copy = FeePrice::where('academic_year_id', $this->targetYear->id)->sole();
+        $this->assertSame('2026-06-15', $copy->start_date->toDateString());
+
+        // Prepayment date is before the school year start (2026-09-01) yet the tariff resolves.
+        $result = app(InvoiceCalculationService::class)->calculate(
+            [[
+                'fee_id' => $this->fee->id, 'quantity' => 1, 'grade_group' => '1–4 классы',
+                'payment_period' => 'yearly', 'option_type' => 'Форма', 'option_value' => 'Очная',
+                'size' => '10', 'item' => 'Комплект',
+            ]],
+            pricingDate: '2026-07-20',
+            academicYearId: $this->targetYear->id,
+        );
+
+        $this->assertSame('40500.00', $result['total_amount']);
+        $this->assertSame('2026-06-15', $result['line_items'][0]['tariff_valid_from']);
+        $this->assertSame('2027-06-30', $result['line_items'][0]['tariff_valid_to']);
+    }
+
     public function test_dashboard_wizard_previews_and_copies_tariffs(): void
     {
+        // Freeze "now" before the year starts so the copied tariff's window opens
+        // at rollover time, making the new year's price payable months early.
+        CarbonImmutable::setTestNow('2026-06-15 10:00:00');
+
         $this->actingAs($this->accountant)->get(route('dashboard.finance.tariffs.index'))
             ->assertOk()->assertSee('Скопировать тарифы');
         $this->actingAs($this->accountant)->get(route('dashboard.finance.tariffs.rollover.create'))
@@ -64,7 +102,10 @@ class AcademicYearTariffRolloverTest extends TestCase
         $this->assertSame('Очная', $copy->option_value);
         $this->assertSame('10', $copy->size);
         $this->assertSame('Комплект', $copy->item);
-        $this->assertSame('2026-09-01', $copy->start_date->toDateString());
+        // Window opens at rollover time (before the school year), not on the year start,
+        // so tuition can be invoiced and prepaid before classes begin. It still runs
+        // through the whole year via end_date.
+        $this->assertSame('2026-06-15', $copy->start_date->toDateString());
         $this->assertSame('2027-06-30', $copy->end_date->toDateString());
     }
 

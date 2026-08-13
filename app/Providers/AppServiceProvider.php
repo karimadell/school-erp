@@ -37,6 +37,9 @@ use App\Models\CalendarEvent;
 use App\Models\BellSchedule;
 use App\Models\BellSchedulePeriod;
 use App\Models\PhysicalClassroom;
+use App\Models\TimetableEntry;
+use App\Models\TimetableVersion;
+use App\Models\Academic\Timetable as AcademicTimetable;
 
 // Observer
 use App\Observers\AuditObserver;
@@ -134,6 +137,9 @@ class AppServiceProvider extends ServiceProvider
         BellSchedule::observe(AcademicYearLockObserver::class);
         BellSchedulePeriod::observe(AcademicYearLockObserver::class);
         PhysicalClassroom::observe(AcademicYearLockObserver::class);
+        TimetableVersion::observe(AcademicYearLockObserver::class);
+        AcademicTimetable::observe(AcademicYearLockObserver::class);
+        TimetableEntry::observe(AcademicYearLockObserver::class);
 
         // Batch 11 / C3: registered after AcademicYearLockObserver for
         // both models — if the academic year can't be resolved at all,

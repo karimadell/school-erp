@@ -50,6 +50,11 @@ class AcademicYear extends Model
         return $this->hasMany(PhysicalClassroom::class);
     }
 
+    public function timetableVersions()
+    {
+        return $this->hasMany(TimetableVersion::class);
+    }
+
     public function classTeachers()
     {
         return $this->hasMany(ClassTeacher::class);

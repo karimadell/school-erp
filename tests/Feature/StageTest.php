@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Stage;
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
@@ -12,9 +13,24 @@ class StageTest extends TestCase
 {
     use RefreshDatabase;
 
+    /**
+     * Portal-eligible but unprivileged ('reception', active): clears
+     * EnsureAdministrativePortalAccess but lacks 'manage stages', so the
+     * negative tests exercise the real 403 gate, not a portal redirect.
+     */
+    protected function portalUser(): User
+    {
+        (new RolesAndPermissionsSeeder)->run();
+
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('reception');
+
+        return $user;
+    }
+
     protected function authorizedUser(): User
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         // Matches the permission seeded in RolesAndPermissionsSeeder.php.
         Permission::findOrCreate('manage stages', 'web');
@@ -25,7 +41,7 @@ class StageTest extends TestCase
 
     public function test_any_authenticated_user_can_view_the_index(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.stages.index'));
 
@@ -34,7 +50,7 @@ class StageTest extends TestCase
 
     public function test_unauthorized_user_cannot_open_create_page(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->get(route('dashboard.stages.create'));
 
@@ -43,7 +59,7 @@ class StageTest extends TestCase
 
     public function test_unauthorized_user_cannot_store_a_stage(): void
     {
-        $user = User::factory()->create();
+        $user = $this->portalUser();
 
         $response = $this->actingAs($user)->post(route('dashboard.stages.store'), [
             'name' => 'Primary',

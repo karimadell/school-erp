@@ -32,6 +32,8 @@ use App\Models\LessonJournalEntry;
 use App\Models\Quarter;
 use App\Models\AcademicYearUnlock;
 use App\Models\StudentSubjectEnrollment;
+use App\Models\AcademicCalendar;
+use App\Models\CalendarEvent;
 
 // Observer
 use App\Observers\AuditObserver;
@@ -124,6 +126,8 @@ class AppServiceProvider extends ServiceProvider
         // locked academic year must be reported before this record is
         // ever checked against Curriculum/Enrollment.
         StudentSubjectEnrollment::observe(AcademicYearLockObserver::class);
+        AcademicCalendar::observe(AcademicYearLockObserver::class);
+        CalendarEvent::observe(AcademicYearLockObserver::class);
 
         // Batch 11 / C3: registered after AcademicYearLockObserver for
         // both models — if the academic year can't be resolved at all,

@@ -35,6 +35,11 @@ class AcademicYear extends Model
         return $this->hasMany(Curriculum::class);
     }
 
+    public function academicCalendar()
+    {
+        return $this->hasOne(AcademicCalendar::class);
+    }
+
     public function classTeachers()
     {
         return $this->hasMany(ClassTeacher::class);

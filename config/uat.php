@@ -1,6 +1,8 @@
 <?php
 
 return [
+    'enabled' => env('UAT_SEED_ENABLED', false),
+
     'passwords' => [
         'admin' => env('UAT_ADMIN_PASSWORD'),
         'accountant' => env('UAT_ACCOUNTANT_PASSWORD'),

@@ -28,8 +28,11 @@ class UatSeeder extends Seeder
 
     public function run(): void
     {
-        if (! app()->environment(['staging', 'uat'])) {
-            throw new RuntimeException('UatSeeder may only run when APP_ENV is staging or uat.');
+        $isAllowedEnvironment = app()->environment(['staging', 'uat'])
+            || (app()->environment('production') && config('uat.enabled') === true);
+
+        if (! $isAllowedEnvironment) {
+            throw new RuntimeException('UatSeeder may only run in staging/uat, or in production with UAT_SEED_ENABLED=true.');
         }
 
         $passwords = $this->validatedPasswords();

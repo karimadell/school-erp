@@ -47,7 +47,7 @@ class SchoolSettingController extends Controller
 
     private function storeBrandingImage(UploadedFile $file, string $field): string
     {
-        $path = $file->store('branding', 'public');
+        $path = $file->store('branding', config('filesystems.uploads.public'));
 
         if (! is_string($path) || $path === '') {
             throw ValidationException::withMessages([

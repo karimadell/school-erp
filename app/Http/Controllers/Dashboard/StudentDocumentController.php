@@ -27,14 +27,14 @@ class StudentDocumentController extends Controller
     {
         $paths=[];
         try {
-            foreach ($request->file('files') as $file) $paths[]=['path'=>$file->store("students/{$student->id}/documents",'local'),'file'=>$file];
+            foreach ($request->file('files') as $file) $paths[]=['path'=>$file->store("students/{$student->id}/documents", config('filesystems.uploads.private')),'file'=>$file];
             DB::transaction(function () use ($paths,$request,$student) {
                 foreach ($paths as $stored) {
                     $file=$stored['file']; $record=$student->files()->create(['title'=>StudentFile::TYPES[$request->type],'file_name'=>$file->getClientOriginalName(),'file_path'=>$stored['path'],'file_type'=>$file->getMimeType(),'file_size'=>$file->getSize(),'category'=>'other','type'=>$request->type,'description'=>$request->description,'issue_date'=>$request->issue_date,'expiry_date'=>$request->expiry_date,'uploaded_by'=>$request->user()->id]);
                     $this->audit($request,'document_uploaded',$record);
                 }
             });
-        } catch (\Throwable $e) { foreach ($paths as $stored) Storage::disk('local')->delete($stored['path']); throw $e; }
+        } catch (\Throwable $e) { foreach ($paths as $stored) Storage::disk(config('filesystems.uploads.private'))->delete($stored['path']); throw $e; }
         return back()->with('success','Файл успешно добавлен.');
     }
 
@@ -52,7 +52,7 @@ class StudentDocumentController extends Controller
 
     private function stream(Student $student, StudentFile $file, string $disposition)
     {
-        $this->owned($student,$file); $this->authorize('view',$file); $disk=Storage::disk('local');
+        $this->owned($student,$file); $this->authorize('view',$file); $disk=Storage::disk(config('filesystems.uploads.private'));
         if (! $disk->exists($file->file_path)) abort(404);
         return response()->stream(fn()=>print($disk->get($file->file_path)), 200, ['Content-Type'=>$file->file_type,'Content-Disposition'=>$disposition.'; filename="'.addslashes($file->file_name).'"']);
     }

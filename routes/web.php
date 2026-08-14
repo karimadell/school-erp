@@ -123,6 +123,7 @@ Route::middleware(['auth', 'administrative'])
         Route::post('students/{student}/complete-registration-review', [StudentProfileCompletionController::class, 'completeReview'])->name('students.registration-review.complete');
         Route::get('students/{student}/documents', [StudentDocumentController::class, 'index'])->name('students.documents.index');
         Route::post('students/{student}/documents', [StudentDocumentController::class, 'store'])->name('students.documents.store');
+        Route::get('students/{student}/legacy-documents/download', [StudentController::class, 'downloadLegacyDocument'])->name('students.legacy-documents.download');
         Route::get('students/{student}/documents/{studentFile}/preview', [StudentDocumentController::class, 'preview'])->name('students.documents.preview');
         Route::get('students/{student}/documents/{studentFile}/download', [StudentDocumentController::class, 'download'])->name('students.documents.download');
         Route::patch('students/{student}/documents/{studentFile}/archive', [StudentDocumentController::class, 'archive'])->name('students.documents.archive');
@@ -185,6 +186,9 @@ Route::middleware(['auth', 'administrative'])
 
         Route::post('teachers/{teacher}/documents', [TeacherController::class, 'storeDocument'])
             ->name('teachers.documents.store');
+
+        Route::get('teachers/documents/{document}/download', [TeacherController::class, 'downloadDocument'])
+            ->name('teachers.documents.download');
 
         Route::delete('teachers/documents/{document}', [TeacherController::class, 'deleteDocument'])
             ->name('teachers.documents.delete');

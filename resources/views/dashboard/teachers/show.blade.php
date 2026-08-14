@@ -125,7 +125,7 @@
                         </div>
                     </div>
 
-                    <a href="{{ asset('storage/' . $document->file_path) }}"
+                    <a href="{{ $document->file_url }}"
                        target="_blank"
                        class="btn btn-sm btn-outline-dark">
                         👁

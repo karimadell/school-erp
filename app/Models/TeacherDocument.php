@@ -45,7 +45,7 @@ class TeacherDocument extends Model
      */
     public function getFileUrlAttribute()
     {
-        return asset('storage/' . $this->file_path);
+        return route('dashboard.teachers.documents.download', $this);
     }
 
     /**

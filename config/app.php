@@ -41,7 +41,7 @@ return [
     | روسيا تستخدم Moscow
     */
 
-    'timezone' => 'Europe/Moscow',
+    'timezone' => env('APP_TIMEZONE', 'Europe/Moscow'),
 
     /*
     |--------------------------------------------------------------------------
@@ -50,19 +50,19 @@ return [
     | لغة النظام بالكامل
     */
 
-    'locale' => 'ru',
+    'locale' => env('APP_LOCALE', 'ru'),
 
     /*
     | لغة الاحتياط
     */
 
-    'fallback_locale' => 'ru',
+    'fallback_locale' => env('APP_FALLBACK_LOCALE', 'ru'),
 
     /*
     | Faker لبيانات الاختبار
     */
 
-    'faker_locale' => 'ru_RU',
+    'faker_locale' => env('APP_FAKER_LOCALE', 'ru_RU'),
 
     /*
     |--------------------------------------------------------------------------

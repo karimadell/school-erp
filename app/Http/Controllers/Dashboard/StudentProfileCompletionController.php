@@ -26,7 +26,7 @@ class StudentProfileCompletionController extends Controller
     {
         $newPhoto = null;
         try {
-            if ($request->hasFile('photo')) $newPhoto = $request->file('photo')->store("students/{$student->id}/profile", 'public');
+            if ($request->hasFile('photo')) $newPhoto = $request->file('photo')->store("students/{$student->id}/profile", config('filesystems.uploads.public'));
             DB::transaction(function () use ($request, $student, $newPhoto) {
                 $old = $student->only(['last_name_ru','first_name_ru','patronymic_ru','phone','status','photo']);
                 $profile = $student->documents ?? [];
@@ -43,7 +43,7 @@ class StudentProfileCompletionController extends Controller
                 if (! in_array($student->status, [Student::STATUS_UNDER_REVIEW,Student::STATUS_REGISTRATION_COMPLETED,'suspended','graduated'], true)) $student->update(['status'=>$status]);
                 $this->audit($request, 'profile_updated', $student, $old, $student->fresh()->only(['last_name_ru','first_name_ru','patronymic_ru','phone','status','photo']));
             });
-        } catch (\Throwable $e) { if ($newPhoto) Storage::disk('public')->delete($newPhoto); throw $e; }
+        } catch (\Throwable $e) { if ($newPhoto) Storage::disk(config('filesystems.uploads.public'))->delete($newPhoto); throw $e; }
         return back()->with('success', 'Данные ученика сохранены.');
     }
 

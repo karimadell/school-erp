@@ -133,7 +133,7 @@
                 <div class="col-md-6 text-center">
 
                     @if($student->photo)
-                        <img src="{{ asset('storage/' . $student->photo) }}"
+                        <img src="{{ Storage::disk(config('filesystems.uploads.public'))->url($student->photo) }}"
                              class="rounded mb-3"
                              style="width:150px;height:150px;object-fit:cover;">
                     @endif

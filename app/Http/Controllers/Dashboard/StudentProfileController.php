@@ -115,5 +115,5 @@ class StudentProfileController extends Controller
     private function sum(Collection $records, string $field): string
     { return $records->reduce(fn (string $sum,$record) => bcadd($sum,(string)$record->{$field},2),'0.00'); }
     private function photoUrl(Student $student): ?string
-    { return $student->photo && Storage::disk('public')->exists($student->photo) ? Storage::disk('public')->url($student->photo) : null; }
+    { $disk=Storage::disk(config('filesystems.uploads.public')); return $student->photo && $disk->exists($student->photo) ? $disk->url($student->photo) : null; }
 }

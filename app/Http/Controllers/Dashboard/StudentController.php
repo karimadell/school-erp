@@ -16,7 +16,7 @@ class StudentController extends Controller
     public function __construct()
     {
         $this->middleware('permission:view students')->only(['index']);
-        $this->middleware('permission:manage students')->only(['show']);
+        $this->middleware('permission:manage students')->only(['show', 'downloadLegacyDocument']);
         $this->middleware('permission:create students')->only(['create', 'store']);
         $this->middleware('permission:update students')->only(['edit', 'update']);
         $this->middleware('permission:delete students')->only(['destroy']);
@@ -98,14 +98,14 @@ class StudentController extends Controller
         ]);
 
         if ($request->hasFile('photo')) {
-            $data['photo'] = $request->file('photo')->store('students/photos', 'public');
+            $data['photo'] = $request->file('photo')->store('students/photos', config('filesystems.uploads.public'));
         }
 
         if ($request->hasFile('documents')) {
             $files = [];
 
             foreach ($request->file('documents') as $file) {
-                $files[] = $file->store('students/documents', 'public');
+                $files[] = $file->store('students/documents', config('filesystems.uploads.private'));
             }
 
             $data['documents'] = $files;
@@ -177,7 +177,7 @@ class StudentController extends Controller
             $paths = is_array($value) ? $value : [$value];
 
             return collect($paths)
-                ->filter(fn ($path) => is_string($path) && Storage::disk('public')->exists($path))
+                ->filter(fn ($path) => is_string($path) && Storage::disk(config('filesystems.uploads.private'))->exists($path))
                 ->map(fn ($path) => [
                     'label' => is_string($key) ? match ($key) {
                         'identity_document' => 'Свидетельство о рождении / паспорт',
@@ -186,7 +186,7 @@ class StudentController extends Controller
                         default => 'Другое вложение',
                     } : 'Другое вложение',
                     'name' => basename($path),
-                    'url' => Storage::disk('public')->url($path),
+                    'url' => route('dashboard.students.legacy-documents.download', [$student, 'path' => base64_encode($path)]),
                 ]);
         })->values();
         $timeline = $this->studentTimeline($student, $invoices, $payments);
@@ -286,23 +286,23 @@ class StudentController extends Controller
 
         if ($request->hasFile('photo')) {
             if ($student->photo) {
-                Storage::disk('public')->delete($student->photo);
+                Storage::disk(config('filesystems.uploads.public'))->delete($student->photo);
             }
 
-            $data['photo'] = $request->file('photo')->store('students/photos', 'public');
+            $data['photo'] = $request->file('photo')->store('students/photos', config('filesystems.uploads.public'));
         }
 
         if ($request->hasFile('documents')) {
             if (!empty($student->documents)) {
                 foreach ((array) $student->documents as $file) {
-                    Storage::disk('public')->delete($file);
+                    Storage::disk(config('filesystems.uploads.private'))->delete($file);
                 }
             }
 
             $files = [];
 
             foreach ($request->file('documents') as $file) {
-                $files[] = $file->store('students/documents', 'public');
+                $files[] = $file->store('students/documents', config('filesystems.uploads.private'));
             }
 
             $data['documents'] = $files;
@@ -320,12 +320,12 @@ class StudentController extends Controller
         $student = Student::findOrFail($id);
 
         if ($student->photo) {
-            Storage::disk('public')->delete($student->photo);
+            Storage::disk(config('filesystems.uploads.public'))->delete($student->photo);
         }
 
         if (!empty($student->documents)) {
             foreach ((array) $student->documents as $file) {
-                Storage::disk('public')->delete($file);
+                Storage::disk(config('filesystems.uploads.private'))->delete($file);
             }
         }
 
@@ -334,5 +334,19 @@ class StudentController extends Controller
         return redirect()
             ->route('dashboard.students.index')
             ->with('success', __('students.deleted_success'));
+    }
+
+    public function downloadLegacyDocument(Request $request, Student $student)
+    {
+        $encoded = $request->query('path');
+        $path = is_string($encoded) ? base64_decode($encoded, true) : false;
+        $documents = collect((array) $student->documents)->flatten()->filter('is_string');
+
+        abort_unless(is_string($path) && $documents->contains($path), 404);
+
+        $disk = Storage::disk(config('filesystems.uploads.private'));
+        abort_unless($disk->exists($path), 404);
+
+        return response()->streamDownload(fn () => print($disk->get($path)), basename($path));
     }
 }

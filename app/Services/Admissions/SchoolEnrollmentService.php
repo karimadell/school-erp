@@ -77,7 +77,7 @@ class SchoolEnrollmentService
                 );
 
                 if ($photo) {
-                    $photoPath = $photo->store('students/photos', 'public');
+                    $photoPath = $photo->store('students/photos', config('filesystems.uploads.public'));
                     if (! $photoPath) {
                         throw ValidationException::withMessages(['photo' => 'Не удалось сохранить фотографию ученика.']);
                     }
@@ -190,7 +190,7 @@ class SchoolEnrollmentService
             });
         } catch (Throwable $exception) {
             if ($photoPath) {
-                Storage::disk('public')->delete($photoPath);
+                Storage::disk(config('filesystems.uploads.public'))->delete($photoPath);
             }
             throw $exception;
         }

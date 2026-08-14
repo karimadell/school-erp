@@ -70,7 +70,7 @@
 
                             <td>
                                 @if($student->photo)
-                                    <img src="{{ asset('storage/' . $student->photo) }}"
+                                    <img src="{{ Storage::disk(config('filesystems.uploads.public'))->url($student->photo) }}"
                                          class="rounded-circle"
                                          style="width:50px;height:50px;object-fit:cover;">
                                 @else

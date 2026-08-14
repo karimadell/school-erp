@@ -27,7 +27,7 @@ class StudentFileController extends Controller
         // 📁 Store file
         $path = $file->store(
             "students/{$student->id}",
-            'public'
+            config('filesystems.uploads.private')
         );
 
         // 💾 Save in DB
@@ -51,7 +51,7 @@ class StudentFileController extends Controller
         $this->authorize('delete', $studentFile);
 
         // 🗑 Delete physical file
-        Storage::disk('public')->delete($studentFile->file_path);
+        Storage::disk(config('filesystems.uploads.private'))->delete($studentFile->file_path);
 
         // 🗑 Delete DB record
         $studentFile->delete();

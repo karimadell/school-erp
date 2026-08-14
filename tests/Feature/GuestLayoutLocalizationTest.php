@@ -46,9 +46,9 @@ class GuestLayoutLocalizationTest extends TestCase
         $response->assertSee('dir="rtl"', false);
     }
 
-    public function test_register_and_confirm_password_pages_are_localized_to_russian(): void
+    public function test_registration_is_unavailable_and_confirm_password_is_localized_to_russian(): void
     {
-        $this->get('/register')->assertOk()->assertSee('Зарегистрироваться');
+        $this->get('/register')->assertNotFound();
 
         (new RolesAndPermissionsSeeder())->run();
         $user = User::factory()->create();

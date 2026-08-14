@@ -34,9 +34,20 @@ class SchoolSetting extends Model
     {
         $path = $this->printing_logo_path ?: $this->logo_path;
 
-        return $path && Storage::disk('public')->exists($path)
-            ? Storage::disk('public')->path($path)
-            : null;
+        if (! $path || ! Storage::disk(config('filesystems.uploads.public'))->exists($path)) {
+            return null;
+        }
+
+        $diskName = config('filesystems.uploads.public');
+        $disk = Storage::disk($diskName);
+
+        if (config("filesystems.disks.{$diskName}.driver") === 'local') {
+            return $disk->path($path);
+        }
+
+        $mimeType = $disk->mimeType($path) ?: 'image/png';
+
+        return sprintf('data:%s;base64,%s', $mimeType, base64_encode($disk->get($path)));
     }
 
     public function logoUrl(): ?string
@@ -61,8 +72,8 @@ class SchoolSetting extends Model
 
     private function publicAssetUrl(?string $path): ?string
     {
-        return $path && Storage::disk('public')->exists($path)
-            ? Storage::disk('public')->url($path)
+        return $path && Storage::disk(config('filesystems.uploads.public'))->exists($path)
+            ? Storage::disk(config('filesystems.uploads.public'))->url($path)
             : null;
     }
 }

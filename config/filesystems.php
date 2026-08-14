@@ -15,6 +15,11 @@ return [
 
     'default' => env('FILESYSTEM_DISK', 'local'),
 
+    'uploads' => [
+        'public' => env('PUBLIC_UPLOADS_DISK', 'public'),
+        'private' => env('PRIVATE_UPLOADS_DISK', 'local'),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Filesystem Disks
@@ -45,6 +50,37 @@ return [
             'visibility' => 'public',
             'throw' => false,
             'report' => false,
+        ],
+
+        'public_uploads' => [
+            'driver' => env('PUBLIC_UPLOADS_DRIVER', 'local'),
+            'root' => env('PUBLIC_UPLOADS_DRIVER', 'local') === 'local'
+                ? storage_path('app/public')
+                : env('PUBLIC_UPLOADS_PREFIX', 'public'),
+            'url' => env('PUBLIC_UPLOADS_URL', env('AWS_URL', rtrim(env('APP_URL', 'http://localhost'), '/').'/storage')),
+            'key' => env('AWS_ACCESS_KEY_ID'),
+            'secret' => env('AWS_SECRET_ACCESS_KEY'),
+            'region' => env('AWS_DEFAULT_REGION'),
+            'bucket' => env('PUBLIC_UPLOADS_BUCKET', env('AWS_BUCKET')),
+            'endpoint' => env('AWS_ENDPOINT'),
+            'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
+
+        'private_uploads' => [
+            'driver' => env('PRIVATE_UPLOADS_DRIVER', 'local'),
+            'root' => env('PRIVATE_UPLOADS_DRIVER', 'local') === 'local'
+                ? storage_path('app/private')
+                : env('PRIVATE_UPLOADS_PREFIX', 'private'),
+            'key' => env('AWS_ACCESS_KEY_ID'),
+            'secret' => env('AWS_SECRET_ACCESS_KEY'),
+            'region' => env('AWS_DEFAULT_REGION'),
+            'bucket' => env('PRIVATE_UPLOADS_BUCKET', env('AWS_BUCKET')),
+            'endpoint' => env('AWS_ENDPOINT'),
+            'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
+            'visibility' => 'private',
+            'throw' => true,
         ],
 
         's3' => [

@@ -19,7 +19,7 @@ class TeacherController extends Controller
     public function __construct()
     {
         $this->middleware('permission:manage teachers')->only([
-            'create', 'store', 'edit', 'update', 'destroy', 'storeDocument', 'deleteDocument',
+            'create', 'store', 'edit', 'update', 'destroy', 'storeDocument', 'deleteDocument', 'downloadDocument',
         ]);
     }
 
@@ -184,7 +184,7 @@ class TeacherController extends Controller
         $teacher->subjects()->detach();
 
         foreach ($teacher->documents as $document) {
-            Storage::disk('public')->delete($document->file_path);
+            Storage::disk(config('filesystems.uploads.private'))->delete($document->file_path);
             $document->delete();
         }
 
@@ -286,7 +286,7 @@ class TeacherController extends Controller
         ]);
 
         $file = $request->file('file');
-        $path = $file->store('teacher-documents', 'public');
+        $path = $file->store('teacher-documents', config('filesystems.uploads.private'));
 
         $teacher->documents()->create([
             'title' => $data['title'],
@@ -302,7 +302,7 @@ class TeacherController extends Controller
 
     public function deleteDocument(TeacherDocument $document)
     {
-        Storage::disk('public')->delete($document->file_path);
+        Storage::disk(config('filesystems.uploads.private'))->delete($document->file_path);
 
         $teacher = $document->teacher;
         $document->delete();
@@ -310,5 +310,16 @@ class TeacherController extends Controller
         return redirect()
             ->route('dashboard.teachers.documents', $teacher)
             ->with('success', __('teachers.document_deleted_success'));
+    }
+
+    public function downloadDocument(TeacherDocument $document)
+    {
+        $disk = Storage::disk(config('filesystems.uploads.private'));
+        abort_unless($disk->exists($document->file_path), 404);
+
+        return response()->streamDownload(
+            fn () => print($disk->get($document->file_path)),
+            basename($document->file_path)
+        );
     }
 }

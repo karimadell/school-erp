@@ -195,13 +195,13 @@
                                 </td>
 
                                 <td>
-                                    <a href="{{ $document->file_url ?? asset('storage/' . $document->file_path) }}"
+                                    <a href="{{ $document->file_url }}"
                                        target="_blank"
                                        class="btn btn-sm btn-primary">
                                         👁 {{ __('teachers.view') }}
                                     </a>
 
-                                    <a href="{{ $document->file_url ?? asset('storage/' . $document->file_path) }}"
+                                    <a href="{{ $document->file_url }}"
                                        download
                                        class="btn btn-sm btn-outline-dark">
                                         ⬇ {{ __('teachers.download') }}

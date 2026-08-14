@@ -29,6 +29,18 @@ class StudentGradesUniqueIndexTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_postgresql_strategy_uses_an_expression_index_not_a_generated_column_constraint(): void
+    {
+        $migration = file_get_contents(database_path('migrations/2026_07_27_141755_fix_student_grades_unique_index_null_gap.php'));
+        preg_match("/if \(DB::connection\(\)->getDriverName\(\) === 'pgsql'\) \{(?<branch>.*?)\n\s*return;/s", $migration, $matches);
+        $postgresBranch = $matches['branch'] ?? '';
+
+        $this->assertStringContainsString('CREATE UNIQUE INDEX', $postgresBranch);
+        $this->assertStringContainsString('COALESCE(quarter_id, 0)', $postgresBranch);
+        $this->assertStringNotContainsString('virtualAs', $postgresBranch);
+        $this->assertStringNotContainsString("->unique(['student_id', 'subject_id', 'exam_id', 'quarter_key']", $postgresBranch);
+    }
+
     protected function makeYear(): AcademicYear
     {
         return AcademicYear::create([

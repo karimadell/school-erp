@@ -12,9 +12,11 @@ use Illuminate\Support\Facades\Schema;
  * updateOrCreate() relies on that index to stop duplicate grade rows, so
  * quarterless grades were silently able to duplicate.
  *
- * Fix: add a generated column that substitutes a sentinel (0, which no real
- * quarter can ever be since ids start at 1) for NULL, and enforce uniqueness
- * on that column instead. No existing column, row, or value is touched.
+ * Fix: substitute a sentinel (0, which no real quarter can ever be since ids
+ * start at 1) for NULL in the unique key. MySQL and SQLite use a generated
+ * helper column; PostgreSQL uses the equivalent native expression index
+ * because it cannot place a unique constraint on a virtual generated column.
+ * No existing row or value is touched.
  *
  * Uses VIRTUAL rather than STORED: on MySQL 8+, adding a STORED generated
  * column to this table fails with "Error 1215: Cannot add foreign key
@@ -42,6 +44,18 @@ return new class extends Migration
 
     public function up(): void
     {
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            if (!Schema::hasIndex('student_grades', $this->newIndex)) {
+                DB::statement("CREATE UNIQUE INDEX {$this->newIndex} ON student_grades (student_id, subject_id, exam_id, COALESCE(quarter_id, 0))");
+            }
+
+            if (Schema::hasIndex('student_grades', $this->oldIndex)) {
+                DB::statement("DROP INDEX IF EXISTS {$this->oldIndex}");
+            }
+
+            return;
+        }
+
         if (!Schema::hasColumn('student_grades', 'quarter_key')) {
             Schema::table('student_grades', function (Blueprint $table) {
                 $table->unsignedBigInteger('quarter_key')
@@ -67,6 +81,12 @@ return new class extends Migration
     {
         if (!Schema::hasIndex('student_grades', $this->oldIndex)) {
             DB::statement('CREATE UNIQUE INDEX ' . $this->oldIndex . ' ON student_grades (student_id, subject_id, exam_id, quarter_id)');
+        }
+
+        if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement("DROP INDEX IF EXISTS {$this->newIndex}");
+
+            return;
         }
 
         if (Schema::hasIndex('student_grades', $this->newIndex)) {

@@ -1,3 +1,5 @@
+@import './erp-tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -12,11 +14,11 @@
 
 @layer base {
     .ui2-scope {
-        font-family: 'Inter', 'Cairo', system-ui, sans-serif;
+        font-family: var(--erp-font-sans);
     }
 
     [dir="rtl"] .ui2-scope {
-        font-family: 'Cairo', 'Inter', system-ui, sans-serif;
+        font-family: var(--erp-font-rtl);
     }
 }
 
@@ -25,6 +27,7 @@
 
     .ui2-sidebar {
         @apply fixed inset-y-0 start-0 z-30 flex h-screen w-64 -translate-x-full flex-col overflow-y-auto bg-slate-900 transition-transform duration-200 lg:sticky lg:top-0 lg:w-64 lg:translate-x-0;
+        background-color: var(--erp-color-sidebar);
     }
 
     [dir="rtl"] .ui2-sidebar {
@@ -61,12 +64,16 @@
 
     .ui2-sidebar-link.is-active {
         @apply bg-indigo-600 text-white hover:bg-indigo-600;
+        background-color: var(--erp-color-primary);
     }
 
     /* ---- Shared components ---- */
 
     .ui2-card {
         @apply rounded-2xl border border-slate-200 bg-white p-6 shadow-sm;
+        border-color: var(--erp-color-border);
+        background-color: var(--erp-color-surface);
+        box-shadow: var(--erp-shadow-sm);
     }
 
     .ui2-btn {

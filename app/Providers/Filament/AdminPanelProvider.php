@@ -7,6 +7,7 @@ use Filament\PanelProvider;
 use Filament\Pages\Dashboard;
 use Filament\Support\Colors\Color;
 use Filament\Enums\ThemeMode;
+use Filament\Support\Enums\Width;
 
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -47,12 +48,20 @@ class AdminPanelProvider extends PanelProvider
                 'primary' => Color::Indigo,
             ])
 
+            ->viteTheme('resources/css/filament/admin/theme.css')
+
+            ->maxContentWidth(Width::Full)
+
+            ->sidebarWidth('16.5rem')
+
             // Filament Visual Unification — Batch 1: default to light mode
             // instead of following the OS/browser color-scheme preference,
             // matching the dashboard shell (which has no dark mode at all).
             // The dark-mode toggle itself is untouched — users can still
             // switch to dark manually.
             ->defaultThemeMode(ThemeMode::Light)
+
+            ->darkMode(false)
 
             ->discoverResources(
                 in: app_path('Filament/Resources'),
@@ -87,6 +96,7 @@ class AdminPanelProvider extends PanelProvider
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
+                \App\Http\Middleware\SetLocale::class,
                 AuthenticateSession::class,
                 ShareErrorsFromSession::class,
                 VerifyCsrfToken::class,

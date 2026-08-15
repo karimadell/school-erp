@@ -5,6 +5,7 @@ namespace App\Providers\Filament;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Pages\Dashboard;
+use Filament\Support\Assets\Css;
 use Filament\Support\Colors\Color;
 use Filament\Enums\ThemeMode;
 use Filament\Support\Enums\Width;
@@ -20,6 +21,7 @@ use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
+use Illuminate\Support\Facades\Vite;
 use App\Filament\Widgets\AttendanceChart;
 use App\Filament\Widgets\CashLedger;
 use App\Filament\Widgets\SchoolStats;
@@ -48,7 +50,10 @@ class AdminPanelProvider extends PanelProvider
                 'primary' => Color::Indigo,
             ])
 
-            ->viteTheme('resources/css/filament/admin/theme.css')
+            ->assets([
+                Css::make('erp-admin-theme')
+                    ->html(fn (): string => Vite::asset('resources/css/filament/admin/theme.css')),
+            ])
 
             ->maxContentWidth(Width::Full)
 

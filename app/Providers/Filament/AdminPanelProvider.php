@@ -13,18 +13,15 @@ use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
 
-use Filament\Widgets\AccountWidget;
-use Filament\Widgets\FilamentInfoWidget;
-
-use App\Filament\Widgets\FinanceStats;
-use App\Filament\Widgets\CashLedger;
-
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
+use App\Filament\Widgets\AttendanceChart;
+use App\Filament\Widgets\CashLedger;
+use App\Filament\Widgets\SchoolStats;
 
 class AdminPanelProvider extends PanelProvider
 {
@@ -38,6 +35,11 @@ class AdminPanelProvider extends PanelProvider
             ->path('admin')
 
             ->login()
+
+            // Keep the richer School ERP dashboard as the panel's home target.
+            // The /admin dashboard below remains an operational Filament
+            // landing page for users who enter the panel directly.
+            ->homeUrl(fn (): string => route('dashboard.index'))
 
             // Modern UI v3: same accent color as the classic dashboard shell
             // (layouts/dashboard.blade.php's indigo-600 sidebar-active/accent).
@@ -75,16 +77,10 @@ class AdminPanelProvider extends PanelProvider
                 Dashboard::class,
             ])
 
-            ->discoverWidgets(
-                in: app_path('Filament/Widgets'),
-                for: 'App\\Filament\\Widgets'
-            )
-
             ->widgets([
-                FinanceStats::class,
+                SchoolStats::class,
+                AttendanceChart::class,
                 CashLedger::class,
-                AccountWidget::class,
-                FilamentInfoWidget::class,
             ])
 
             ->middleware([

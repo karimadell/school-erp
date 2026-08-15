@@ -4,8 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\BellSchedule;
 use App\Models\SchoolClass;
+use App\Models\Student;
 use App\Models\TimetableEntry;
 use App\Models\TimetableVersion;
+use App\Models\User;
 use Database\Seeders\UatSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -73,6 +75,55 @@ class UatTimetableFixtureTest extends TestCase
                     ->filter(fn ($slot) => $slot->count() > 1);
 
                 $this->assertCount(0, $conflicts, "UAT fixture has a {$conflictDimension} timetable conflict.");
+            }
+        } finally {
+            $this->setEnvironment('testing');
+        }
+    }
+
+    public function test_uat_school_class_structure_is_complete_idempotent_and_available_to_enrollment(): void
+    {
+        $this->enableUatSeeding();
+
+        try {
+            $this->seed(UatSeeder::class);
+            $originalIds = SchoolClass::query()
+                ->where('code', 'like', 'UAT-%')
+                ->pluck('id', 'code')
+                ->all();
+
+            $this->seed(UatSeeder::class);
+
+            $classes = SchoolClass::query()
+                ->where('code', 'like', 'UAT-%')
+                ->with('grade.stage')
+                ->get();
+
+            $this->assertCount(12, $classes);
+            $this->assertSame($originalIds, $classes->pluck('id', 'code')->all());
+            $this->assertSame(range(0, 11), $classes->pluck('grade.level')->sort()->values()->all());
+
+            foreach (range(0, 11) as $level) {
+                $class = $classes->first(fn (SchoolClass $candidate) => $candidate->grade->level === $level);
+                $this->assertNotNull($class);
+                $this->assertSame("UAT — {$level} класс", $class->name_ru);
+                $this->assertTrue($class->is_active);
+                $this->assertSame(match (true) {
+                    $level === 0 => 'UAT — Подготовительная группа',
+                    $level <= 4 => 'UAT — Начальная школа',
+                    default => 'UAT — Основная и старшая школа',
+                }, $class->grade->stage->name);
+            }
+
+            $admin = User::where('email', 'admin.uat@school.test')->firstOrFail();
+            $student = Student::where('email', 'student01.uat@example.invalid')->firstOrFail();
+            $response = $this->actingAs($admin)
+                ->get(route('dashboard.enrollments.create', $student))
+                ->assertOk();
+
+            $this->assertSame(12, substr_count($response->getContent(), 'data-grade='));
+            foreach (range(0, 11) as $level) {
+                $response->assertSee("UAT — {$level} класс");
             }
         } finally {
             $this->setEnvironment('testing');

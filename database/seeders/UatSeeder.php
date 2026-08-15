@@ -50,7 +50,7 @@ class UatSeeder extends Seeder
         DB::transaction(function () use ($passwords): void {
             $this->call(RolesAndPermissionsSeeder::class);
             $users = $this->users($passwords);
-            [$year, $stage, $grade, $class] = $this->academics();
+            [$year, $stage, $grade, $class, $classes] = $this->academics();
             [$tuition, $activities] = $this->financeCatalog($year, $grade);
             $account = CashAccount::firstOrCreate(
                 ['name' => 'UAT — Основная касса'],
@@ -59,7 +59,7 @@ class UatSeeder extends Seeder
 
             $students = $this->students($year, $stage, $grade, $class);
             $this->invoices($students, $year, $tuition, $activities, $account, $users['accountant']);
-            $this->staffAndTimetable($year, $class);
+            $this->staffAndTimetable($year, $classes);
         }, 3);
     }
 
@@ -103,7 +103,7 @@ class UatSeeder extends Seeder
         return $users;
     }
 
-    /** @return array{AcademicYear, Stage, Grade, SchoolClass} */
+    /** @return array{AcademicYear, Stage, Grade, SchoolClass, array<int, SchoolClass>} */
     private function academics(): array
     {
         $otherActiveYear = AcademicYear::query()->where('is_active', true)->where('name', '!=', self::YEAR)->first();
@@ -115,18 +115,41 @@ class UatSeeder extends Seeder
         $year->fill(['start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true]);
         $year->save();
 
-        $stage = Stage::updateOrCreate(
+        $preparatoryStage = Stage::updateOrCreate(
+            ['name' => 'UAT — Подготовительная группа'],
+            ['description' => 'Только искусственные данные UAT', 'order' => 899, 'is_active' => true]
+        );
+        $primaryStage = Stage::updateOrCreate(
             ['name' => 'UAT — Начальная школа'],
             ['description' => 'Только искусственные данные UAT', 'order' => 900, 'is_active' => true]
         );
-        $grade = Grade::updateOrCreate(['stage_id' => $stage->id, 'name' => 'UAT — 1 класс']);
-        $grade->forceFill(['level' => 1])->save();
-        $class = SchoolClass::updateOrCreate(
-            ['grade_id' => $grade->id, 'code' => 'UAT-A'],
-            ['name_ar' => 'فصل اختبار القبول', 'name_ru' => 'UAT — 1А', 'capacity' => 20, 'is_active' => true]
+        $combinedSecondaryStage = Stage::updateOrCreate(
+            ['name' => 'UAT — Основная и старшая школа'],
+            ['description' => 'Только искусственные данные UAT', 'order' => 901, 'is_active' => true]
         );
 
-        return [$year, $stage, $grade, $class];
+        $stableCodes = [1 => 'UAT-A', 5 => 'UAT-5A', 9 => 'UAT-9A'];
+        $classes = [];
+        $grades = [];
+
+        foreach (range(0, 11) as $level) {
+            $stage = match (true) {
+                $level === 0 => $preparatoryStage,
+                $level <= 4 => $primaryStage,
+                default => $combinedSecondaryStage,
+            };
+            $name = "UAT — {$level} класс";
+            $grade = Grade::updateOrCreate(['stage_id' => $stage->id, 'name' => $name]);
+            $grade->forceFill(['level' => $level])->save();
+            $grades[$level] = $grade;
+
+            $classes[$level] = SchoolClass::updateOrCreate(
+                ['code' => $stableCodes[$level] ?? "UAT-{$level}A"],
+                ['grade_id' => $grade->id, 'name_ar' => "UAT — الصف {$level}", 'name_ru' => $name, 'capacity' => 20, 'is_active' => true]
+            );
+        }
+
+        return [$year, $primaryStage, $grades[1], $classes[1], $classes];
     }
 
     /** @return array{Fee, Fee} */
@@ -220,28 +243,13 @@ class UatSeeder extends Seeder
         }
     }
 
-    private function staffAndTimetable(AcademicYear $year, SchoolClass $firstClass): void
+    /** @param array<int, SchoolClass> $schoolClasses */
+    private function staffAndTimetable(AcademicYear $year, array $schoolClasses): void
     {
-        $seniorStage = Stage::updateOrCreate(
-            ['name' => 'UAT — Основная и старшая школа'],
-            ['description' => 'Только искусственные данные UAT', 'order' => 901, 'is_active' => true],
-        );
-
-        $fifthGrade = Grade::updateOrCreate(['stage_id' => $seniorStage->id, 'name' => 'UAT — 5 класс']);
-        $fifthGrade->forceFill(['level' => 5])->save();
-        $ninthGrade = Grade::updateOrCreate(['stage_id' => $seniorStage->id, 'name' => 'UAT — 9 класс']);
-        $ninthGrade->forceFill(['level' => 9])->save();
-
         $classes = [
-            'first' => $firstClass,
-            'fifth' => SchoolClass::updateOrCreate(
-                ['code' => 'UAT-5A'],
-                ['grade_id' => $fifthGrade->id, 'name_ar' => 'UAT الصف الخامس', 'name_ru' => 'UAT — 5 класс', 'capacity' => 20, 'is_active' => true],
-            ),
-            'ninth' => SchoolClass::updateOrCreate(
-                ['code' => 'UAT-9A'],
-                ['grade_id' => $ninthGrade->id, 'name_ar' => 'UAT الصف التاسع', 'name_ru' => 'UAT — 9 класс', 'capacity' => 20, 'is_active' => true],
-            ),
+            'first' => $schoolClasses[1],
+            'fifth' => $schoolClasses[5],
+            'ninth' => $schoolClasses[9],
         ];
 
         $definitions = [

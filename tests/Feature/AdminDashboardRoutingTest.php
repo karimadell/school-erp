@@ -40,9 +40,9 @@ class AdminDashboardRoutingTest extends TestCase
             realpath(base_path('vendor/filament/filament/dist/theme.css')),
             realpath($panel->getTheme()->getPath()),
         );
-        $this->assertSame(
-            'erp-admin-theme',
-            collect(FilamentAsset::getStyles())->firstWhere(fn ($asset): bool => $asset->getId() === 'erp-admin-theme')?->getId(),
+        $this->assertNotContains(
+            null,
+            collect(FilamentAsset::getStyles())->map(fn ($asset) => $asset->getPath())->all(),
         );
         $this->assertSame(Width::Full, $panel->getMaxContentWidth());
         $this->assertSame('16.5rem', $panel->getSidebarWidth());

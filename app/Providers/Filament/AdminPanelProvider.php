@@ -5,10 +5,10 @@ namespace App\Providers\Filament;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Pages\Dashboard;
-use Filament\Support\Assets\Css;
 use Filament\Support\Colors\Color;
 use Filament\Enums\ThemeMode;
 use Filament\Support\Enums\Width;
+use Filament\View\PanelsRenderHook;
 
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -50,10 +50,10 @@ class AdminPanelProvider extends PanelProvider
                 'primary' => Color::Indigo,
             ])
 
-            ->assets([
-                Css::make('erp-admin-theme')
-                    ->html(fn (): string => Vite::asset('resources/css/filament/admin/theme.css')),
-            ])
+            ->renderHook(
+                PanelsRenderHook::STYLES_AFTER,
+                fn () => Vite::withEntryPoints(['resources/css/filament/admin/theme.css'])->toHtml(),
+            )
 
             ->maxContentWidth(Width::Full)
 

@@ -2,8 +2,6 @@
 
 namespace App\Filament\Resources\TeacherAssignments\Tables;
 
-use Filament\Actions\BulkActionGroup;
-use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
@@ -27,17 +25,13 @@ class TeacherAssignmentsTable
 
                 TextColumn::make('subject.name_ru')
                     ->label(__('teacher_assignment.fields.subject'))
+                    ->visibleFrom('sm')
                     ->sortable(),
 
                 TextColumn::make('academicYear.name')
                     ->label(__('teacher_assignment.fields.academic_year'))
+                    ->visibleFrom('md')
                     ->sortable(),
-
-                TextColumn::make('created_at')
-                    ->label(__('teacher_assignment.fields.created_at'))
-                    ->dateTime()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
 
             ])
             ->filters([
@@ -54,12 +48,10 @@ class TeacherAssignmentsTable
             ->emptyStateHeading(__('teacher_assignment.empty_heading'))
             ->emptyStateDescription(__('teacher_assignment.empty_description'))
             ->recordActions([
-                EditAction::make(),
+                EditAction::make()
+                    ->iconButton()
+                    ->tooltip(__('filament-actions::edit.single.label')),
             ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
-            ]);
+            ->toolbarActions([]);
     }
 }

@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Models\SchoolClass;
 use Filament\Actions\Action;
+use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Schemas\Schema;
 use Filament\Tables;
@@ -68,19 +69,30 @@ class ClassResource extends Resource
             ->columns([
 
                 Tables\Columns\TextColumn::make('name_ru')
-                    ->label(__('classes.name_ru')),
+                    ->label(__('classes.name'))
+                    ->searchable()
+                    ->sortable(),
 
                 Tables\Columns\TextColumn::make('capacity')
-                    ->label(__('classes.capacity')),
+                    ->label(__('classes.capacity'))
+                    ->alignEnd()
+                    ->visibleFrom('sm')
+                    ->sortable(),
 
-                Tables\Columns\IconColumn::make('is_active')
+                Tables\Columns\TextColumn::make('is_active')
                     ->label(__('classes.status'))
-                    ->boolean(),
+                    ->badge()
+                    ->formatStateUsing(fn (bool $state): string => $state ? __('classes.active') : __('classes.inactive'))
+                    ->color(fn (bool $state): string => $state ? 'success' : 'gray'),
 
             ])
             ->emptyStateHeading(__('classes.empty_heading'))
             ->emptyStateDescription(__('classes.empty_description'))
             ->recordActions([
+
+                EditAction::make()
+                    ->iconButton()
+                    ->tooltip(__('filament-actions::edit.single.label')),
 
                 // Batch 5 / Timetable Navigation (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md):
                 // the only discoverable link to the canonical TimetableGrid
@@ -92,6 +104,8 @@ class ClassResource extends Resource
                 Action::make('timetable')
                     ->label(__('timetable.view_schedule'))
                     ->icon('heroicon-o-calendar')
+                    ->iconButton()
+                    ->tooltip(__('timetable.view_schedule'))
                     ->url(fn ($record) => static::getUrl('timetable', ['record' => $record]))
                     ->visible(fn () => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ?? false),
 

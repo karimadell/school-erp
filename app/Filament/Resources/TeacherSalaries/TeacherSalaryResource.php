@@ -97,19 +97,27 @@ class TeacherSalaryResource extends Resource
 
                 Tables\Columns\TextColumn::make('base_salary')
                     ->label(__('teacher_salary.base_salary'))
-                    ->money('EGP'),
+                    ->money('EGP')
+                    ->alignEnd()
+                    ->visibleFrom('lg'),
 
                 Tables\Columns\TextColumn::make('bonus')
                     ->label(__('teacher_salary.bonus'))
-                    ->money('EGP'),
+                    ->money('EGP')
+                    ->alignEnd()
+                    ->visibleFrom('lg'),
 
                 Tables\Columns\TextColumn::make('deductions')
                     ->label(__('teacher_salary.deductions'))
-                    ->money('EGP'),
+                    ->money('EGP')
+                    ->alignEnd()
+                    ->visibleFrom('lg'),
 
                 Tables\Columns\TextColumn::make('net_salary')
                     ->label(__('teacher_salary.net_salary'))
-                    ->money('EGP'),
+                    ->money('EGP')
+                    ->alignEnd()
+                    ->weight('semibold'),
 
                 Tables\Columns\TextColumn::make('salary_month')
                     ->label(__('teacher_salary.month'))
@@ -127,7 +135,9 @@ class TeacherSalaryResource extends Resource
             ->emptyStateHeading(__('teacher_salary.empty_heading'))
             ->emptyStateDescription(__('teacher_salary.empty_description'))
             ->actions([
-                EditAction::make(),
+                EditAction::make()
+                    ->iconButton()
+                    ->tooltip(__('filament-actions::edit.single.label')),
             ]);
     }
 

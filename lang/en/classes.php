@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'navigation_group' => 'Academic Process',
     'title' => 'Classes',
     'list' => 'Classes List',
     'create' => 'Add Class',
@@ -33,4 +34,6 @@ return [
 
     'confirm_delete' => 'Are you sure?',
     'no_data' => 'No data available',
+    'empty_heading' => 'No classes yet',
+    'empty_description' => 'Create the first class for the academic process.',
 ];

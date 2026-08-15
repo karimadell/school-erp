@@ -95,6 +95,11 @@ class UatReadinessTest extends TestCase
             $this->assertDatabaseCount('students', 12);
             $this->assertDatabaseCount('invoices', 3);
             $this->assertDatabaseCount('invoice_payments', 2);
+            $this->assertDatabaseCount('teachers', 2);
+            $this->assertDatabaseCount('teacher_assignments', 15);
+            $this->assertDatabaseCount('teacher_salaries', 1);
+            $this->assertDatabaseCount('bell_schedule_periods', 6);
+            $this->assertDatabaseCount('timetable_entries', 24);
             $this->assertDatabaseHas('users', ['email' => 'cashier.uat@school.test', 'is_active' => true]);
         } finally {
             $this->setEnvironment('testing');

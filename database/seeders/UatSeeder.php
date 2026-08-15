@@ -3,7 +3,11 @@
 namespace Database\Seeders;
 
 use App\Models\AcademicYear;
+use App\Models\Academic\Timetable as AcademicTimetable;
+use App\Models\BellSchedule;
+use App\Models\BellSchedulePeriod;
 use App\Models\CashAccount;
+use App\Models\Curriculum;
 use App\Models\Enrollment;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
@@ -11,10 +15,16 @@ use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\PhysicalClassroom;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\Subject;
+use App\Models\Teacher;
+use App\Models\TeacherAssignment;
+use App\Models\TeacherSalary;
+use App\Models\TimetableEntry;
+use App\Models\TimetableVersion;
 use App\Models\User;
 use App\Services\Finance\InvoicePaymentService;
 use Illuminate\Database\Seeder;
@@ -49,6 +59,7 @@ class UatSeeder extends Seeder
 
             $students = $this->students($year, $stage, $grade, $class);
             $this->invoices($students, $year, $tuition, $activities, $account, $users['accountant']);
+            $this->staffAndTimetable($year, $class);
         }, 3);
     }
 
@@ -114,10 +125,6 @@ class UatSeeder extends Seeder
             ['grade_id' => $grade->id, 'code' => 'UAT-A'],
             ['name_ar' => 'فصل اختبار القبول', 'name_ru' => 'UAT — 1А', 'capacity' => 20, 'is_active' => true]
         );
-
-        foreach ([['UAT-RUS', 'Русский язык'], ['UAT-MATH', 'Математика']] as [$code, $name]) {
-            Subject::updateOrCreate(['code' => $code], ['name_ar' => "UAT {$code}", 'name_ru' => "UAT — {$name}", 'is_active' => true]);
-        }
 
         return [$year, $stage, $grade, $class];
     }
@@ -211,5 +218,166 @@ class UatSeeder extends Seeder
                 );
             }
         }
+    }
+
+    private function staffAndTimetable(AcademicYear $year, SchoolClass $firstClass): void
+    {
+        $seniorStage = Stage::updateOrCreate(
+            ['name' => 'UAT — Основная и старшая школа'],
+            ['description' => 'Только искусственные данные UAT', 'order' => 901, 'is_active' => true],
+        );
+
+        $fifthGrade = Grade::updateOrCreate(['stage_id' => $seniorStage->id, 'name' => 'UAT — 5 класс']);
+        $fifthGrade->forceFill(['level' => 5])->save();
+        $ninthGrade = Grade::updateOrCreate(['stage_id' => $seniorStage->id, 'name' => 'UAT — 9 класс']);
+        $ninthGrade->forceFill(['level' => 9])->save();
+
+        $classes = [
+            'first' => $firstClass,
+            'fifth' => SchoolClass::updateOrCreate(
+                ['code' => 'UAT-5A'],
+                ['grade_id' => $fifthGrade->id, 'name_ar' => 'UAT الصف الخامس', 'name_ru' => 'UAT — 5 класс', 'capacity' => 20, 'is_active' => true],
+            ),
+            'ninth' => SchoolClass::updateOrCreate(
+                ['code' => 'UAT-9A'],
+                ['grade_id' => $ninthGrade->id, 'name_ar' => 'UAT الصف التاسع', 'name_ru' => 'UAT — 9 класс', 'capacity' => 20, 'is_active' => true],
+            ),
+        ];
+
+        $definitions = [
+            'RUS' => 'Русский язык', 'MATH' => 'Математика', 'LITREAD' => 'Литературное чтение',
+            'EN' => 'Английский язык', 'PE' => 'Физкультура', 'WORLD' => 'Окружающий мир',
+            'HISTORY' => 'История', 'GEOGRAPHY' => 'География', 'LITERATURE' => 'Литература',
+            'ALGEBRA' => 'Алгебра', 'GEOMETRY' => 'Геометрия', 'PHYSICS' => 'Физика',
+            'CHEMISTRY' => 'Химия', 'BIOLOGY' => 'Биология', 'IT' => 'Информатика',
+            'SAFETY' => 'ОБЖ', 'HOMEROOM' => 'Классный час', 'TECH' => 'Технология',
+            'EXTRAREAD' => 'Внеклассное чтение',
+        ];
+        $subjects = [];
+        foreach ($definitions as $code => $name) {
+            $subjects[$code] = $this->uatSubject($code, $name);
+        }
+
+        $teachers = [
+            'primary' => Teacher::updateOrCreate(
+                ['email' => 'teacher.primary.uat@example.invalid'],
+                ['first_name' => 'Тестовый учитель', 'patronymic' => 'начальной школы', 'last_name' => 'УАТ-Начальная', 'specialization' => 'UAT — начальная школа', 'hire_date' => '2026-07-01', 'is_active' => true],
+            ),
+            'senior' => Teacher::updateOrCreate(
+                ['email' => 'teacher.senior.uat@example.invalid'],
+                ['first_name' => 'Тестовый учитель', 'patronymic' => 'старшей школы', 'last_name' => 'УАТ-Старшая', 'specialization' => 'UAT — основная и старшая школа', 'hire_date' => '2026-07-01', 'is_active' => true],
+            ),
+        ];
+
+        $sourceLessons = [
+            'first' => [
+                7 => ['RUS', 'EN', 'WORLD', 'LITREAD', 'EXTRAREAD', 'EXTRAREAD'],
+                1 => ['RUS', 'TECH', 'PE', 'MATH', 'LITREAD', 'EXTRAREAD'],
+            ],
+            'fifth' => [
+                7 => ['HOMEROOM', 'RUS', 'MATH', 'HISTORY', 'GEOGRAPHY', 'PE'],
+                1 => ['RUS', 'RUS', 'MATH', 'EN', 'MATH', 'RUS'],
+            ],
+        ];
+
+        $assignments = [];
+        foreach ($sourceLessons as $classKey => $days) {
+            $teacher = $classKey === 'first' ? $teachers['primary'] : $teachers['senior'];
+            $subjectCodes = collect($days)->flatten()->unique()->values();
+            $teacher->subjects()->syncWithoutDetaching($subjectCodes->map(fn (string $code) => $subjects[$code]->id));
+
+            foreach ($subjectCodes as $code) {
+                $curriculum = Curriculum::updateOrCreate(
+                    ['academic_year_id' => $year->id, 'grade_id' => $classes[$classKey]->grade_id, 'subject_id' => $subjects[$code]->id],
+                    ['weekly_hours' => max(1, collect($days)->flatten()->filter(fn ($value) => $value === $code)->count()), 'type' => Curriculum::TYPE_MANDATORY, 'assessment_type' => Curriculum::ASSESSMENT_UNGRADED, 'is_active' => true, 'notes' => 'Искусственный учебный план UAT'],
+                );
+                $assignments[$classKey][$code] = TeacherAssignment::updateOrCreate([
+                    'teacher_id' => $teacher->id,
+                    'class_id' => $classes[$classKey]->id,
+                    'subject_id' => $subjects[$code]->id,
+                    'academic_year_id' => $year->id,
+                ]);
+            }
+        }
+
+        $salary = TeacherSalary::where('teacher_id', $teachers['primary']->id)
+            ->whereDate('salary_month', '2026-07-01')
+            ->firstOrNew();
+        $salary->fill([
+            'teacher_id' => $teachers['primary']->id,
+            'salary_month' => '2026-07-01',
+            'base_salary' => '18000.00',
+            'bonus' => '1200.00',
+            'deductions' => '300.00',
+        ])->save();
+
+        $schedule = BellSchedule::updateOrCreate(
+            ['academic_year_id' => $year->id, 'name' => 'UAT — Расписание звонков 09:00'],
+            ['shift' => 1, 'is_default' => true, 'is_active' => true, 'notes' => 'Время уроков из предоставленных таблиц UAT'],
+        );
+        $times = [
+            1 => ['09:00', '09:40', 10], 2 => ['09:50', '10:30', 5], 3 => ['10:35', '11:15', 5],
+            4 => ['11:20', '12:00', 15], 5 => ['12:15', '12:55', 15], 6 => ['13:10', '13:50', 0],
+        ];
+        foreach ($times as $number => [$start, $end, $break]) {
+            $periods[$number] = BellSchedulePeriod::updateOrCreate(
+                ['bell_schedule_id' => $schedule->id, 'period_number' => $number],
+                ['label' => "{$number}-й урок", 'starts_at' => $start, 'ends_at' => $end, 'break_after_minutes' => $break, 'is_active' => true],
+            );
+        }
+
+        foreach (['first' => 'UAT-1A', 'fifth' => 'UAT-5A'] as $classKey => $code) {
+            $rooms[$classKey] = PhysicalClassroom::updateOrCreate(
+                ['academic_year_id' => $year->id, 'code' => $code],
+                ['building' => 'UAT', 'floor' => $classKey === 'first' ? '1' : '2', 'name' => "UAT — кабинет {$classes[$classKey]->name_ru}", 'capacity' => 20, 'room_type' => PhysicalClassroom::TYPE_CLASSROOM, 'is_active' => true, 'notes' => 'Искусственный кабинет UAT'],
+            );
+        }
+
+        $version = TimetableVersion::firstOrCreate(
+            ['academic_year_id' => $year->id, 'name' => 'UAT — Расписание по образцу 2025/26'],
+            ['status' => TimetableVersion::STATUS_DRAFT, 'effective_from' => $year->start_date, 'effective_to' => $year->end_date, 'notes' => 'Репрезентативная выборка из предоставленных таблиц без персональных данных'],
+        );
+        $header = AcademicTimetable::firstOrCreate(
+            ['timetable_version_id' => $version->id, 'name' => 'UAT — Начальная и старшая школа'],
+            ['notes' => 'Воскресенье и понедельник, 1 и 5 классы'],
+        );
+
+        foreach ($sourceLessons as $classKey => $days) {
+            foreach ($days as $weekday => $lessonCodes) {
+                foreach ($lessonCodes as $offset => $code) {
+                    $period = $periods[$offset + 1];
+                    TimetableEntry::updateOrCreate(
+                        ['timetable_version_id' => $version->id, 'class_id' => $classes[$classKey]->id, 'weekday' => $weekday, 'bell_schedule_period_id' => $period->id],
+                        ['academic_timetable_id' => $header->id, 'bell_schedule_id' => $schedule->id, 'classroom_id' => $rooms[$classKey]->id, 'teacher_assignment_id' => $assignments[$classKey][$code]->id, 'curriculum_id' => Curriculum::where('academic_year_id', $year->id)->where('grade_id', $classes[$classKey]->grade_id)->where('subject_id', $subjects[$code]->id)->value('id'), 'subject_id' => $subjects[$code]->id],
+                    );
+                }
+            }
+        }
+    }
+
+    private function uatSubject(string $code, string $name): Subject
+    {
+        if ($subject = Subject::where('code', "UAT-{$code}")->first()) {
+            $subject->update([
+                'name_ar' => "UAT — {$name}",
+                'name_ru' => $name,
+                'description' => 'Искусственный предмет UAT',
+                'is_active' => true,
+            ]);
+
+            return $subject;
+        }
+
+        $subject = Subject::all()->first(
+            fn (Subject $candidate) => mb_strtolower(trim((string) $candidate->name_ru)) === mb_strtolower($name),
+        );
+
+        return $subject ?? Subject::create([
+            'code' => "UAT-{$code}",
+            'name_ar' => "UAT — {$name}",
+            'name_ru' => $name,
+            'description' => 'Искусственный предмет UAT',
+            'is_active' => true,
+        ]);
     }
 }

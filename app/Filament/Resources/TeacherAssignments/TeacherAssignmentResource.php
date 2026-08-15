@@ -27,15 +27,27 @@ class TeacherAssignmentResource extends Resource
 
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-user-group';
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Учителя и сотрудники';
-
-    protected static ?string $navigationLabel = 'Назначения учителей';
-
     protected static ?int $navigationSort = 20;
 
-    protected static ?string $modelLabel = 'Назначение';
+    public static function getNavigationGroup(): string|UnitEnum|null
+    {
+        return __('teacher_assignment.navigation_group');
+    }
 
-    protected static ?string $pluralModelLabel = 'Назначения учителей';
+    public static function getNavigationLabel(): string
+    {
+        return __('teacher_assignment.navigation');
+    }
+
+    public static function getModelLabel(): string
+    {
+        return __('teacher_assignment.model');
+    }
+
+    public static function getPluralModelLabel(): string
+    {
+        return __('teacher_assignment.models');
+    }
 
     public static function form(Schema $schema): Schema
     {

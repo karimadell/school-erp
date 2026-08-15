@@ -18,31 +18,45 @@ class ClassResource extends Resource
 
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-building-office';
 
-    protected static \UnitEnum|string|null $navigationGroup = 'Учебный процесс';
-
     protected static ?int $navigationSort = 20;
 
-    protected static ?string $modelLabel = 'Класс';
+    public static function getNavigationGroup(): string|\UnitEnum|null
+    {
+        return __('classes.navigation_group');
+    }
 
-    protected static ?string $pluralModelLabel = 'Классы';
+    public static function getNavigationLabel(): string
+    {
+        return __('classes.title');
+    }
+
+    public static function getModelLabel(): string
+    {
+        return __('classes.name');
+    }
+
+    public static function getPluralModelLabel(): string
+    {
+        return __('classes.title');
+    }
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
 
             Forms\Components\TextInput::make('code')
-                ->label('Код'),
+                ->label(__('classes.code')),
 
             Forms\Components\TextInput::make('name_ru')
-                ->label('Название')
+                ->label(__('classes.name_ru'))
                 ->required(),
 
             Forms\Components\TextInput::make('capacity')
-                ->label('Вместимость')
+                ->label(__('classes.capacity'))
                 ->numeric(),
 
             Forms\Components\Toggle::make('is_active')
-                ->label('Активный')
+                ->label(__('classes.status'))
                 ->default(true),
 
         ]);
@@ -54,15 +68,18 @@ class ClassResource extends Resource
             ->columns([
 
                 Tables\Columns\TextColumn::make('name_ru')
-                    ->label('Название'),
+                    ->label(__('classes.name_ru')),
 
                 Tables\Columns\TextColumn::make('capacity')
-                    ->label('Вместимость'),
+                    ->label(__('classes.capacity')),
 
                 Tables\Columns\IconColumn::make('is_active')
+                    ->label(__('classes.status'))
                     ->boolean(),
 
             ])
+            ->emptyStateHeading(__('classes.empty_heading'))
+            ->emptyStateDescription(__('classes.empty_description'))
             ->recordActions([
 
                 // Batch 5 / Timetable Navigation (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md):

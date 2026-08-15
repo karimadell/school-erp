@@ -15,7 +15,7 @@ class TeacherAssignmentForm
         return $schema->components([
 
             Select::make('teacher_id')
-                ->label('Учитель')
+                ->label(__('teacher_assignment.fields.teacher'))
                 ->relationship('teacher', 'last_name')
                 ->getOptionLabelFromRecordUsing(fn (Teacher $record) => $record->full_name)
                 ->searchable(['first_name', 'last_name'])
@@ -23,21 +23,21 @@ class TeacherAssignmentForm
                 ->required(),
 
             Select::make('class_id')
-                ->label('Класс')
+                ->label(__('teacher_assignment.fields.class'))
                 ->relationship('schoolClass', 'name_ru')
                 ->searchable()
                 ->preload()
                 ->required(),
 
             Select::make('subject_id')
-                ->label('Предмет')
+                ->label(__('teacher_assignment.fields.subject'))
                 ->relationship('subject', 'name_ru')
                 ->searchable()
                 ->preload()
                 ->required(),
 
             Select::make('academic_year_id')
-                ->label('Учебный год')
+                ->label(__('teacher_assignment.fields.academic_year'))
                 ->relationship('academicYear', 'name')
                 ->searchable()
                 ->preload()
@@ -51,7 +51,7 @@ class TeacherAssignmentForm
                         ->where('subject_id', $get('subject_id'))
                 )
                 ->validationMessages([
-                    'unique' => 'Этот учитель уже назначен на этот класс и предмет в этом учебном году.',
+                    'unique' => __('teacher_assignment.validation.duplicate'),
                 ]),
 
         ]);

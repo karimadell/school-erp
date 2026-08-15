@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'navigation_group' => 'العملية التعليمية',
     'title' => 'الفصول',
     'list' => 'قائمة الفصول',
     'create' => 'إضافة فصل',
@@ -33,4 +34,6 @@ return [
 
     'confirm_delete' => 'هل أنت متأكد؟',
     'no_data' => 'لا توجد بيانات',
+    'empty_heading' => 'لا توجد فصول بعد',
+    'empty_description' => 'أنشئ أول فصل للعملية التعليمية.',
 ];

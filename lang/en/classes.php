@@ -17,6 +17,7 @@ return [
     'capacity' => 'Capacity',
     'status' => 'Status',
     'actions' => 'Actions',
+    'search_placeholder' => 'Search by class name or code…',
 
     'select_stage' => 'Select Stage',
     'select_grade' => 'Select Parallel',

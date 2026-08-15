@@ -2,16 +2,18 @@
 
 namespace App\Filament\Resources;
 
+use App\Filament\Resources\ClassResource\Pages;
+use App\Filament\Resources\ClassResource\RelationManagers\ClassTeachersRelationManager;
 use App\Models\SchoolClass;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms;
+use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Tables;
+use Filament\Tables\Filters\SelectFilter;
+use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
-use Filament\Resources\Resource;
-use App\Filament\Resources\ClassResource\Pages;
-use App\Filament\Resources\ClassResource\RelationManagers\ClassTeachersRelationManager;
 
 class ClassResource extends Resource
 {
@@ -66,11 +68,29 @@ class ClassResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            ->extraAttributes(['class' => 'erp-resource-table erp-classes-table'])
+            ->searchPlaceholder(__('classes.search_placeholder'))
             ->columns([
 
                 Tables\Columns\TextColumn::make('name_ru')
                     ->label(__('classes.name'))
-                    ->searchable()
+                    ->description(fn (SchoolClass $record): ?string => $record->code ?: null)
+                    ->weight('medium')
+                    ->searchable(['name_ru', 'code'])
+                    ->sortable(),
+
+                Tables\Columns\TextColumn::make('grade.stage.name')
+                    ->label(__('classes.stage'))
+                    ->badge()
+                    ->color('gray')
+                    ->visibleFrom('md')
+                    ->sortable(),
+
+                Tables\Columns\TextColumn::make('grade.name')
+                    ->label(__('classes.grade'))
+                    ->badge()
+                    ->color('primary')
+                    ->visibleFrom('sm')
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('capacity')
@@ -86,6 +106,17 @@ class ClassResource extends Resource
                     ->color(fn (bool $state): string => $state ? 'success' : 'gray'),
 
             ])
+            ->filters([
+                SelectFilter::make('grade_id')
+                    ->label(__('classes.grade'))
+                    ->relationship('grade', 'name'),
+
+                TernaryFilter::make('is_active')
+                    ->label(__('classes.status'))
+                    ->trueLabel(__('classes.active'))
+                    ->falseLabel(__('classes.inactive')),
+            ])
+            ->filtersFormColumns(1)
             ->emptyStateHeading(__('classes.empty_heading'))
             ->emptyStateDescription(__('classes.empty_description'))
             ->recordActions([

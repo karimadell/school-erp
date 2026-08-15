@@ -3,6 +3,8 @@
 return [
     'navigation_group' => 'Academic Process', 'navigation' => 'Classrooms',
     'model' => 'Classroom', 'models' => 'Classrooms',
+    'search_placeholder' => 'Search by code, name, or building…',
+    'active' => 'Active', 'inactive' => 'Inactive',
     'fields' => [
         'academic_year' => 'Academic Year', 'building' => 'Building', 'floor' => 'Floor',
         'code' => 'Room Code', 'name' => 'Name', 'capacity' => 'Capacity',

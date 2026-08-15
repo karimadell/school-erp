@@ -3,6 +3,8 @@
 return [
     'navigation_group' => 'العملية التعليمية', 'navigation' => 'الغرف',
     'model' => 'غرفة', 'models' => 'الغرف',
+    'search_placeholder' => 'البحث بالرمز أو الاسم أو المبنى…',
+    'active' => 'نشط', 'inactive' => 'غير نشط',
     'fields' => [
         'academic_year' => 'العام الدراسي', 'building' => 'المبنى', 'floor' => 'الطابق',
         'code' => 'رمز القاعة', 'name' => 'الاسم', 'capacity' => 'السعة',

@@ -152,6 +152,26 @@ html.fi,
     background: var(--erp-color-surface-subtle);
 }
 
+/* Phase 2B resource tables: compact, predictable rows and safe action gutters. */
+.erp-resource-table .fi-ta-table > tbody > tr > .fi-ta-cell,
+.erp-resource-table .fi-ta-table > tbody > tr > .fi-ta-selection-cell {
+    padding-block: 0.625rem;
+}
+
+.erp-resource-table .fi-ta-actions-cell {
+    min-width: 3.25rem;
+    padding-inline: var(--erp-space-3);
+}
+
+.erp-resource-table .fi-ta-actions {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+}
+
+[dir='rtl'] .erp-resource-table .fi-ta-actions {
+    justify-content: flex-start;
+}
+
 .fi-input-wrp,
 .fi-select-input,
 .fi-btn,
@@ -197,5 +217,15 @@ html.fi,
 
     .fi-page {
         padding-block: var(--erp-space-4);
+    }
+
+    .erp-resource-table .fi-ta-table > thead > tr > .fi-ta-header-cell,
+    .erp-resource-table .fi-ta-table > tbody > tr > .fi-ta-cell {
+        padding-inline: var(--erp-space-2);
+    }
+
+    .erp-resource-table .fi-ta-actions-cell {
+        min-width: 2.75rem;
+        padding-inline: var(--erp-space-2);
     }
 }

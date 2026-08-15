@@ -17,6 +17,7 @@ return [
     'capacity' => 'السعة',
     'status' => 'الحالة',
     'actions' => 'الإجراءات',
+    'search_placeholder' => 'البحث باسم الفصل أو رمزه…',
 
     'select_stage' => 'اختر المرحلة',
     'select_grade' => 'اختر الصف',

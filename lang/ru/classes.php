@@ -17,6 +17,7 @@ return [
     'capacity' => 'Вместимость',
     'status' => 'Статус',
     'actions' => 'Действия',
+    'search_placeholder' => 'Поиск по названию или коду класса…',
 
     'select_stage' => 'Выберите этап',
     'select_grade' => 'Выберите параллель',

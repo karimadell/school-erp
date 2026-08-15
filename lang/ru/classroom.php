@@ -3,6 +3,8 @@
 return [
     'navigation_group' => 'Учебный процесс', 'navigation' => 'Классные комнаты',
     'model' => 'Классная комната', 'models' => 'Классные комнаты',
+    'search_placeholder' => 'Поиск по коду, названию или зданию…',
+    'active' => 'Активно', 'inactive' => 'Неактивно',
     'fields' => [
         'academic_year' => 'Учебный год', 'building' => 'Здание / корпус', 'floor' => 'Этаж',
         'code' => 'Код кабинета', 'name' => 'Название', 'capacity' => 'Вместимость',

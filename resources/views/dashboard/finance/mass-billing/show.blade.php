@@ -8,7 +8,8 @@
 
     <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
         <div>
-            <h2 class="mb-1">{{ __('mass_billing.show_title') }}</h2>
+            <h2 class="mb-1">{{ __('mass_billing.title') }}</h2>
+            <p class="text-muted mb-2">{{ __('mass_billing.subtitle') }}</p>
             <span class="badge bg-secondary">{{ __('mass_billing.status.'.$batch->status) }}</span>
         </div>
         <div class="d-flex gap-2">
@@ -26,6 +27,13 @@
             <dt class="col-sm-3">{{ __('mass_billing.fields.quantity') }}</dt><dd class="col-sm-9">{{ $batch->quantity }}</dd>
             <dt class="col-sm-3">{{ __('mass_billing.fields.issue_date') }}</dt><dd class="col-sm-9">{{ $batch->issue_date?->toDateString() }}</dd>
             <dt class="col-sm-3">{{ __('mass_billing.fields.due_date') }}</dt><dd class="col-sm-9">{{ $batch->due_date?->toDateString() }}</dd>
+            <dt class="col-sm-3">{{ __('mass_billing.fields.quantity') }}</dt><dd class="col-sm-9">{{ $batch->quantity }}</dd>
+            <dt class="col-sm-3">{{ __('mass_billing.fields.target_mode') }}</dt><dd class="col-sm-9">{{ __('mass_billing.fields.target_mode_'.($batch->target_mode === \App\Models\BillingBatch::TARGET_MODE_ALL ? 'all' : 'classes')) }}</dd>
+            @if($batch->target_mode === \App\Models\BillingBatch::TARGET_MODE_CLASSES)
+                <dt class="col-sm-3">{{ __('mass_billing.config.selected_classes') }}</dt><dd class="col-sm-9">{{ $batch->classTargets->count() }}</dd>
+            @endif
+            <dt class="col-sm-3">{{ __('mass_billing.config.included_students') }}</dt><dd class="col-sm-9">{{ $batch->includedStudentIds()->count() }}</dd>
+            <dt class="col-sm-3">{{ __('mass_billing.config.excluded_students') }}</dt><dd class="col-sm-9">{{ $batch->excludedStudentIds()->count() }}</dd>
             @if($batch->description)
                 <dt class="col-sm-3">{{ __('mass_billing.fields.description') }}</dt><dd class="col-sm-9">{{ $batch->description }}</dd>
             @endif
@@ -38,6 +46,7 @@
                 @csrf
                 <button class="btn btn-outline-primary">{{ __('mass_billing.actions.preview') }}</button>
             </form>
+            <span class="text-muted small">{{ __('mass_billing.preview_hint') }}</span>
             @can('execute mass billing')
                 @if($batch->status === \App\Models\BillingBatch::STATUS_PREVIEWED)
                     <form method="POST" action="{{ route('dashboard.finance.mass-billing.execute', $batch) }}"

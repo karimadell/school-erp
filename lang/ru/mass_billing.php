@@ -9,7 +9,15 @@ return [
     'show_title' => 'Пакет начислений',
     'preview_title' => 'Предварительный просмотр',
     'preview_hint' => 'Суммы носят информационный характер. Счета не создаются на этом шаге.',
-    'preview_recheck_note' => 'Перед созданием счетов данные и тарифы будут проверены повторно.',
+    'preview_recheck_note' => 'Перед созданием счетов данные, право на начисление и тарифы будут проверены повторно.',
+
+    'context' => [
+        'create' => 'Создание',
+        'edit' => 'Редактирование',
+    ],
+
+    'create_action_note' => 'Счета не создаются на этом шаге. Далее вы увидите предварительный расчёт.',
+    'required_legend' => 'Поля, отмеченные звёздочкой, обязательны для заполнения.',
 
     'fields' => [
         'academic_year' => 'Учебный год',
@@ -17,7 +25,7 @@ return [
         'quantity' => 'Количество',
         'issue_date' => 'Дата выставления',
         'due_date' => 'Срок оплаты',
-        'description' => 'Описание',
+        'description' => 'Описание счёта',
         'target_mode' => 'Кого включить',
         'target_mode_all' => 'Все ученики года',
         'target_mode_classes' => 'Выбранные классы',
@@ -27,9 +35,22 @@ return [
         'exclude_students' => 'Исключить учеников',
     ],
 
+    'search' => [
+        'classes_placeholder' => 'Поиск класса…',
+        'students_placeholder' => 'Поиск ученика…',
+        'no_classes' => 'Нет доступных классов.',
+        'no_students' => 'Нет доступных учеников.',
+        'no_results' => 'Ничего не найдено.',
+        'selected_count' => 'Выбрано: :count',
+    ],
+
+    'student_label' => ':name — :class',
+    'student_no_class' => 'Без класса',
+
     'actions' => [
         'create' => 'Создать начисление',
         'save' => 'Сохранить',
+        'save_and_review' => 'Сохранить и перейти к предпросмотру',
         'update' => 'Сохранить изменения',
         'preview' => 'Предварительный просмотр',
         'execute' => 'Создать счета',
@@ -91,6 +112,13 @@ return [
         'skipped_count' => 'Пропущено',
         'expected_invoice_count' => 'Ожидается счетов',
         'expected_total_amount' => 'Ожидаемая сумма',
+    ],
+
+    'config' => [
+        'title' => 'Параметры начисления',
+        'selected_classes' => 'Выбрано классов',
+        'included_students' => 'Дополнительно включено учеников',
+        'excluded_students' => 'Исключено учеников',
     ],
 
     'table' => [

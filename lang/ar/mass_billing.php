@@ -9,7 +9,15 @@ return [
     'show_title' => 'دفعة فوترة',
     'preview_title' => 'معاينة',
     'preview_hint' => 'المبالغ للعلم فقط. لا يتم إنشاء فواتير في هذه الخطوة.',
-    'preview_recheck_note' => 'قبل إنشاء الفواتير، تتم إعادة التحقق من البيانات والتعريفات.',
+    'preview_recheck_note' => 'قبل إنشاء الفواتير، تتم إعادة التحقق من البيانات وأحقية الفوترة والتعريفات.',
+
+    'context' => [
+        'create' => 'إنشاء',
+        'edit' => 'تعديل',
+    ],
+
+    'create_action_note' => 'لا يتم إنشاء فواتير في هذه الخطوة. بعد ذلك ستظهر لك المعاينة الحسابية.',
+    'required_legend' => 'الحقول المميزة بعلامة نجمة إلزامية.',
 
     'fields' => [
         'academic_year' => 'السنة الدراسية',
@@ -17,7 +25,7 @@ return [
         'quantity' => 'الكمية',
         'issue_date' => 'تاريخ الإصدار',
         'due_date' => 'تاريخ الاستحقاق',
-        'description' => 'ملاحظة',
+        'description' => 'وصف الفاتورة',
         'target_mode' => 'من سيتم تضمينه',
         'target_mode_all' => 'جميع طلاب السنة',
         'target_mode_classes' => 'الفصول المختارة',
@@ -27,9 +35,22 @@ return [
         'exclude_students' => 'استبعاد طلاب',
     ],
 
+    'search' => [
+        'classes_placeholder' => 'بحث عن فصل…',
+        'students_placeholder' => 'بحث عن طالب…',
+        'no_classes' => 'لا توجد فصول متاحة.',
+        'no_students' => 'لا يوجد طلاب متاحون.',
+        'no_results' => 'لا توجد نتائج.',
+        'selected_count' => 'المحدد: :count',
+    ],
+
+    'student_label' => ':name — :class',
+    'student_no_class' => 'بدون فصل',
+
     'actions' => [
         'create' => 'إنشاء دفعة',
         'save' => 'حفظ',
+        'save_and_review' => 'حفظ والانتقال إلى المعاينة',
         'update' => 'حفظ التغييرات',
         'preview' => 'حساب المعاينة',
         'execute' => 'إنشاء الفواتير',
@@ -91,6 +112,13 @@ return [
         'skipped_count' => 'تم تخطّيهم',
         'expected_invoice_count' => 'الفواتير المتوقعة',
         'expected_total_amount' => 'الإجمالي المتوقع',
+    ],
+
+    'config' => [
+        'title' => 'معايير الفوترة',
+        'selected_classes' => 'الفصول المحددة',
+        'included_students' => 'طلاب مضمّنون إضافيون',
+        'excluded_students' => 'الطلاب المستبعدون',
     ],
 
     'table' => [

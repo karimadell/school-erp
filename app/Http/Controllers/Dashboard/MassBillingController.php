@@ -198,7 +198,7 @@ class MassBillingController extends Controller
             'years' => AcademicYear::orderByDesc('start_date')->get(),
             'fees' => Fee::active()->orderBy('category')->orderBy('name_ru')->get(),
             'classes' => SchoolClass::with('grade')->orderBy('name_ru')->get(),
-            'students' => Student::orderBy('last_name_ru')->orderBy('name')->get(),
+            'students' => Student::with('class')->orderBy('last_name_ru')->orderBy('name')->get(),
         ];
     }
 }

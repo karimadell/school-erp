@@ -148,7 +148,94 @@ class MassBillingUiTest extends MassBillingTestCase
             ->assertSee('Исполнитель')
             ->assertSee('Дата выполнения')
             ->assertSee('Просмотр счёта')
-            ->assertSee('Перед созданием счетов данные и тарифы будут проверены повторно.');
+            ->assertSee('Перед созданием счетов данные, право на начисление и тарифы будут проверены повторно.');
+    }
+
+    // ----- Create/edit form polish ----------------------------------------
+
+    public function test_create_screen_shows_mass_billing_page_title_and_subtitle(): void
+    {
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.mass-billing.create'))
+            ->assertOk()
+            ->assertSee('Массовое начисление')
+            ->assertSee('Пакетное начисление одной услуги группе учеников за учебный год.')
+            ->assertSee('Создание');
+    }
+
+    public function test_create_primary_action_does_not_imply_invoices_are_issued(): void
+    {
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.mass-billing.create'))
+            ->assertOk()
+            // The draft/create form must not present issuance as the first action.
+            ->assertSee('Сохранить и перейти к предпросмотру')
+            ->assertSee('Счета не создаются на этом шаге.')
+            ->assertDontSee('Создать счета');
+    }
+
+    public function test_create_form_marks_required_fields_and_improved_description_label(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.mass-billing.create'))
+            ->assertOk()
+            ->assertSee('Учебный год')
+            ->assertSee('Услуга или сбор')
+            ->assertSee('Количество')
+            ->assertSee('Дата выставления')
+            ->assertSee('Срок оплаты')
+            // Improved finance wording for the note field.
+            ->assertSee('Описание счёта')
+            // Required-field legend + at least one required asterisk are present.
+            ->assertSee('Поля, отмеченные звёздочкой, обязательны для заполнения.');
+
+        $this->assertStringContainsString('text-danger', $response->getContent());
+    }
+
+    public function test_create_form_renders_searchable_class_and_student_controls(): void
+    {
+        \App\Models\Student::create([
+            'last_name_ru' => 'Петров', 'first_name_ru' => 'Пётр',
+            'class_id' => $this->classA->id, 'phone' => '+201000000001',
+        ]);
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.mass-billing.create'))
+            ->assertOk()
+            // Class + include/exclude selectors preserve the submitted contract.
+            ->assertSee('name="class_ids[]"', false)
+            ->assertSee('name="include_student_ids[]"', false)
+            ->assertSee('name="exclude_student_ids[]"', false)
+            // Searchable checklist scaffolding and Russian search placeholders.
+            ->assertSee('data-mb-checklist', false)
+            ->assertSee('Поиск класса…')
+            ->assertSee('Поиск ученика…')
+            // Students are shown with disambiguating "Name — class" context.
+            ->assertSee('Петров Пётр — 1-А');
+    }
+
+    public function test_show_screen_shows_config_summary_before_execution(): void
+    {
+        $extra = $this->enrolledStudent($this->classB, suffix: 'B1');
+        $excluded = $this->enrolledStudent($this->classA, suffix: 'A2');
+        $batch = $this->makeBatch(classIds: [$this->classA->id], include: [$extra->id], exclude: [$excluded->id]);
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.mass-billing.show', $batch))
+            ->assertOk()
+            ->assertSee('Выбрано классов')
+            ->assertSee('Дополнительно включено учеников')
+            ->assertSee('Исключено учеников');
+    }
+
+    public function test_preview_recalculation_warning_is_shown_on_show_screen(): void
+    {
+        $batch = $this->previewedBatch();
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.mass-billing.show', $batch))
+            ->assertOk()
+            ->assertSee('Перед созданием счетов данные, право на начисление и тарифы будут проверены повторно.');
     }
 
     // ----- Validation -----------------------------------------------------

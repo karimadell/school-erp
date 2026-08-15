@@ -9,7 +9,15 @@ return [
     'show_title' => 'Billing batch',
     'preview_title' => 'Preview',
     'preview_hint' => 'Amounts are informational. No invoices are created at this step.',
-    'preview_recheck_note' => 'Before invoices are created, the data and tariffs are re-checked.',
+    'preview_recheck_note' => 'Before invoices are created, the data, billing eligibility and tariffs are re-checked.',
+
+    'context' => [
+        'create' => 'Create',
+        'edit' => 'Edit',
+    ],
+
+    'create_action_note' => 'No invoices are created at this step. Next you will see the preview calculation.',
+    'required_legend' => 'Fields marked with an asterisk are required.',
 
     'fields' => [
         'academic_year' => 'Academic year',
@@ -17,7 +25,7 @@ return [
         'quantity' => 'Quantity',
         'issue_date' => 'Issue date',
         'due_date' => 'Due date',
-        'description' => 'Note',
+        'description' => 'Invoice note',
         'target_mode' => 'Who to include',
         'target_mode_all' => 'All students of the year',
         'target_mode_classes' => 'Selected classes',
@@ -27,9 +35,22 @@ return [
         'exclude_students' => 'Exclude students',
     ],
 
+    'search' => [
+        'classes_placeholder' => 'Search class…',
+        'students_placeholder' => 'Search student…',
+        'no_classes' => 'No classes available.',
+        'no_students' => 'No students available.',
+        'no_results' => 'Nothing found.',
+        'selected_count' => 'Selected: :count',
+    ],
+
+    'student_label' => ':name — :class',
+    'student_no_class' => 'No class',
+
     'actions' => [
         'create' => 'Create batch',
         'save' => 'Save',
+        'save_and_review' => 'Save and continue to preview',
         'update' => 'Save changes',
         'preview' => 'Calculate preview',
         'execute' => 'Generate invoices',
@@ -91,6 +112,13 @@ return [
         'skipped_count' => 'Skipped',
         'expected_invoice_count' => 'Expected invoices',
         'expected_total_amount' => 'Expected total',
+    ],
+
+    'config' => [
+        'title' => 'Billing parameters',
+        'selected_classes' => 'Classes selected',
+        'included_students' => 'Additionally included students',
+        'excluded_students' => 'Excluded students',
     ],
 
     'table' => [

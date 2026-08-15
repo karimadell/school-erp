@@ -26,8 +26,17 @@ Homestead.json
 /storage/pail
 .env.backup
 .env.production
+.env.uat.local
 .phpactor.json
 auth.json
+
+# Playwright UAT artifacts and reusable browser sessions
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/
+/tests/e2e/.auth/
+/tests/e2e/.downloads/
 
 # macOS
 .DS_Store

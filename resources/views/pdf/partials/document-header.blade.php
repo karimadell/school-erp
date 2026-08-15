@@ -1,6 +1,6 @@
 @php
     $schoolSettings = $schoolSettings ?? \App\Models\SchoolSetting::current();
-    $brandingLogoPath = $schoolSettings->documentLogoPath();
+    $brandingLogo = $schoolSettings->documentLogoAsset();
 @endphp
 
 <style>
@@ -28,9 +28,9 @@
 
 <table class="school-document-header" role="presentation">
     <tr>
-        @if (is_string($brandingLogoPath) && is_file($brandingLogoPath))
+        @if ($brandingLogo)
             <td class="school-document-logo-cell">
-                <img class="school-document-logo" src="data:image/png;base64,{{ base64_encode(file_get_contents($brandingLogoPath)) }}" alt="Логотип школы">
+                <img class="school-document-logo" src="{{ $brandingLogo['data_uri'] }}" alt="Логотип школы">
             </td>
         @else
             <td class="school-document-logo-cell"></td>

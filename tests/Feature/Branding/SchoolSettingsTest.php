@@ -102,8 +102,9 @@ class SchoolSettingsTest extends TestCase
 
     public function test_existing_logo_is_displayed_and_saving_without_a_file_preserves_it(): void
     {
+        $logo = file_get_contents(storage_path('app/public/branding/ka8lgzQDsFdfIVSWqqZ4q4pgkziGLmwHvjBsYhj9.jpg'));
         Storage::fake('public');
-        Storage::disk('public')->put('branding/existing-logo.png', 'existing-logo-content');
+        Storage::disk('public')->put('branding/existing-logo.png', $logo);
         $settings = SchoolSetting::current();
         $settings->update([
             'logo_path' => 'branding/existing-logo.png',
@@ -129,6 +130,7 @@ class SchoolSettingsTest extends TestCase
 
     public function test_all_saved_document_assets_have_public_previews_and_russian_labels(): void
     {
+        $image = file_get_contents(storage_path('app/public/branding/RFRJ4ke6qPH0As79aPEBE84u0V70bJbX3wcWGNuI.png'));
         Storage::fake('public');
         $paths = [
             'logo_path' => 'branding/logo.png',
@@ -137,7 +139,7 @@ class SchoolSettingsTest extends TestCase
             'director_signature_path' => 'branding/signature.png',
         ];
         foreach ($paths as $path) {
-            Storage::disk('public')->put($path, 'image-content');
+            Storage::disk('public')->put($path, $image);
         }
         SchoolSetting::current()->update($paths);
 

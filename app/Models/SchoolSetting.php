@@ -10,6 +10,12 @@ class SchoolSetting extends Model
 {
     public const SINGLETON_ID = 1;
 
+    private const BRANDING_MIME_TYPES = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+    ];
+
     protected $guarded = ['id'];
 
     protected $casts = [
@@ -32,9 +38,9 @@ class SchoolSetting extends Model
 
     public function documentLogoPath(): ?string
     {
-        $path = $this->printing_logo_path ?: $this->logo_path;
+        $asset = $this->documentLogoAsset();
 
-        if (! $path || ! Storage::disk(config('filesystems.uploads.public'))->exists($path)) {
+        if (! $asset) {
             return null;
         }
 
@@ -42,12 +48,61 @@ class SchoolSetting extends Model
         $disk = Storage::disk($diskName);
 
         if (config("filesystems.disks.{$diskName}.driver") === 'local') {
-            return $disk->path($path);
+            return $disk->path($asset['path']);
         }
 
-        $mimeType = $disk->mimeType($path) ?: 'image/png';
+        return $asset['data_uri'];
+    }
 
-        return sprintf('data:%s;base64,%s', $mimeType, base64_encode($disk->get($path)));
+    /** @return array{path: string, mime_type: string, data_uri: string, width: int, height: int}|null */
+    public function documentLogoAsset(): ?array
+    {
+        return $this->resolveBrandingAsset($this->printing_logo_path ?: $this->logo_path);
+    }
+
+    /** @return array{path: string, mime_type: string, data_uri: string, width: int, height: int}|null */
+    public function stampAsset(): ?array
+    {
+        return $this->resolveBrandingAsset($this->stamp_path);
+    }
+
+    /** @return array{path: string, mime_type: string, data_uri: string, width: int, height: int}|null */
+    public function directorSignatureAsset(): ?array
+    {
+        return $this->resolveBrandingAsset($this->director_signature_path);
+    }
+
+    /** @return array{path: string, mime_type: string, data_uri: string, width: int, height: int}|null */
+    public function resolveBrandingAsset(?string $path): ?array
+    {
+        if (! is_string($path) || trim($path) === '') {
+            return null;
+        }
+
+        try {
+            $contents = Storage::disk(config('filesystems.uploads.public'))->get($path);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($contents === '') {
+            return null;
+        }
+
+        $imageInfo = @getimagesizefromstring($contents);
+        $mimeType = is_array($imageInfo) ? ($imageInfo['mime'] ?? null) : null;
+
+        if (! is_string($mimeType) || ! in_array($mimeType, self::BRANDING_MIME_TYPES, true)) {
+            return null;
+        }
+
+        return [
+            'path' => $path,
+            'mime_type' => $mimeType,
+            'data_uri' => sprintf('data:%s;base64,%s', $mimeType, base64_encode($contents)),
+            'width' => (int) $imageInfo[0],
+            'height' => (int) $imageInfo[1],
+        ];
     }
 
     public function logoUrl(): ?string
@@ -72,8 +127,16 @@ class SchoolSetting extends Model
 
     private function publicAssetUrl(?string $path): ?string
     {
-        return $path && Storage::disk(config('filesystems.uploads.public'))->exists($path)
-            ? Storage::disk(config('filesystems.uploads.public'))->url($path)
-            : null;
+        $asset = $this->resolveBrandingAsset($path);
+
+        if (! $asset) {
+            return null;
+        }
+
+        try {
+            return Storage::disk(config('filesystems.uploads.public'))->url($asset['path']);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }

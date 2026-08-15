@@ -30,7 +30,8 @@ class CloudUploadStorageTest extends TestCase
     {
         Storage::fake('cloud-public-test');
         config()->set('filesystems.uploads.public', 'cloud-public-test');
-        Storage::disk('cloud-public-test')->put('branding/logo.png', 'fake-image');
+        $logo = UploadedFile::fake()->image('logo.png');
+        Storage::disk('cloud-public-test')->put('branding/logo.png', file_get_contents($logo->getPathname()));
 
         $settings = new SchoolSetting(['logo_path' => 'branding/logo.png']);
 

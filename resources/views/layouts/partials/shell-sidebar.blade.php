@@ -7,11 +7,15 @@
      * doesn't exist yet (or is a known-broken page, per the Modern UI/UX
      * readiness report) are simply omitted.
      */
+    $adminPanel = \Filament\Facades\Filament::getPanel('admin');
+    $canAccessAdminPanel = auth()->user()?->canAccessPanel($adminPanel) ?? false;
+
     $navGroups = [
         [
-            'label' => 'Главная',
+            'label' => __('menu.home'),
             'items' => [
-                ['label' => 'Панель управления', 'icon' => 'layout_dashboard', 'route' => 'dashboard.index', 'active' => 'dashboard.index'],
+                ['label' => __('menu.dashboard'), 'icon' => 'layout_dashboard', 'route' => 'dashboard.index', 'active' => 'dashboard.index'],
+                ['label' => __('menu.administration'), 'icon' => 'shield_check', 'href' => $canAccessAdminPanel ? $adminPanel->getUrl() : null],
             ],
         ],
         [

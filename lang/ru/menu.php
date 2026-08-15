@@ -3,6 +3,7 @@
 return [
 
 'dashboard' => 'Панель управления',
+'home' => 'Главная',
 
 // Academic
 'academic' => 'Академия',

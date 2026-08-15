@@ -3,6 +3,7 @@
 return [
 
 'dashboard' => 'Dashboard',
+'home' => 'Home',
 
 'academic' => 'Academic',
 'stages' => 'Stages',

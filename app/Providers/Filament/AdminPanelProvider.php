@@ -4,6 +4,7 @@ namespace App\Providers\Filament;
 
 use Filament\Panel;
 use Filament\PanelProvider;
+use Filament\Navigation\NavigationItem;
 use Filament\Pages\Dashboard;
 use Filament\Support\Colors\Color;
 use Filament\Enums\ThemeMode;
@@ -77,6 +78,13 @@ class AdminPanelProvider extends PanelProvider
                 in: app_path('Filament/Pages'),
                 for: 'App\\Filament\\Pages'
             )
+
+            ->navigationItems([
+                NavigationItem::make(fn (): string => __('menu.dashboard'))
+                    ->icon('heroicon-o-home')
+                    ->url(fn (): string => route('dashboard.index'))
+                    ->sort(-100),
+            ])
 
             ->navigationGroups([
                 'Учебный процесс',

@@ -27,7 +27,7 @@
                 ['label' => 'Структура школы', 'icon' => 'school', 'route' => 'dashboard.stages.index', 'active' => 'dashboard.stages.*'],
                 ['label' => 'Предметы', 'icon' => 'book_open', 'route' => 'dashboard.subjects.index', 'active' => 'dashboard.subjects.*'],
                 ['label' => 'Учебный план', 'icon' => 'notebook_text', 'route' => 'dashboard.curricula.index', 'active' => 'dashboard.curricula.*'],
-                ['label' => 'Расписание', 'icon' => 'calendar_clock', 'href' => Route::has('filament.admin.resources.classes.index') ? route('filament.admin.resources.classes.index') : null],
+                ['label' => 'Расписание', 'icon' => 'calendar_clock', 'route' => 'dashboard.classes.index', 'active' => 'dashboard.classes.*'],
                 ['label' => 'Посещаемость', 'icon' => 'clipboard_list', 'route' => 'dashboard.attendance.index', 'active' => 'dashboard.attendance.*'],
                 ['label' => 'Отчёт по классу', 'icon' => 'bar_chart_3', 'route' => 'dashboard.attendance.reports.class', 'active' => 'dashboard.attendance.reports.class', 'indent' => true],
                 ['label' => 'Отчёт по ученику', 'icon' => 'bar_chart_3', 'route' => 'dashboard.attendance.reports.student', 'active' => 'dashboard.attendance.reports.student', 'indent' => true],

@@ -24,6 +24,7 @@ use App\Http\Controllers\Dashboard\QuickStudentRegistrationController;
 use App\Http\Controllers\Dashboard\FeeController;
 use App\Http\Controllers\Dashboard\FeePriceController;
 use App\Http\Controllers\Dashboard\ClassController;
+use App\Http\Controllers\Dashboard\ClassTimetableController;
 use App\Http\Controllers\Dashboard\SubjectController;
 use App\Http\Controllers\Dashboard\TeacherController;
 use App\Http\Controllers\Dashboard\StageController;
@@ -168,6 +169,12 @@ Route::middleware(['auth', 'administrative'])
         Route::resource('stages', StageController::class);
         Route::resource('grades', GradeController::class);
         Route::resource('classes', ClassController::class);
+        Route::get('classes/{class}/timetable', [ClassTimetableController::class, 'show'])
+            ->name('classes.timetable');
+        Route::post('classes/{class}/timetable', [ClassTimetableController::class, 'save'])
+            ->name('classes.timetable.save');
+        Route::post('classes/{class}/timetable/generate', [ClassTimetableController::class, 'generate'])
+            ->name('classes.timetable.generate');
         Route::resource('subjects', SubjectController::class);
         Route::resource('academic-years', AcademicYearController::class)->except(['show']);
         Route::resource('academic-years.quarters', QuarterController::class)

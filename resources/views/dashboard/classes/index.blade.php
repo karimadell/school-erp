@@ -66,6 +66,14 @@
                                 </td>
 
                                 <td>
+                                    @if(auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']))
+                                    <a href="{{ route('dashboard.classes.timetable', $class->id) }}"
+                                       class="btn btn-sm btn-outline-primary"
+                                       title="{{ __('timetable.view_schedule') }}">
+                                        🗓️ {{ __('timetable.title') }}
+                                    </a>
+                                    @endif
+
                                     @can('manage classes')
                                     <a href="{{ route('dashboard.classes.edit', $class->id) }}"
                                        class="btn btn-sm btn-warning">

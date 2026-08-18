@@ -21,7 +21,7 @@ class StoreFinanceTariffRequest extends FormRequest
             'amount' => ['required', 'decimal:0,2', 'gt:0'], 'currency' => ['required', Rule::in(['EGP'])],
             'start_date' => ['required', 'date'], 'end_date' => ['nullable', 'date', 'after_or_equal:start_date'], 'is_active' => ['required', 'boolean'],
             'change_reason' => ['nullable', 'string', 'max:500'], 'notes' => ['nullable', 'string', 'max:2000'],
-            'grade_id' => ['nullable', 'integer', 'exists:grades,id'], 'grade_group' => ['nullable', 'string', 'max:100'],
+            'grade_id' => ['nullable', 'integer', 'exists:grades,id'], 'grade_group' => ['nullable', Rule::in(['Подготовительный класс', '1–4 классы', '5–6 классы', '7–8 классы', '9–11 классы'])],
             'payment_period' => ['nullable', 'string', 'max:50'], 'option_type' => ['nullable', 'string', 'max:100'],
             'option_value' => ['nullable', 'string', 'max:150'], 'item' => ['nullable', 'string', 'max:100'], 'size' => ['nullable', 'string', 'max:50'],
         ];

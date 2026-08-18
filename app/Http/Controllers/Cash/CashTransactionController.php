@@ -84,6 +84,10 @@ class CashTransactionController extends Controller
             $query->whereDate('created_at', '<=', $request->to_date);
         }
 
+        $operatingQuery = $this->excludeInternalTransfers(clone $query);
+        $totalIn = (clone $operatingQuery)->where('type', CashTransaction::TYPE_IN)->sum('amount');
+        $totalOut = (clone $operatingQuery)->where('type', CashTransaction::TYPE_OUT)->sum('amount');
+
         // ===== Transactions =====
         $transactions = $query
             ->latest()
@@ -105,7 +109,7 @@ class CashTransactionController extends Controller
             $chartQuery->whereDate('created_at', '<=', $request->to_date);
         }
 
-        $chartData = $chartQuery->selectRaw("
+        $chartData = $this->excludeInternalTransfers($chartQuery)->selectRaw("
             DATE(created_at) as date,
             SUM(CASE WHEN type='in' THEN amount ELSE 0 END) as income,
             SUM(CASE WHEN type='out' THEN amount ELSE 0 END) as expenses
@@ -122,7 +126,23 @@ class CashTransactionController extends Controller
             'transactions',
             'chartDates',
             'chartIn',
-            'chartOut'
+            'chartOut',
+            'totalIn',
+            'totalOut'
         ));
+    }
+
+    private function excludeInternalTransfers($query)
+    {
+        return $query
+            ->where(function ($query) {
+                $query->whereNull('category')
+                    ->orWhere('category', '!=', CashTransaction::CATEGORY_TRANSFER);
+            })
+            // Main ERP transfer rows created before category tagging used
+            // these exact generated prefixes. Keep them visible in the
+            // movement table, but exclude them from operating totals/chart.
+            ->where('description', 'not like', 'Transfer OUT #TR-%')
+            ->where('description', 'not like', 'Transfer IN #TR-%');
     }
 }

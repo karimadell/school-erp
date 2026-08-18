@@ -76,7 +76,8 @@
 
 <div class="page-actions">
     <button onclick="window.print()">🖨️ Печать</button>
-    <a class="primary" href="{{ route('dashboard.payments.receipt.pdf',$payment) }}">⬇ Скачать PDF</a>
+    <a class="primary" id="receipt-pdf" href="{{ route('dashboard.payments.receipt.pdf',$payment) }}">⬇ Скачать PDF</a>
+    <button type="button" id="share-receipt">Поделиться</button>
 </div>
 
 <div class="receipt">
@@ -159,6 +160,20 @@
         @if($settings->email) · {{ $settings->email }}@endif
     </div>
 </div>
+
+<script>
+document.getElementById('share-receipt')?.addEventListener('click', async () => {
+    const pdfLink = document.getElementById('receipt-pdf');
+    if (!navigator.share || !navigator.canShare) { window.location.assign(pdfLink.href); return; }
+    try {
+        const response = await fetch(pdfLink.href, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('PDF download failed');
+        const file = new File([await response.blob()], @json(($payment->payment_number ?: 'payment').'.pdf'), { type: 'application/pdf' });
+        if (!navigator.canShare({ files: [file] })) { window.location.assign(pdfLink.href); return; }
+        await navigator.share({ title: @json('Квитанция '.$payment->payment_number), files: [file] });
+    } catch (error) { if (error.name !== 'AbortError') window.location.assign(pdfLink.href); }
+});
+</script>
 
 </body>
 </html>

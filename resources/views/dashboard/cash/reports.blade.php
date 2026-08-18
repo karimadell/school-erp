@@ -2,15 +2,11 @@
 
 @section('content')
 
-@php
-    $totalIn = $transactions->where('type','in')->sum('amount');
-    $totalOut = $transactions->where('type','out')->sum('amount');
-@endphp
-
 <div class="container py-4">
 
 
-    <h3 class="mb-4">📊 {{ __('app.cash_reports') }}</h3>
+    <h3 class="mb-2">📊 {{ __('app.cash_reports') }}</h3>
+    <div class="alert alert-info">{{ __('finance_uat.automatic_cash_report') }}</div>
 
     {{-- ================= Filters ================= --}}
     <div class="card mb-4">

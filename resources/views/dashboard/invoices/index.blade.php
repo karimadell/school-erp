@@ -16,7 +16,7 @@
 
         <div class="d-flex gap-2">
             <a href="{{ route('dashboard.quick-registration.create') }}" class="btn btn-success">Новый ученик</a>
-            <a href="{{ route('dashboard.invoices.create') }}" class="btn btn-primary">+ {{ __('invoices.create') }}</a>
+            @can('manage invoices')<a href="{{ route('dashboard.invoices.create') }}" class="btn btn-primary">+ {{ __('finance_uat.issue_invoice') }}</a>@endcan
         </div>
     </div>
 

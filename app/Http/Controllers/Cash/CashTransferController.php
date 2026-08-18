@@ -74,16 +74,16 @@ class CashTransferController extends Controller
             CashTransaction::create([
                 'cash_account_id' => $from->id,
                 'amount' => $data['amount'],
-                'type' => 'out',
-                'method' => 'transfer',
+                'type' => CashTransaction::TYPE_OUT,
+                'category' => CashTransaction::CATEGORY_TRANSFER,
                 'description' => 'Transfer OUT #' . $transfer->receipt_number . ' to ' . $to->name,
             ]);
 
             CashTransaction::create([
                 'cash_account_id' => $to->id,
                 'amount' => $data['amount'],
-                'type' => 'in',
-                'method' => 'transfer',
+                'type' => CashTransaction::TYPE_IN,
+                'category' => CashTransaction::CATEGORY_TRANSFER,
                 'description' => 'Transfer IN #' . $transfer->receipt_number . ' from ' . $from->name,
             ]);
         });

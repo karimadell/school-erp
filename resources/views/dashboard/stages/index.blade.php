@@ -6,9 +6,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h3 class="fw-bold">{{ __('stages.title') }}</h3>
 
-        <a href="{{ route('dashboard.stages.create') }}" class="btn btn-primary">
-            {{ __('stages.add_stage') }}
-        </a>
+        @can('manage stages')<a href="{{ route('dashboard.stages.create') }}" class="btn btn-primary">{{ __('stages.add_stage') }}</a>@endcan
     </div>
 
     @if(session('success'))
@@ -16,6 +14,7 @@
             {{ session('success') }}
         </div>
     @endif
+    @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
 
     <div class="card shadow-sm border-0">
         <div class="card-body p-0">
@@ -25,7 +24,9 @@
                     <tr>
                         <th>#</th>
                         <th>{{ __('stages.name') }}</th>
-                        <th>{{ __('stages.order') }}</th>
+                        <th>{{ __('stages.grades') }}</th>
+                        <th>{{ __('stages.school_classes') }}</th>
+                        <th>{{ __('stages.students') }}</th>
                         <th>{{ __('stages.status') }}</th>
                         <th class="text-end">{{ __('stages.actions') }}</th>
                     </tr>
@@ -34,8 +35,14 @@
                     @forelse($stages as $stage)
                         <tr>
                             <td>{{ $stage->id }}</td>
-                            <td>{{ $stage->name }}</td>
-                            <td>{{ $stage->order ?? '-' }}</td>
+                            <td>
+                                <a href="{{ route('dashboard.stages.show', $stage) }}">
+                                    {{ $stage->name }}
+                                </a>
+                            </td>
+                            <td>{{ $stage->grades_count }}</td>
+                            <td>{{ $stage->school_classes_count }}</td>
+                            <td>{{ $stage->current_students_count }}</td>
                             <td>
                                 @if(isset($stage->is_active))
                                     @if($stage->is_active)
@@ -48,6 +55,7 @@
                                 @endif
                             </td>
                             <td class="text-end">
+                                @can('manage stages')
                                 <a href="{{ route('dashboard.stages.edit', $stage->id) }}" class="btn btn-sm btn-warning">
                                     {{ __('stages.edit') }}
                                 </a>
@@ -62,11 +70,12 @@
                                         {{ __('stages.delete') }}
                                     </button>
                                 </form>
+                                @endcan
                             </td>
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="5" class="text-center py-4 text-muted">
+                            <td colspan="7" class="text-center py-4 text-muted">
                                 {{ __('stages.no_data') }}
                             </td>
                         </tr>

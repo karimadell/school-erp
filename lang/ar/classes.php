@@ -27,6 +27,7 @@ return [
 
     'save' => 'حفظ',
     'back' => 'رجوع',
+    'back_to_structure' => 'العودة إلى هيكل المرحلة',
     'cancel' => 'إلغاء',
 
     'created_success' => 'تم إضافة الفصل بنجاح',

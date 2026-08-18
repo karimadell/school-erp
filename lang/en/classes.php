@@ -27,6 +27,7 @@ return [
 
     'save' => 'Save',
     'back' => 'Back',
+    'back_to_structure' => 'Back to stage structure',
     'cancel' => 'Cancel',
 
     'created_success' => 'Class created successfully',

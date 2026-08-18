@@ -75,6 +75,16 @@ class AcademicYear extends Model
         return $this->unlocks()->where('expires_at', '>', now())->exists();
     }
 
+    public function isHistorical(): bool
+    {
+        return ! $this->is_active && $this->end_date->isPast();
+    }
+
+    public function isWritable(): bool
+    {
+        return ! $this->isHistorical() || $this->isUnlocked();
+    }
+
     /**
      * At most one AcademicYear may be active at a time (zero is allowed).
      * Activating this year must atomically deactivate every other active

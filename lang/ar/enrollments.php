@@ -5,6 +5,7 @@ return [
     'title' => 'تسجيلات الطلاب',
     'create' => 'إضافة تسجيل',
     'edit' => 'تعديل تسجيل',
+    'history' => 'سجل التسجيلات',
     'delete' => 'حذف',
 
     'student' => 'الطالب',
@@ -41,4 +42,11 @@ return [
     'deleted_success' => 'تم حذف التسجيل',
 
     'confirm_delete' => 'هل أنت متأكد؟',
+    'validation' => [
+        'grade_stage_mismatch' => 'الصف المحدد لا ينتمي إلى المرحلة المحددة.',
+        'class_grade_mismatch' => 'الفصل المحدد لا ينتمي إلى الصف المحدد.',
+        'inactive_stage' => 'المرحلة المحددة غير نشطة.',
+        'inactive_class' => 'الفصل المحدد غير نشط.',
+        'structure_changed' => 'تم تغيير هيكل المدرسة. حدّث الصفحة وحاول مرة أخرى.',
+    ],
 ];

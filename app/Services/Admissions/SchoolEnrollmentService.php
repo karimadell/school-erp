@@ -16,6 +16,7 @@ use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\AcademicStructureService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -24,7 +25,10 @@ use Throwable;
 
 class SchoolEnrollmentService
 {
-    public function __construct(private InvoiceCalculationService $calculator)
+    public function __construct(
+        private InvoiceCalculationService $calculator,
+        private AcademicStructureService $structure,
+    )
     {
     }
 
@@ -37,11 +41,15 @@ class SchoolEnrollmentService
             return DB::transaction(function () use ($data, $actor, $photo, &$photoPath) {
                 $year = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
                 $class = SchoolClass::query()->with('grade')->lockForUpdate()->findOrFail($data['class_id']);
-                if (! $year->is_active || ! $class->is_active
-                    || $class->grade_id !== (int) $data['grade_id']
-                    || $class->grade->stage_id !== (int) $data['stage_id']) {
+                if (! $year->is_active) {
                     throw ValidationException::withMessages(['class_id' => 'Учебная структура изменилась. Обновите страницу и повторите попытку.']);
                 }
+                $this->structure->validatePlacement(
+                    (int) $data['stage_id'],
+                    (int) $data['grade_id'],
+                    (int) $data['class_id'],
+                    requireActive: true,
+                );
 
                 $pricingDate = now()->betweenIncluded($year->start_date, $year->end_date)
                     ? now()->toDateString()

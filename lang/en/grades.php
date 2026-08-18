@@ -23,6 +23,7 @@ return [
     'save' => 'Save',
     'cancel' => 'Cancel',
     'back' => 'Back',
+    'back_to_structure' => 'Back to stage structure',
 
     // Select
     'select_stage' => 'Select Stage',

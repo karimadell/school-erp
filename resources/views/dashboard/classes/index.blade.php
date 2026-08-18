@@ -7,9 +7,9 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h3 class="mb-0">🏫 {{ __('classes.title') }}</h3>
 
-        <a href="{{ route('dashboard.classes.create') }}" class="btn btn-primary">
+        @can('manage classes')<a href="{{ route('dashboard.classes.create') }}" class="btn btn-primary">
             + {{ __('classes.create') }}
-        </a>
+        </a>@endcan
     </div>
 
     @if(session('success'))
@@ -17,6 +17,7 @@
             {{ session('success') }}
         </div>
     @endif
+    @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
 
     <div class="card shadow-sm border-0">
         <div class="card-header fw-bold">
@@ -65,6 +66,7 @@
                                 </td>
 
                                 <td>
+                                    @can('manage classes')
                                     <a href="{{ route('dashboard.classes.edit', $class->id) }}"
                                        class="btn btn-sm btn-warning">
                                         {{ __('classes.edit') }}
@@ -81,6 +83,7 @@
                                             {{ __('classes.delete') }}
                                         </button>
                                     </form>
+                                    @endcan
                                 </td>
                             </tr>
                         @empty

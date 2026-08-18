@@ -5,6 +5,7 @@ return [
     'title' => 'Enrollments',
     'create' => 'Add Enrollment',
     'edit' => 'Edit Enrollment',
+    'history' => 'Enrollment History',
     'delete' => 'Delete',
 
     'student' => 'Student',
@@ -41,4 +42,11 @@ return [
     'deleted_success' => 'Enrollment deleted successfully',
 
     'confirm_delete' => 'Are you sure?',
+    'validation' => [
+        'grade_stage_mismatch' => 'The selected grade does not belong to the selected stage.',
+        'class_grade_mismatch' => 'The selected class does not belong to the selected grade.',
+        'inactive_stage' => 'The selected stage is inactive.',
+        'inactive_class' => 'The selected class is inactive.',
+        'structure_changed' => 'The school structure changed. Refresh the page and try again.',
+    ],
 ];

@@ -23,6 +23,7 @@ return [
     'save' => 'حفظ',
     'cancel' => 'إلغاء',
     'back' => 'رجوع',
+    'back_to_structure' => 'العودة إلى هيكل المرحلة',
 
     // Select
     'select_stage' => 'اختر المرحلة',

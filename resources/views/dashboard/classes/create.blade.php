@@ -7,8 +7,8 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h3 class="mb-0">🏫 {{ __('classes.create') }}</h3>
 
-        <a href="{{ route('dashboard.classes.index') }}" class="btn btn-secondary">
-            {{ __('classes.back') }}
+        <a href="{{ $returnStage ? route('dashboard.stages.show', $returnStage) : route('dashboard.classes.index') }}" class="btn btn-secondary">
+            {{ $returnStage ? __('classes.back_to_structure') : __('classes.back') }}
         </a>
     </div>
 
@@ -17,6 +17,10 @@
 
             <form method="POST" action="{{ route('dashboard.classes.store') }}">
                 @csrf
+                @if($returnStage)
+                    <input type="hidden" name="return_to" value="dashboard.stages.show">
+                    <input type="hidden" name="return_stage_id" value="{{ $returnStage->id }}">
+                @endif
 
                 <div class="row g-3">
 
@@ -30,6 +34,7 @@
                         <input type="text" name="name_ru" class="form-control" placeholder="1 класс" required>
                     </div>
 
+                    @unless($selectedGrade)
                     <div class="col-md-6">
                         <label class="form-label">{{ __('classes.stage') }}</label>
                         <select id="stageSelect" class="form-select">
@@ -39,9 +44,14 @@
                             @endforeach
                         </select>
                     </div>
+                    @endunless
 
                     <div class="col-md-6">
                         <label class="form-label">{{ __('classes.grade') }}</label>
+                        @if($selectedGrade)
+                            <input type="hidden" name="grade_id" value="{{ $selectedGrade->id }}">
+                            <input type="text" class="form-control" value="{{ $selectedGrade->name }} — {{ $selectedGrade->stage->name }}" readonly>
+                        @else
                         <select name="grade_id" id="gradeSelect" class="form-select" required>
                             <option value="">{{ __('classes.select_grade') }}</option>
                             @foreach($grades as $grade)
@@ -50,6 +60,7 @@
                                 </option>
                             @endforeach
                         </select>
+                        @endif
                     </div>
 
                     <div class="col-md-4">
@@ -73,7 +84,7 @@
                         💾 {{ __('classes.save') }}
                     </button>
 
-                    <a href="{{ route('dashboard.classes.index') }}" class="btn btn-outline-secondary">
+                    <a href="{{ $returnStage ? route('dashboard.stages.show', $returnStage) : route('dashboard.classes.index') }}" class="btn btn-outline-secondary">
                         {{ __('classes.cancel') }}
                     </a>
                 </div>
@@ -92,6 +103,8 @@
 document.addEventListener('DOMContentLoaded', function () {
     const stageSelect = document.getElementById('stageSelect');
     const gradeSelect = document.getElementById('gradeSelect');
+
+    if (!stageSelect || !gradeSelect) return;
 
     stageSelect.addEventListener('change', function () {
         const stageId = this.value;

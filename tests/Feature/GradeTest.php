@@ -145,4 +145,95 @@ class GradeTest extends TestCase
         $response->assertRedirect(route('dashboard.grades.index'));
         $this->assertDatabaseMissing('grades', ['id' => $grade->id]);
     }
+
+    public function test_scoped_create_preselects_stage_and_returns_to_structure(): void
+    {
+        $user = $this->authorizedUser();
+        $stage = $this->makeStage();
+        $conflictingStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $parameters = [
+            'stage_id' => $stage->id,
+            'return_to' => 'dashboard.stages.show',
+            'return_stage_id' => $conflictingStage->id,
+        ];
+
+        $this->actingAs($user)
+            ->get(route('dashboard.grades.create', $parameters))
+            ->assertOk()
+            ->assertViewHas('selectedStage', fn ($selected) => $selected->is($stage))
+            ->assertViewHas('returnStage', fn ($returnStage) => $returnStage->is($stage))
+            ->assertSee('name="stage_id" value="'.$stage->id.'"', false);
+
+        $this->actingAs($user)
+            ->post(route('dashboard.grades.store'), $parameters + ['name' => 'Grade 1'])
+            ->assertRedirect(route('dashboard.stages.show', $stage));
+
+        $this->assertDatabaseHas('grades', ['stage_id' => $stage->id, 'name' => 'Grade 1']);
+    }
+
+    public function test_invalid_scoped_stage_is_rejected(): void
+    {
+        $this->actingAs($this->authorizedUser())
+            ->get(route('dashboard.grades.create', ['stage_id' => 999999]))
+            ->assertNotFound();
+    }
+
+    public function test_scoped_edit_uses_grades_actual_stage_despite_conflicting_return_stage(): void
+    {
+        $user = $this->authorizedUser();
+        $stage = $this->makeStage();
+        $conflictingStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $grade = Grade::create(['stage_id' => $stage->id, 'name' => 'Grade 1']);
+
+        $this->actingAs($user)
+            ->get(route('dashboard.grades.edit', [
+                'grade' => $grade,
+                'return_to' => 'dashboard.stages.show',
+                'return_stage_id' => $conflictingStage->id,
+            ]))
+            ->assertOk()
+            ->assertViewHas('returnStage', fn ($returnStage) => $returnStage->is($stage));
+    }
+
+    public function test_scoped_update_uses_grades_final_actual_stage_despite_conflicting_return_stage(): void
+    {
+        $user = $this->authorizedUser();
+        $originalStage = $this->makeStage();
+        $finalStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $grade = Grade::create(['stage_id' => $originalStage->id, 'name' => 'Grade 1']);
+
+        $this->actingAs($user)
+            ->put(route('dashboard.grades.update', $grade), [
+                'stage_id' => $finalStage->id,
+                'name' => 'Grade 1 updated',
+                'return_to' => 'dashboard.stages.show',
+                'return_stage_id' => $originalStage->id,
+            ])
+            ->assertRedirect(route('dashboard.stages.show', $finalStage));
+    }
+
+    public function test_scoped_delete_returns_to_structure_and_external_return_is_ignored(): void
+    {
+        $user = $this->authorizedUser();
+        $stage = $this->makeStage();
+        $conflictingStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $grade = Grade::create(['stage_id' => $stage->id, 'name' => 'Grade 1']);
+
+        $this->actingAs($user)
+            ->delete(route('dashboard.grades.destroy', $grade), [
+                'return_to' => 'dashboard.stages.show',
+                'return_stage_id' => $conflictingStage->id,
+            ])
+            ->assertRedirect(route('dashboard.stages.show', $stage));
+
+        $otherGrade = Grade::create(['stage_id' => $stage->id, 'name' => 'Grade 2']);
+        $this->actingAs($user)
+            ->put(route('dashboard.grades.update', $otherGrade), [
+                'stage_id' => $stage->id,
+                'name' => 'Grade 2 updated',
+                'return_to' => 'https://evil.example',
+                'return_stage_id' => $stage->id,
+            ])
+            ->assertRedirect(route('dashboard.grades.index'));
+    }
 }

@@ -25,6 +25,8 @@ return [
     'status' => 'Status',
     'active' => 'Active',
     'inactive' => 'Inactive',
+    'locked_status' => 'Historical — locked',
+    'unlocked' => 'Temporarily unlocked',
 
     'actions' => 'Actions',
     'total' => 'total',
@@ -43,5 +45,15 @@ return [
 
     'no_data' => 'No data available',
     'validation_error' => 'Please check the entered data',
+    'locked' => 'This academic year is locked. Ask an administrator for a temporary unlock.',
+    'locked_activation_only' => 'A locked academic year cannot be edited. It may only be activated without changing its name or dates.',
+    'locked_activation_hint' => 'This historical year is locked: its name and dates are read-only. You may activate it; correcting historical data requires an explicit temporary unlock.',
+    'unresolvable' => 'The academic year for this record cannot be determined.',
+    'unlock' => 'Unlock',
+    'unlock_reason' => 'Reason',
+    'unlock_expires_at' => 'Unlock until',
+    'unlock_success' => 'Academic year temporarily unlocked.',
+    'unlocked_until' => 'Unlocked until :date',
+    'validation' => ['end_after_start' => 'The academic year end date must be after its start date.'],
 
 ];

@@ -14,6 +14,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use App\Services\AcademicStructureService;
 
 class EnrollmentController extends Controller
 {
@@ -65,7 +66,7 @@ class EnrollmentController extends Controller
         ]);
     }
 
-    public function store(Request $request, Student $student): RedirectResponse
+    public function store(Request $request, Student $student, AcademicStructureService $structure): RedirectResponse
     {
         $data = $request->validate([
             'academic_year_id' => [
@@ -95,6 +96,12 @@ class EnrollmentController extends Controller
         // selected year — never a hand-typed value — so academic_year_id and its
         // label can never disagree.
         $year = AcademicYear::findOrFail($data['academic_year_id']);
+        $structure->validatePlacement(
+            (int) $data['stage_id'],
+            (int) $data['grade_id'],
+            (int) $data['class_id'],
+            requireActive: true,
+        );
 
         DB::transaction(function () use ($data, $student, $year) {
             // A new enrollment never deactivates another academic year's
@@ -176,7 +183,7 @@ class EnrollmentController extends Controller
         ]);
     }
 
-    public function update(Request $request, string $id): RedirectResponse
+    public function update(Request $request, string $id, AcademicStructureService $structure): RedirectResponse
     {
         $enrollment = Enrollment::findOrFail($id);
 
@@ -204,6 +211,12 @@ class EnrollmentController extends Controller
         // The academic_year label is derived server-side from the selected year
         // (see store()), never from a hand-typed value.
         $year = AcademicYear::findOrFail($data['academic_year_id']);
+        $structure->validatePlacement(
+            (int) $data['stage_id'],
+            (int) $data['grade_id'],
+            (int) $data['class_id'],
+            requireActive: true,
+        );
 
         DB::transaction(function () use ($data, $enrollment, $year) {
             // Updating this enrollment never deactivates another academic

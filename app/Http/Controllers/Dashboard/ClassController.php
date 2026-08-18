@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\SchoolClass;
 use App\Models\Grade;
+use App\Models\Stage;
+use App\Services\AcademicCoreDeletionGuard;
 
 class ClassController extends Controller
 {
@@ -29,16 +31,20 @@ class ClassController extends Controller
     /**
      * Show the form for creating a new resource.
      */
-    public function create()
+    public function create(Request $request)
     {
+        $selectedGrade = $request->has('grade_id')
+            ? Grade::with('stage')->findOrFail($request->integer('grade_id'))
+            : null;
         $grades = Grade::with('stage')
             ->orderBy('stage_id')
             ->ordered()
             ->get();
 
-        $stages = \App\Models\Stage::orderBy('id')->get();
+        $stages = Stage::orderBy('id')->get();
+        $returnStage = $this->isScopedReturn($request) ? $selectedGrade?->stage : null;
 
-        return view('dashboard.classes.create', compact('grades', 'stages'));
+        return view('dashboard.classes.create', compact('grades', 'stages', 'selectedGrade', 'returnStage'));
     }
 
     /**
@@ -53,7 +59,7 @@ class ClassController extends Controller
             'capacity' => 'nullable|integer|min:1',
         ]);
 
-        SchoolClass::create([
+        $schoolClass = SchoolClass::create([
             'grade_id' => $request->grade_id,
             'code' => $request->code,
             'name_ar' => $request->name_ru, // auto copy
@@ -62,8 +68,9 @@ class ClassController extends Controller
             'is_active' => $request->has('is_active'),
         ]);
 
-        return redirect()
-            ->route('dashboard.classes.index')
+        $schoolClass->load('grade');
+
+        return $this->redirectAfterMutation($request, 'dashboard.classes.index', $schoolClass->grade?->stage_id)
             ->with('success', __('classes.created_success'));
     }
 
@@ -80,18 +87,19 @@ class ClassController extends Controller
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(string $id)
+    public function edit(Request $request, string $id)
     {
-        $class = SchoolClass::findOrFail($id);
+        $class = SchoolClass::with('grade.stage')->findOrFail($id);
 
         $grades = Grade::with('stage')
             ->orderBy('stage_id')
             ->ordered()
             ->get();
 
-        $stages = \App\Models\Stage::orderBy('id')->get();
+        $stages = Stage::orderBy('id')->get();
+        $returnStage = $this->isScopedReturn($request) ? $class->grade?->stage : null;
 
-        return view('dashboard.classes.edit', compact('class', 'grades', 'stages'));
+        return view('dashboard.classes.edit', compact('class', 'grades', 'stages', 'returnStage'));
     }
 
     /**
@@ -117,21 +125,39 @@ class ClassController extends Controller
             'is_active' => $request->has('is_active'),
         ]);
 
-        return redirect()
-            ->route('dashboard.classes.index')
+        $class->load('grade');
+
+        return $this->redirectAfterMutation($request, 'dashboard.classes.index', $class->grade?->stage_id)
             ->with('success', __('classes.updated_success'));
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id, AcademicCoreDeletionGuard $guard)
     {
-        $class = SchoolClass::findOrFail($id);
+        $class = SchoolClass::with('grade')->findOrFail($id);
+        $stageId = $class->grade?->stage_id;
+        $guard->ensureCanDelete($class);
         $class->delete();
 
-        return redirect()
-            ->route('dashboard.classes.index')
+        return $this->redirectAfterMutation($request, 'dashboard.classes.index', $stageId)
             ->with('success', __('classes.deleted_success'));
+    }
+
+    private function isScopedReturn(Request $request): bool
+    {
+        return $request->input('return_to') === 'dashboard.stages.show';
+    }
+
+    private function redirectAfterMutation(Request $request, string $fallbackRoute, ?int $defaultStageId = null)
+    {
+        $returnStage = $this->isScopedReturn($request) && $defaultStageId
+            ? Stage::find($defaultStageId)
+            : null;
+
+        return $returnStage
+            ? redirect()->route('dashboard.stages.show', $returnStage)
+            : redirect()->route($fallbackRoute);
     }
 }

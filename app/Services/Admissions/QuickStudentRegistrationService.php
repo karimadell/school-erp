@@ -20,6 +20,7 @@ use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InstallmentPlanService;
+use App\Services\AcademicStructureService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +32,7 @@ class QuickStudentRegistrationService
         private InvoiceCalculationService $calculator,
         private InvoicePaymentService $payments,
         private InstallmentPlanService $installmentPlans,
+        private AcademicStructureService $structure,
     )
     {
     }
@@ -52,9 +54,12 @@ class QuickStudentRegistrationService
             $grade = Grade::query()->lockForUpdate()->findOrFail($data['grade_id']);
             $class = SchoolClass::query()->lockForUpdate()->findOrFail($data['class_id']);
             $mode = EnrollmentMode::query()->lockForUpdate()->findOrFail($data['enrollment_mode_id']);
-            if (! $stage->is_active || $grade->stage_id !== $stage->id || $class->grade_id !== $grade->id || ! $class->is_active) {
-                throw ValidationException::withMessages(['class_id' => 'Ступень, параллель или класс изменились. Обновите страницу и повторите попытку.']);
-            }
+            $this->structure->validatePlacement(
+                $stage->id,
+                $grade->id,
+                $class->id,
+                requireActive: true,
+            );
             if (! $mode->is_active) {
                 throw ValidationException::withMessages(['enrollment_mode_id' => 'Выбранная форма обучения больше не активна.']);
             }

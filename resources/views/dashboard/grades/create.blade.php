@@ -7,8 +7,8 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h3 class="mb-0">➕ {{ __('grades.create') }}</h3>
 
-        <a href="{{ route('dashboard.grades.index') }}" class="btn btn-secondary">
-            {{ __('grades.back') }}
+        <a href="{{ $returnStage ? route('dashboard.stages.show', $returnStage) : route('dashboard.grades.index') }}" class="btn btn-secondary">
+            {{ $returnStage ? __('grades.back_to_structure') : __('grades.back') }}
         </a>
     </div>
 
@@ -27,6 +27,10 @@
 
             <form method="POST" action="{{ route('dashboard.grades.store') }}">
                 @csrf
+                @if($returnStage)
+                    <input type="hidden" name="return_to" value="dashboard.stages.show">
+                    <input type="hidden" name="return_stage_id" value="{{ $returnStage->id }}">
+                @endif
 
                 <div class="mb-3">
                     <label class="form-label">{{ __('grades.name') }}</label>
@@ -40,14 +44,19 @@
 
                 <div class="mb-3">
                     <label class="form-label">{{ __('grades.stage') }}</label>
-                    <select name="stage_id" class="form-select" required>
-                        <option value="">{{ __('grades.select_stage') }}</option>
-                        @foreach($stages as $stage)
-                            <option value="{{ $stage->id }}" @selected(old('stage_id') == $stage->id)>
-                                {{ $stage->name }}
-                            </option>
-                        @endforeach
-                    </select>
+                    @if($selectedStage)
+                        <input type="hidden" name="stage_id" value="{{ $selectedStage->id }}">
+                        <input type="text" class="form-control" value="{{ $selectedStage->name }}" readonly>
+                    @else
+                        <select name="stage_id" class="form-select" required>
+                            <option value="">{{ __('grades.select_stage') }}</option>
+                            @foreach($stages as $stage)
+                                <option value="{{ $stage->id }}" @selected(old('stage_id') == $stage->id)>
+                                    {{ $stage->name }}
+                                </option>
+                            @endforeach
+                        </select>
+                    @endif
                 </div>
 
                 <div class="d-flex gap-2">
@@ -55,7 +64,7 @@
                         💾 {{ __('grades.save') }}
                     </button>
 
-                    <a href="{{ route('dashboard.grades.index') }}" class="btn btn-secondary">
+                    <a href="{{ $returnStage ? route('dashboard.stages.show', $returnStage) : route('dashboard.grades.index') }}" class="btn btn-secondary">
                         {{ __('grades.cancel') }}
                     </a>
                 </div>

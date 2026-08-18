@@ -16,6 +16,12 @@ class Quarter extends Model implements ResolvesAcademicYear
         'end_date'
     ];
 
+    protected $casts = [
+        'start_date' => 'date',
+        'end_date' => 'date',
+        'order' => 'integer',
+    ];
+
     /*
     |--------------------------------------------------------------------------
     | Relations

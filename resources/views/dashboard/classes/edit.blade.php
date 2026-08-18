@@ -13,6 +13,10 @@
 
 @csrf
 @method('PUT')
+@if($returnStage)
+<input type="hidden" name="return_to" value="dashboard.stages.show">
+<input type="hidden" name="return_stage_id" value="{{ $returnStage->id }}">
+@endif
 
 <div class="mb-3">
 <label class="form-label">{{ __('app.code') }}</label>
@@ -74,6 +78,10 @@ class="form-check-input"
 <button class="btn btn-primary">
 {{ __('app.update') }}
 </button>
+
+<a href="{{ $returnStage ? route('dashboard.stages.show', $returnStage) : route('dashboard.classes.index') }}" class="btn btn-secondary">
+{{ $returnStage ? __('classes.back_to_structure') : __('classes.back') }}
+</a>
 
 </form>
 

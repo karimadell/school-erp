@@ -18,8 +18,9 @@ use Illuminate\Validation\ValidationException;
  *  - resolveAcademicYear() returns null: the record has no determinable
  *    year at all (e.g. an Exam/StudentGrade with no quarter reference).
  *    This fails closed; it is never treated as "unscoped/exempt".
- *  - resolveAcademicYear() returns a year that is neither active nor
- *    currently unlocked: the record belongs to a closed historical year.
+ *  - resolveAcademicYear() returns a closed historical year that is not
+ *    currently unlocked. Future inactive years remain writable so staff can
+ *    prepare the next school year before activating it.
  */
 class AcademicYearLockObserver
 {
@@ -52,7 +53,7 @@ class AcademicYearLockObserver
             ]);
         }
 
-        if ($year->is_active || $year->isUnlocked()) {
+        if ($year->isWritable()) {
             return;
         }
 

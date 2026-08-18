@@ -13,6 +13,8 @@ use App\Http\Controllers\Dashboard\PaymentPlanController;
 use App\Http\Controllers\Dashboard\StudentSubscriptionController;
 use App\Http\Controllers\Dashboard\StudentInvoiceController;
 use App\Http\Controllers\Dashboard\MassBillingController;
+use App\Http\Controllers\Dashboard\AcademicYearController;
+use App\Http\Controllers\Dashboard\QuarterController;
 use App\Http\Controllers\Dashboard\CurriculumController;
 use App\Http\Controllers\Dashboard\StudentController;
 use App\Http\Controllers\Dashboard\StudentProfileController;
@@ -167,6 +169,10 @@ Route::middleware(['auth', 'administrative'])
         Route::resource('grades', GradeController::class);
         Route::resource('classes', ClassController::class);
         Route::resource('subjects', SubjectController::class);
+        Route::resource('academic-years', AcademicYearController::class)->except(['show']);
+        Route::resource('academic-years.quarters', QuarterController::class)
+            ->except(['show'])
+            ->parameters(['academic-years' => 'academicYear']);
         Route::resource('curricula', CurriculumController::class)->except(['show']);
 
         Route::get('teachers/print', [TeacherController::class, 'print'])

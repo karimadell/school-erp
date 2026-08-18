@@ -168,4 +168,125 @@ class SchoolClassTest extends TestCase
 
         $this->assertSame('Класс C Updated', $class->fresh()->name_ar);
     }
+
+    public function test_scoped_create_preselects_grade_and_returns_to_structure(): void
+    {
+        $user = $this->authorizedUser();
+        $grade = $this->makeGrade();
+        $stage = $grade->stage;
+        $conflictingStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $parameters = [
+            'grade_id' => $grade->id,
+            'return_to' => 'dashboard.stages.show',
+            'return_stage_id' => $conflictingStage->id,
+        ];
+
+        $this->actingAs($user)
+            ->get(route('dashboard.classes.create', $parameters))
+            ->assertOk()
+            ->assertViewHas('selectedGrade', fn ($selected) => $selected->is($grade))
+            ->assertViewHas('returnStage', fn ($returnStage) => $returnStage->is($stage))
+            ->assertSee('name="grade_id" value="'.$grade->id.'"', false);
+
+        $this->actingAs($user)
+            ->post(route('dashboard.classes.store'), $parameters + [
+                'code' => 'B',
+                'name_ru' => 'Класс B',
+            ])
+            ->assertRedirect(route('dashboard.stages.show', $stage));
+
+        $this->assertDatabaseHas('classes', ['grade_id' => $grade->id, 'code' => 'B']);
+    }
+
+    public function test_invalid_scoped_grade_is_rejected(): void
+    {
+        $this->actingAs($this->authorizedUser())
+            ->get(route('dashboard.classes.create', ['grade_id' => 999999]))
+            ->assertNotFound();
+    }
+
+    public function test_scoped_edit_uses_class_actual_stage_despite_conflicting_return_stage(): void
+    {
+        $user = $this->authorizedUser();
+        $grade = $this->makeGrade();
+        $stage = $grade->stage;
+        $conflictingStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'A',
+            'name_ar' => 'A',
+            'name_ru' => 'A',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('dashboard.classes.edit', [
+                'class' => $class,
+                'return_to' => 'dashboard.stages.show',
+                'return_stage_id' => $conflictingStage->id,
+            ]))
+            ->assertOk()
+            ->assertViewHas('returnStage', fn ($returnStage) => $returnStage->is($stage));
+    }
+
+    public function test_scoped_update_uses_class_final_actual_stage_despite_conflicting_return_stage(): void
+    {
+        $user = $this->authorizedUser();
+        $originalGrade = $this->makeGrade();
+        $originalStage = $originalGrade->stage;
+        $finalStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $finalGrade = Grade::create(['name' => 'Grade 2', 'stage_id' => $finalStage->id]);
+        $class = SchoolClass::create([
+            'grade_id' => $originalGrade->id,
+            'code' => 'A',
+            'name_ar' => 'A',
+            'name_ru' => 'A',
+        ]);
+
+        $this->actingAs($user)
+            ->put(route('dashboard.classes.update', $class), [
+                'grade_id' => $finalGrade->id,
+                'code' => 'A',
+                'name_ru' => 'A updated',
+                'return_to' => 'dashboard.stages.show',
+                'return_stage_id' => $originalStage->id,
+            ])
+            ->assertRedirect(route('dashboard.stages.show', $finalStage));
+    }
+
+    public function test_scoped_delete_returns_to_structure_and_external_return_is_ignored(): void
+    {
+        $user = $this->authorizedUser();
+        $grade = $this->makeGrade();
+        $stage = $grade->stage;
+        $conflictingStage = Stage::create(['name' => 'Secondary', 'order' => 2, 'is_active' => true]);
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'A',
+            'name_ar' => 'A',
+            'name_ru' => 'A',
+        ]);
+
+        $this->actingAs($user)
+            ->delete(route('dashboard.classes.destroy', $class), [
+                'return_to' => 'dashboard.stages.show',
+                'return_stage_id' => $conflictingStage->id,
+            ])
+            ->assertRedirect(route('dashboard.stages.show', $stage));
+
+        $otherClass = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'B',
+            'name_ar' => 'B',
+            'name_ru' => 'B',
+        ]);
+        $this->actingAs($user)
+            ->put(route('dashboard.classes.update', $otherClass), [
+                'grade_id' => $grade->id,
+                'code' => 'B',
+                'name_ru' => 'B updated',
+                'return_to' => '//evil.example',
+                'return_stage_id' => $stage->id,
+            ])
+            ->assertRedirect(route('dashboard.classes.index'));
+    }
 }

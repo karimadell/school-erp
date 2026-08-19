@@ -21,9 +21,24 @@ class ClassController extends Controller
      */
     public function index()
     {
+        // Natural academic order: by the grade's canonical numeric level
+        // (Grade::scopeOrdered() uses the same field/tiebreak elsewhere —
+        // e.g. the create/edit grade dropdowns), not insertion order and
+        // not a lexicographic sort on the class code, which would put
+        // "10A" before "2A". A plain comparator (rather than
+        // Collection::sortBy()'s multi-criteria array form, which expects
+        // either a property path or a full ($a, $b) comparator per entry —
+        // not a single-value extractor) keeps the null-level-sorts-last
+        // tiebreak explicit and easy to verify.
         $classes = SchoolClass::with(['grade.stage'])
-            ->latest()
-            ->get();
+            ->get()
+            ->sort(function (SchoolClass $a, SchoolClass $b) {
+                $levelA = $a->grade?->level ?? PHP_INT_MAX;
+                $levelB = $b->grade?->level ?? PHP_INT_MAX;
+
+                return [$levelA, $a->grade_id, $a->code] <=> [$levelB, $b->grade_id, $b->code];
+            })
+            ->values();
 
         return view('dashboard.classes.index', compact('classes'));
     }

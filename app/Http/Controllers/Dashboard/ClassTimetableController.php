@@ -12,6 +12,7 @@ use App\Models\Timetable;
 use App\Services\TimetableGenerationService;
 use App\Services\TimetableLessonService;
 use App\Support\CurriculumContext;
+use App\Support\WorkingDays;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
@@ -28,7 +29,7 @@ use Illuminate\View\View;
  */
 class ClassTimetableController extends Controller
 {
-    public function __construct()
+    public function __construct(private readonly WorkingDays $workingDays)
     {
         $this->middleware(function (Request $request, $next) {
             abort_unless(auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']), 403);
@@ -39,7 +40,12 @@ class ClassTimetableController extends Controller
 
     public function show(SchoolClass $class): View
     {
-        $days = Day::orderBy('order')->get();
+        // Display must use the same working-day source of truth as
+        // generation (TimetableGenerationService reads the identical
+        // WorkingDays/TimetableSetting configuration) so a non-working day
+        // (e.g. Friday/Saturday) never appears as a grid column here even
+        // though the underlying Day table still has all 7 rows.
+        $days = $this->workingDays->workingDays(Day::orderBy('order')->get())->values();
         $periods = Period::orderBy('number')->get();
         $subjects = $this->curriculumSubjectsForClass($class->id);
 

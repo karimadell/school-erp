@@ -289,4 +289,76 @@ class SchoolClassTest extends TestCase
             ])
             ->assertRedirect(route('dashboard.classes.index'));
     }
+
+    /**
+     * UAT fix: the class list previously used ->latest() (insertion order),
+     * which produced sequences like 11, 10, 8, 7, 6, 4, 3, 2, 0, 9, 5, 1.
+     * It must instead follow Grade.level — the same canonical numeric field
+     * Grade::scopeOrdered() already uses for the create/edit grade
+     * dropdowns — not a lexicographic sort on the class code (which would
+     * put "10A" before "2A").
+     */
+    public function test_classes_render_in_natural_academic_order_not_insertion_or_lexicographic_order(): void
+    {
+        $user = $this->portalUser();
+        $stage = Stage::create(['name' => 'Stage ' . uniqid()]);
+
+        // Deliberately create grades/classes out of order, with a level
+        // sequence that would sort wrong both by insertion (id) order and
+        // by lexicographic string order (grade "10" before grade "2").
+        $levels = [11, 10, 8, 7, 6, 4, 3, 2, 0, 9, 5, 1];
+        foreach ($levels as $level) {
+            $grade = Grade::create(['name' => "UAT — {$level} класс", 'stage_id' => $stage->id]);
+            $grade->forceFill(['level' => $level])->save();
+
+            SchoolClass::create([
+                'grade_id' => $grade->id, 'code' => "UAT-{$level}A", 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true,
+            ]);
+        }
+
+        $response = $this->actingAs($user)->get(route('dashboard.classes.index'));
+
+        $response->assertOk();
+        $response->assertViewHas('classes', function ($classes) {
+            return $classes->pluck('code')->all() === [
+                'UAT-0A', 'UAT-1A', 'UAT-2A', 'UAT-3A', 'UAT-4A', 'UAT-5A',
+                'UAT-6A', 'UAT-7A', 'UAT-8A', 'UAT-9A', 'UAT-10A', 'UAT-11A',
+            ];
+        });
+    }
+
+    public function test_parallel_classes_within_the_same_grade_have_deterministic_secondary_order(): void
+    {
+        $user = $this->portalUser();
+        $stage = Stage::create(['name' => 'Stage ' . uniqid()]);
+        $grade = Grade::create(['name' => 'UAT — 1 класс', 'stage_id' => $stage->id]);
+        $grade->forceFill(['level' => 1])->save();
+
+        // Created out of alphabetical order to prove the secondary sort is
+        // real, not accidental insertion order.
+        SchoolClass::create(['grade_id' => $grade->id, 'code' => '1B', 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+        SchoolClass::create(['grade_id' => $grade->id, 'code' => '1A', 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+
+        $response = $this->actingAs($user)->get(route('dashboard.classes.index'));
+
+        $response->assertOk();
+        $response->assertViewHas('classes', fn ($classes) => $classes->pluck('code')->all() === ['1A', '1B']);
+    }
+
+    public function test_classes_with_no_grade_level_sort_after_leveled_grades(): void
+    {
+        $user = $this->portalUser();
+        $stage = Stage::create(['name' => 'Stage ' . uniqid()]);
+        $leveled = Grade::create(['name' => 'UAT — 1 класс', 'stage_id' => $stage->id]);
+        $leveled->forceFill(['level' => 1])->save();
+        $unleveled = Grade::create(['name' => 'Unleveled grade', 'stage_id' => $stage->id]); // level left null
+
+        SchoolClass::create(['grade_id' => $unleveled->id, 'code' => 'U', 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+        SchoolClass::create(['grade_id' => $leveled->id, 'code' => 'L', 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+
+        $response = $this->actingAs($user)->get(route('dashboard.classes.index'));
+
+        $response->assertOk();
+        $response->assertViewHas('classes', fn ($classes) => $classes->pluck('code')->all() === ['L', 'U']);
+    }
 }

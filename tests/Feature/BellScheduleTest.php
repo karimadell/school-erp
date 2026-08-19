@@ -121,13 +121,40 @@ class BellScheduleTest extends TestCase
         $this->assertSame(2, BellSchedule::whereNull('default_slot')->count());
     }
 
+    /**
+     * Pre-UAT fix (independent review, Fix 9): this test previously reused
+     * the shared setUp() $this->year, hardcoded to 2026-09-01..2027-06-30.
+     * "Historical" here (AcademicYear::isHistorical()) requires BOTH
+     * !is_active AND end_date->isPast() — so whether this test's
+     * expectation held depended on the wall-clock date the suite happened
+     * to run on, not on the fixture's actual intent. It now builds its own
+     * self-contained year with an end_date computed relative to now(), so
+     * it stays genuinely historical no matter when the suite executes.
+     * $this->year/$this->calendar from setUp() are untouched and unused
+     * here, so no other test in this class is affected.
+     */
     public function test_historical_schedule_is_locked_and_cannot_be_cascade_deleted(): void
     {
-        $schedule = $this->schedule();
+        $historicalYear = AcademicYear::create([
+            'name' => 'Historical ' . uniqid(),
+            'start_date' => now()->subYears(2)->startOfYear()->toDateString(),
+            'end_date' => now()->subYears(2)->endOfYear()->toDateString(),
+            'is_active' => true,
+        ]);
+        $schedule = BellSchedule::create([
+            'academic_year_id' => $historicalYear->id, 'name' => 'Normal', 'shift' => 1,
+            'is_default' => false, 'is_active' => true,
+        ]);
         $period = $this->period($schedule, 1, '08:00', '08:45');
+
+        // Activating a later year atomically deactivates $historicalYear
+        // (AcademicYear::save()'s single-active-year swap) — its end_date
+        // is already in the past, so it is now genuinely historical.
         AcademicYear::create([
-            'name' => '2027 / 2028', 'start_date' => '2027-09-01',
-            'end_date' => '2028-06-30', 'is_active' => true,
+            'name' => 'Current ' . uniqid(),
+            'start_date' => now()->subMonths(6)->toDateString(),
+            'end_date' => now()->addMonths(6)->toDateString(),
+            'is_active' => true,
         ]);
 
         try {
@@ -150,7 +177,7 @@ class BellScheduleTest extends TestCase
         }
 
         try {
-            $this->year->delete();
+            $historicalYear->delete();
             $this->fail('Expected restricted historical FK.');
         } catch (QueryException) {
             $this->assertDatabaseHas('bell_schedules', ['id' => $schedule->id]);

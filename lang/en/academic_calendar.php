@@ -14,11 +14,22 @@ return [
         'is_active' => 'Active',
     ],
     'help' => ['default_bell_schedule_id' => 'May be filled after the bell schedule module is installed.'],
+    'title' => 'Academic Calendar', 'list_hint' => 'Weekly days off and events for the academic year.',
+    'create' => 'Add Calendar', 'edit' => 'Edit Calendar',
+    'back' => 'Back to List', 'save' => 'Save', 'cancel' => 'Cancel',
+    'actions' => 'Actions', 'no_data' => 'No academic calendars found.',
+    'no_active_year' => 'There is no active academic year. Activate an academic year first.',
+    'created_success' => 'Academic calendar created.', 'updated_success' => 'Academic calendar updated.',
     'weekdays' => [
         'sun' => 'Sunday', 'mon' => 'Monday', 'tue' => 'Tuesday', 'wed' => 'Wednesday',
         'thu' => 'Thursday', 'fri' => 'Friday', 'sat' => 'Saturday',
     ],
-    'events' => ['title' => 'Events and Exceptions'],
+    'events' => [
+        'title' => 'Events and Exceptions', 'create' => 'Add Event', 'edit' => 'Edit Event',
+        'back' => 'Back to Calendar', 'save' => 'Save', 'cancel' => 'Cancel',
+        'no_data' => 'No events added yet.',
+        'created_success' => 'Event added.', 'updated_success' => 'Event updated.',
+    ],
     'types' => [
         'official_holiday' => 'Official Holiday', 'school_holiday' => 'School Holiday',
         'school_event' => 'School Event', 'teaching_override' => 'Teaching Override',
@@ -30,6 +41,7 @@ return [
     ],
     'validation' => [
         'active_academic_year_required' => 'A new academic calendar may only be created for the active academic year.',
+        'academic_year_taken' => 'An academic calendar already exists for this academic year.',
         'weekly_days_off' => 'Select at least one valid weekly day off.',
         'invalid_event_type' => 'The calendar event type is invalid.',
         'end_before_start' => 'The end date cannot be before the start date.',

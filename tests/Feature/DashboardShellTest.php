@@ -30,6 +30,16 @@ class DashboardShellTest extends TestCase
         return $user;
     }
 
+    /**
+     * Pre-UAT fix (independent review, Fix 3): 'Пользователи' and 'Роли и
+     * разрешения' used to link straight into Filament from this main
+     * sidebar with no authorization check beyond Route::has(). They were
+     * removed from here and are now reached exclusively through the
+     * controlled /dashboard/administration hub (which already gates them
+     * on 'manage users' / 'manage roles' — see
+     * DashboardAdministrationNavigationTest), so they are no longer
+     * expected in the main sidebar's navigation.
+     */
     public function test_dashboard_renders_the_new_shell_with_expected_navigation(): void
     {
         $response = $this->actingAs($this->admin())->get(route('dashboard.index'));
@@ -43,10 +53,19 @@ class DashboardShellTest extends TestCase
             'Панель управления', 'Структура школы', 'Предметы', 'Посещаемость',
             'Табели успеваемости', 'Все ученики', 'Зачисление', 'Учителя',
             'Счета', 'Услуги', 'Касса', 'Кассовые счета', 'Расходы',
-            'Финансовые отчёты', 'Пользователи', 'Роли и разрешения', 'Журнал действий',
+            'Финансовые отчёты', 'Журнал действий',
         ] as $expected) {
             $response->assertSee($expected);
         }
+    }
+
+    public function test_users_and_roles_no_longer_appear_as_direct_sidebar_links(): void
+    {
+        $response = $this->actingAs($this->admin())->get(route('dashboard.index'));
+
+        $response->assertOk();
+        $response->assertDontSee(route('filament.admin.resources.users.index'), false);
+        $response->assertDontSee(route('filament.admin.resources.roles.index'), false);
     }
 
     public function test_incomplete_modules_stay_hidden_from_the_new_sidebar(): void

@@ -44,6 +44,12 @@ use App\Http\Controllers\Dashboard\SchoolEnrollmentController;
 use App\Http\Controllers\Dashboard\EnrollmentModeController;
 use App\Http\Controllers\Dashboard\StudentDocumentController;
 use App\Http\Controllers\Dashboard\StudentProfileCompletionController;
+use App\Http\Controllers\Dashboard\BellScheduleController;
+use App\Http\Controllers\Dashboard\BellSchedulePeriodController;
+use App\Http\Controllers\Dashboard\AcademicCalendarController;
+use App\Http\Controllers\Dashboard\CalendarEventController;
+use App\Http\Controllers\Dashboard\ClassroomController;
+use App\Http\Controllers\Dashboard\AdministrationController;
 
 use App\Http\Controllers\Cash\CashTransactionController;
 use App\Http\Controllers\Cash\CashTransferController;
@@ -181,6 +187,44 @@ Route::middleware(['auth', 'administrative'])
             ->except(['show'])
             ->parameters(['academic-years' => 'academicYear']);
         Route::resource('curricula', CurriculumController::class)->except(['show']);
+
+        // Phase 1 — dashboard migration of Filament BellScheduleResource /
+        // AcademicCalendarResource / ClassroomResource. All three deny
+        // delete (see App\Models\BellSchedule::canDelete-equivalent,
+        // App\Models\PhysicalClassroom::booted 'deleting' guard, and
+        // App\Filament\Resources\AcademicCalendars\AcademicCalendarResource
+        // ::canDelete) so no destroy route exists here either — this is
+        // parity, not an omission.
+        Route::resource('bell-schedules', BellScheduleController::class)->except(['show', 'destroy']);
+        Route::prefix('bell-schedules/{bellSchedule}/periods')
+            ->name('bell-schedules.periods.')
+            ->group(function () {
+                Route::get('create', [BellSchedulePeriodController::class, 'create'])->name('create');
+                Route::post('/', [BellSchedulePeriodController::class, 'store'])->name('store');
+                Route::get('{period}/edit', [BellSchedulePeriodController::class, 'edit'])->name('edit');
+                Route::put('{period}', [BellSchedulePeriodController::class, 'update'])->name('update');
+            });
+
+        Route::resource('academic-calendars', AcademicCalendarController::class)->except(['show', 'destroy']);
+        Route::prefix('academic-calendars/{academicCalendar}/events')
+            ->name('academic-calendars.events.')
+            ->group(function () {
+                Route::get('create', [CalendarEventController::class, 'create'])->name('create');
+                Route::post('/', [CalendarEventController::class, 'store'])->name('store');
+                Route::get('{event}/edit', [CalendarEventController::class, 'edit'])->name('edit');
+                Route::put('{event}', [CalendarEventController::class, 'update'])->name('update');
+            });
+
+        Route::resource('classrooms', ClassroomController::class)->except(['show', 'destroy']);
+
+        // Navigation fix: the sidebar's top-level "Администрирование" item
+        // used to link straight into the Filament /admin panel. It now
+        // lands here — a dashboard-native hub linking to whichever
+        // administration destinations already exist in /dashboard, plus a
+        // clearly labelled technical fallback section for what Filament
+        // still exclusively owns (Users/Roles) in this phase.
+        Route::get('administration', [AdministrationController::class, 'index'])
+            ->name('administration.index');
 
         Route::get('teachers/print', [TeacherController::class, 'print'])
             ->name('teachers.print');

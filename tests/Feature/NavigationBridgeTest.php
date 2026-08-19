@@ -19,17 +19,38 @@ class NavigationBridgeTest extends TestCase
         (new RolesAndPermissionsSeeder())->run();
     }
 
-    public function test_authorized_user_sees_admin_link_on_dashboard_without_being_redirected(): void
+    /**
+     * Pre-UAT fix (independent review, Fix 8): this used to assert the
+     * dashboard page contains route('filament.admin.pages.dashboard')
+     * ("http://.../admin") via a broad substring match. Because
+     * /admin/teacher-assignments, /admin/teacher-salaries, /admin/buses
+     * etc. all contain that same "/admin" substring, the assertion kept
+     * passing after the Administration item was repointed at
+     * dashboard.administration.index — it was being satisfied by unrelated
+     * links, not by the Administration item it was meant to cover. This now
+     * asserts the Administration item's exact, current destination.
+     */
+    public function test_authorized_user_sees_the_administration_link_pointing_at_the_dashboard_hub(): void
     {
         $admin = $this->userWithRole('admin');
 
         $this->actingAs($admin)
             ->get(route('dashboard.index'))
             ->assertOk()
-            ->assertSee(route('filament.admin.pages.dashboard'), false)
+            ->assertSee(route('dashboard.administration.index'), false)
             ->assertSee(__('menu.administration'));
     }
 
+    /**
+     * Pre-UAT fix (Fix 8): same substring-matching problem as above, and the
+     * same fix — assert the exact dashboard.administration.index href
+     * rather than a "/admin" substring. The underlying claim the test name
+     * makes ("same panel access rule as Filament") still holds: the
+     * Administration item's visibility is gated on
+     * canAccessPanel($adminPanel) (see shell-sidebar.blade.php), which uses
+     * the identical administrativeRoles()+active check Filament's own panel
+     * access uses — only the rendered destination changed.
+     */
     public function test_dashboard_admin_link_uses_the_same_panel_access_rule_as_filament(): void
     {
         $adminPanel = Filament::getPanel('admin');
@@ -41,11 +62,11 @@ class NavigationBridgeTest extends TestCase
             $this->actingAs($user)
                 ->get(route('dashboard.index'))
                 ->assertOk()
-                ->assertSee(route('filament.admin.pages.dashboard'), false);
+                ->assertSee(route('dashboard.administration.index'), false);
         }
     }
 
-    public function test_unauthorized_and_inactive_users_do_not_see_admin_link(): void
+    public function test_unauthorized_and_inactive_users_do_not_see_the_administration_link(): void
     {
         $teacher = $this->userWithRole('teacher');
         $userWithoutRole = User::factory()->create(['is_active' => true]);
@@ -56,7 +77,7 @@ class NavigationBridgeTest extends TestCase
             $this->assertFalse($user->canAccessPanel(Filament::getPanel('admin')));
             $this->actingAs($user);
             $this->assertStringNotContainsString(
-                'href="'.route('filament.admin.pages.dashboard').'"',
+                'href="'.route('dashboard.administration.index').'"',
                 view('layouts.partials.shell-sidebar')->render(),
             );
         }

@@ -134,12 +134,35 @@ class ClassroomTest extends TestCase
         }
     }
 
+    /**
+     * Pre-UAT fix (independent review, Fix 9): previously reused the shared
+     * setUp() $this->year, hardcoded to 2026-09-01..2027-06-30.
+     * AcademicYear::isHistorical() requires BOTH !is_active AND
+     * end_date->isPast(), so whether this test's expectation held depended
+     * on the wall-clock date the suite happened to run on. It now builds
+     * its own self-contained year with an end_date computed relative to
+     * now(), so it stays genuinely historical no matter when the suite
+     * executes. $this->year from setUp() is untouched and unused here, so
+     * no other test in this class is affected.
+     */
     public function test_historical_room_is_preserved_and_locked(): void
     {
-        $room = PhysicalClassroom::create($this->attributes());
+        $historicalYear = AcademicYear::create([
+            'name' => 'Historical ' . uniqid(),
+            'start_date' => now()->subYears(2)->startOfYear()->toDateString(),
+            'end_date' => now()->subYears(2)->endOfYear()->toDateString(),
+            'is_active' => true,
+        ]);
+        $room = PhysicalClassroom::create($this->attributes(['academic_year_id' => $historicalYear->id]));
+
+        // Activating a later year atomically deactivates $historicalYear
+        // (AcademicYear::save()'s single-active-year swap) — its end_date
+        // is already in the past, so it is now genuinely historical.
         AcademicYear::create([
-            'name' => '2027 / 2028', 'start_date' => '2027-09-01',
-            'end_date' => '2028-06-30', 'is_active' => true,
+            'name' => 'Current ' . uniqid(),
+            'start_date' => now()->subMonths(6)->toDateString(),
+            'end_date' => now()->addMonths(6)->toDateString(),
+            'is_active' => true,
         ]);
 
         foreach ([
@@ -155,7 +178,7 @@ class ClassroomTest extends TestCase
         }
 
         try {
-            $this->year->delete();
+            $historicalYear->delete();
             $this->fail('Expected restricted historical FK.');
         } catch (QueryException) {
             $this->assertDatabaseHas('classrooms', ['id' => $room->id]);

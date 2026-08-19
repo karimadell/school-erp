@@ -5,6 +5,12 @@ return [
     'model' => 'Classroom', 'models' => 'Classrooms',
     'search_placeholder' => 'Search by code, name, or building…',
     'active' => 'Active', 'inactive' => 'Inactive',
+    'title' => 'Classrooms', 'list_hint' => 'Physical rooms and their capacity.',
+    'create' => 'Add Classroom', 'edit' => 'Edit Classroom',
+    'back' => 'Back to List', 'save' => 'Save', 'cancel' => 'Cancel',
+    'actions' => 'Actions', 'no_data' => 'No classrooms found.', 'filter' => 'Filter',
+    'all_academic_years' => 'All Academic Years', 'all_room_types' => 'All Room Types',
+    'created_success' => 'Classroom created.', 'updated_success' => 'Classroom updated.',
     'fields' => [
         'academic_year' => 'Academic Year', 'building' => 'Building', 'floor' => 'Floor',
         'code' => 'Room Code', 'name' => 'Name', 'capacity' => 'Capacity',

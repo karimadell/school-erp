@@ -11,7 +11,17 @@ return [
         'break_after_minutes' => 'Break After, Minutes',
     ],
     'help' => ['default' => 'Each shift may have only one active default schedule per academic year.'],
-    'periods' => ['title' => 'Periods and Bell Times'],
+    'title' => 'Bell Schedules', 'list_hint' => 'Shifts, periods, and bell times for the academic year.',
+    'create' => 'Add Schedule', 'edit' => 'Edit Schedule',
+    'back' => 'Back to List', 'save' => 'Save', 'cancel' => 'Cancel',
+    'actions' => 'Actions', 'no_data' => 'No bell schedules found.',
+    'created_success' => 'Bell schedule created.', 'updated_success' => 'Bell schedule updated.',
+    'periods' => [
+        'title' => 'Periods and Bell Times', 'create' => 'Add Period', 'edit' => 'Edit Period',
+        'back' => 'Back to Schedule', 'save' => 'Save', 'cancel' => 'Cancel',
+        'no_data' => 'No periods added yet.',
+        'created_success' => 'Period added.', 'updated_success' => 'Period updated.',
+    ],
     'validation' => [
         'shift_min' => 'The shift must be at least 1.',
         'end_after_start' => 'The end time must be after the start time.',

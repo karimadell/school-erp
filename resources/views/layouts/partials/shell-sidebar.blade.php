@@ -15,7 +15,21 @@
             'label' => __('menu.home'),
             'items' => [
                 ['label' => __('menu.dashboard'), 'icon' => 'layout_dashboard', 'route' => 'dashboard.index', 'active' => 'dashboard.index'],
-                ['label' => __('menu.administration'), 'icon' => 'shield_check', 'href' => $canAccessAdminPanel ? $adminPanel->getUrl() : null],
+                // Phase 1 navigation fix: this used to link straight into
+                // the Filament /admin panel ($adminPanel->getUrl()), which
+                // took operational users out of the dashboard shell
+                // entirely. It now opens a dashboard-native administration
+                // hub instead (see AdministrationController) — Filament is
+                // still reachable from there, but only as an explicitly
+                // labelled technical fallback, not a silent redirect.
+                // Pre-UAT fix: visibility is gated on $canAccessAdminPanel
+                // (the same administrative-role + active check
+                // EnsureAdministrativePortalAccess enforces on the route
+                // itself) — previously this entry had no guard at all in
+                // the partial and relied solely on route middleware to
+                // keep unauthorized/inactive users off the destination
+                // page, which left the link itself visible to anyone.
+                ['label' => __('menu.administration'), 'icon' => 'shield_check', 'route' => $canAccessAdminPanel ? 'dashboard.administration.index' : null, 'active' => 'dashboard.administration.*'],
             ],
         ],
         [
@@ -27,6 +41,13 @@
                 ['label' => 'Структура школы', 'icon' => 'school', 'route' => 'dashboard.stages.index', 'active' => 'dashboard.stages.*'],
                 ['label' => 'Предметы', 'icon' => 'book_open', 'route' => 'dashboard.subjects.index', 'active' => 'dashboard.subjects.*'],
                 ['label' => 'Учебный план', 'icon' => 'notebook_text', 'route' => 'dashboard.curricula.index', 'active' => 'dashboard.curricula.*'],
+                // Phase 1: dashboard-native counterparts of the Filament
+                // BellScheduleResource / AcademicCalendarResource /
+                // ClassroomResource — same 'view timetable'/'manage
+                // timetable' permission gate as those resources.
+                ['label' => __('bell_schedule.navigation'), 'icon' => 'clock', 'route' => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ? 'dashboard.bell-schedules.index' : null, 'active' => 'dashboard.bell-schedules.*'],
+                ['label' => __('academic_calendar.navigation'), 'icon' => 'calendar_range', 'route' => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ? 'dashboard.academic-calendars.index' : null, 'active' => 'dashboard.academic-calendars.*'],
+                ['label' => __('classroom.navigation'), 'icon' => 'building_2', 'route' => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ? 'dashboard.classrooms.index' : null, 'active' => 'dashboard.classrooms.*'],
                 ['label' => 'Расписание', 'icon' => 'calendar_clock', 'route' => 'dashboard.classes.index', 'active' => 'dashboard.classes.*'],
                 ['label' => 'Посещаемость', 'icon' => 'clipboard_list', 'route' => 'dashboard.attendance.index', 'active' => 'dashboard.attendance.*'],
                 ['label' => 'Отчёт по классу', 'icon' => 'bar_chart_3', 'route' => 'dashboard.attendance.reports.class', 'active' => 'dashboard.attendance.reports.class', 'indent' => true],
@@ -49,9 +70,21 @@
             'label' => 'Учителя и сотрудники',
             'items' => [
                 ['label' => 'Учителя', 'icon' => 'graduation_cap', 'route' => 'dashboard.teachers.index', 'active' => 'dashboard.teachers.*'],
-                ['label' => 'Назначения', 'icon' => 'link_2', 'href' => Route::has('filament.admin.resources.teacher-assignments.index') ? route('filament.admin.resources.teacher-assignments.index') : null],
+                // Pre-UAT fix: these two remain Filament-backed (out of
+                // Phase 1 scope) but must not be shown to a user who
+                // couldn't actually open them. "Назначения" mirrors
+                // TeacherAssignmentResource's real gate — Filament resolves
+                // it from TeacherAssignmentPolicy::viewAny(), which is
+                // 'manage teachers' (app/Policies/TeacherAssignmentPolicy.php).
+                // "Зарплаты" has no dedicated policy or permission at all
+                // (TeacherSalaryResource defines no canViewAny() and no
+                // TeacherSalaryPolicy is registered), so the only real
+                // authorization boundary Filament itself enforces there is
+                // admin-panel access — $canAccessAdminPanel mirrors that
+                // exactly rather than inventing a new permission.
+                ['label' => 'Назначения', 'icon' => 'link_2', 'href' => (Route::has('filament.admin.resources.teacher-assignments.index') && (auth()->user()?->can('manage teachers') ?? false)) ? route('filament.admin.resources.teacher-assignments.index') : null],
                 // Квалификации: only exists embedded in the Teacher edit page — no standalone page to link.
-                ['label' => 'Зарплаты', 'icon' => 'wallet', 'href' => Route::has('filament.admin.resources.teacher-salaries.index') ? route('filament.admin.resources.teacher-salaries.index') : null],
+                ['label' => 'Зарплаты', 'icon' => 'wallet', 'href' => (Route::has('filament.admin.resources.teacher-salaries.index') && $canAccessAdminPanel) ? route('filament.admin.resources.teacher-salaries.index') : null],
                 // Сотрудники: no non-teaching-staff concept exists yet — hidden.
             ],
         ],
@@ -74,14 +107,23 @@
         [
             'label' => 'Транспорт',
             'items' => [
-                ['label' => 'Автобусы', 'icon' => 'school', 'href' => Route::has('filament.admin.resources.buses.index') ? route('filament.admin.resources.buses.index') : null],
+                // Pre-UAT fix: BusResource has no dedicated policy/permission
+                // either — same reasoning as "Зарплаты" above, so the real
+                // authorization boundary is admin-panel access.
+                ['label' => 'Автобусы', 'icon' => 'school', 'href' => (Route::has('filament.admin.resources.buses.index') && $canAccessAdminPanel) ? route('filament.admin.resources.buses.index') : null],
             ],
         ],
         [
             'label' => 'Администрирование',
             'items' => [
-                ['label' => 'Пользователи', 'icon' => 'user_cog', 'href' => Route::has('filament.admin.resources.users.index') ? route('filament.admin.resources.users.index') : null],
-                ['label' => 'Роли и разрешения', 'icon' => 'shield_check', 'href' => Route::has('filament.admin.resources.roles.index') ? route('filament.admin.resources.roles.index') : null],
+                // Pre-UAT fix: Users / Roles & Permissions used to link
+                // straight into Filament from the main sidebar with no
+                // authorization check beyond Route::has(). They are now
+                // reached exclusively through the controlled
+                // /dashboard/administration hub (AdministrationController),
+                // which already gates them on 'manage users' / 'manage
+                // roles' — removed here rather than duplicating that gate
+                // in two places.
                 ['label' => 'Настройки школы', 'icon' => 'school', 'route' => auth()->user()?->hasAnyRole(['super-admin', 'admin']) ? 'dashboard.settings.school.edit' : null, 'active' => 'dashboard.settings.school.*'],
                 // Языки: already available via the topbar language switcher, not a separate admin page.
                 ['label' => 'Журнал действий', 'icon' => 'scroll_text', 'route' => 'dashboard.admin.audit.logs.index', 'active' => 'dashboard.admin.audit.logs.*'],

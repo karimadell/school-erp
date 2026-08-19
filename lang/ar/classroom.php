@@ -5,6 +5,12 @@ return [
     'model' => 'غرفة', 'models' => 'الغرف',
     'search_placeholder' => 'البحث بالرمز أو الاسم أو المبنى…',
     'active' => 'نشط', 'inactive' => 'غير نشط',
+    'title' => 'الغرف الدراسية', 'list_hint' => 'القاعات الفعلية وسعتها.',
+    'create' => 'إضافة قاعة', 'edit' => 'تعديل القاعة',
+    'back' => 'العودة إلى القائمة', 'save' => 'حفظ', 'cancel' => 'إلغاء',
+    'actions' => 'إجراءات', 'no_data' => 'لا توجد قاعات.', 'filter' => 'تصفية',
+    'all_academic_years' => 'كل الأعوام الدراسية', 'all_room_types' => 'كل أنواع القاعات',
+    'created_success' => 'تم إنشاء القاعة.', 'updated_success' => 'تم تحديث القاعة.',
     'fields' => [
         'academic_year' => 'العام الدراسي', 'building' => 'المبنى', 'floor' => 'الطابق',
         'code' => 'رمز القاعة', 'name' => 'الاسم', 'capacity' => 'السعة',

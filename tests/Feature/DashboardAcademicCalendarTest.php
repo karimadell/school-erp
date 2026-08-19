@@ -516,4 +516,120 @@ class DashboardAcademicCalendarTest extends TestCase
         $response->assertSessionHasErrors();
         $this->assertDatabaseMissing('calendar_events', ['academic_calendar_id' => $calendar->id, 'name' => 'Override']);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | UAT bug fix — default_bell_schedule_id not persisting on update
+    |--------------------------------------------------------------------------
+    | Root cause: AcademicCalendar::$casts did not cast 'academic_year_id' to
+    | 'integer'. A real HTTP form submission always arrives as strings, so
+    | $data['academic_year_id'] from AcademicCalendarController::validated()
+    | was a string ("3"), which got mass-assigned as-is (no cast to coerce
+    | it). AcademicCalendar::booted()'s saving() hook then compared it with
+    | strict `!==` against $calendar->defaultBellSchedule->academic_year_id
+    | (a native int from a fresh DB fetch), so int(3) !== "3" was always
+    | true — a false-positive "bell_schedule_year_mismatch" on every
+    | same-year selection, silently discarding the update.
+    |
+    | These tests deliberately submit `academic_year_id` (and other numeric
+    | fields) as STRINGS via the HTTP test client — exactly how a real
+    | browser form submits them — because the prior tests in this file that
+    | passed native PHP ints (e.g. $year->id) never round-tripped through
+    | string coercion and therefore could not have caught this bug.
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_selecting_a_valid_same_year_active_bell_schedule_persists_on_update(): void
+    {
+        $admin = $this->adminUser();
+        $year = $this->activeYear();
+        $calendar = $this->calendar($year);
+        $schedule = BellSchedule::create([
+            'academic_year_id' => $year->id, 'name' => 'UAT Schedule', 'shift' => 1, 'is_default' => true, 'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($admin)->put(route('dashboard.academic-calendars.update', $calendar), [
+            'academic_year_id' => (string) $year->id,
+            'weekly_days_off' => ['fri', 'sat'],
+            'default_bell_schedule_id' => (string) $schedule->id,
+        ]);
+
+        $response->assertRedirect(route('dashboard.academic-calendars.edit', $calendar));
+        $response->assertSessionDoesntHaveErrors();
+        $this->assertSame($schedule->id, $calendar->fresh()->default_bell_schedule_id);
+    }
+
+    public function test_reopening_the_edit_page_shows_the_persisted_bell_schedule_selected(): void
+    {
+        $admin = $this->adminUser();
+        $year = $this->activeYear();
+        $calendar = $this->calendar($year);
+        $schedule = BellSchedule::create([
+            'academic_year_id' => $year->id, 'name' => 'UAT Schedule', 'shift' => 1, 'is_default' => true, 'is_active' => true,
+        ]);
+
+        $this->actingAs($admin)->put(route('dashboard.academic-calendars.update', $calendar), [
+            'academic_year_id' => (string) $year->id,
+            'weekly_days_off' => ['fri', 'sat'],
+            'default_bell_schedule_id' => (string) $schedule->id,
+        ]);
+
+        $response = $this->actingAs($admin)->get(route('dashboard.academic-calendars.edit', $calendar));
+
+        $response->assertOk();
+        $response->assertSee(
+            '<option value="' . $schedule->id . '" selected>',
+            false,
+        );
+    }
+
+    public function test_cross_year_bell_schedule_is_still_rejected_with_string_typed_input(): void
+    {
+        $admin = $this->adminUser();
+        $otherYear = AcademicYear::create([
+            'name' => 'Other ' . uniqid(), 'start_date' => '2020-09-01', 'end_date' => '2021-05-31', 'is_active' => true,
+        ]);
+        $foreignSchedule = BellSchedule::create([
+            'academic_year_id' => $otherYear->id, 'name' => 'Foreign', 'shift' => 1, 'is_active' => true,
+        ]);
+        $year = $this->activeYear();
+        $calendar = $this->calendar($year);
+
+        $response = $this->actingAs($admin)->put(route('dashboard.academic-calendars.update', $calendar), [
+            'academic_year_id' => (string) $year->id,
+            'weekly_days_off' => ['fri', 'sat'],
+            'default_bell_schedule_id' => (string) $foreignSchedule->id,
+        ]);
+
+        $response->assertSessionHasErrors('default_bell_schedule_id');
+        $this->assertNull($calendar->fresh()->default_bell_schedule_id);
+    }
+
+    public function test_update_uniqueness_behavior_still_works_with_string_typed_input(): void
+    {
+        $admin = $this->adminUser();
+        $yearA = $this->activeYear();
+        $calendarA = $this->calendar($yearA);
+        $yearB = AcademicYear::create([
+            'name' => 'YearB ' . uniqid(), 'start_date' => '2020-09-01', 'end_date' => '2021-05-31', 'is_active' => true,
+        ]);
+        $calendarB = $this->calendar($yearB);
+
+        // Same-year update (own year, unaffected by the unique rule) still succeeds.
+        $response = $this->actingAs($admin)->put(route('dashboard.academic-calendars.update', $calendarB), [
+            'academic_year_id' => (string) $yearB->id,
+            'weekly_days_off' => ['fri'],
+        ]);
+        $response->assertSessionDoesntHaveErrors();
+        $this->assertSame(['fri'], $calendarB->fresh()->weekly_days_off);
+
+        // Switching to a year another calendar already owns is still rejected.
+        $response = $this->actingAs($admin)->put(route('dashboard.academic-calendars.update', $calendarB), [
+            'academic_year_id' => (string) $yearA->id,
+            'weekly_days_off' => ['fri'],
+        ]);
+        $response->assertSessionHasErrors('academic_year_id');
+        $this->assertSame($yearB->id, $calendarB->fresh()->academic_year_id);
+        $this->assertNotNull($calendarA); // yearA's calendar untouched
+    }
 }

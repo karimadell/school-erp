@@ -17,6 +17,7 @@ class AcademicCalendar extends Model implements ResolvesAcademicYear
     ];
 
     protected $casts = [
+        'academic_year_id' => 'integer',
         'weekly_days_off' => 'array',
         'default_bell_schedule_id' => 'integer',
     ];

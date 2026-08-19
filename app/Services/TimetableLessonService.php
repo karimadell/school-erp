@@ -53,4 +53,17 @@ class TimetableLessonService
 
         return null;
     }
+
+    /**
+     * Removes the lesson occupying a single class+day+period slot, if any.
+     * A no-op (not an error) when the slot is already empty, so a stale
+     * double-submit of the delete button stays safe.
+     */
+    public function destroy(int $classId, int $dayId, int $periodId): void
+    {
+        Timetable::where('class_id', $classId)
+            ->where('day_id', $dayId)
+            ->where('period_id', $periodId)
+            ->delete();
+    }
 }

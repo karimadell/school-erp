@@ -379,8 +379,16 @@ class DashboardClassTimetableTest extends TestCase
         $response->assertOk();
         $response->assertSee(__('timetable.add_lesson'));
         // The select/save controls still exist in the markup (for the
-        // collapse-to-edit interaction) but must not be visible by default.
-        $response->assertSee('class="collapse timetable-editor"', false);
+        // click-to-edit interaction, toggled by inline JS rather than
+        // Bootstrap's collapse component) but must not be visible by
+        // default — hidden via the timetable-editor CSS class, not the
+        // "collapse" class, so the toggle never depends on Bootstrap's JS
+        // bundle loading successfully from its CDN.
+        $response->assertSee('class="timetable-editor"', false);
+        // Bootstrap's collapse component (data-bs-toggle="collapse") is no
+        // longer used to open/close the editor — the toggle must not depend
+        // on Bootstrap's externally-loaded JS bundle at all.
+        $response->assertDontSee('data-bs-toggle="collapse"', false);
     }
 
     public function test_updating_an_existing_lesson_through_the_dashboard_still_works_after_the_ui_refactor(): void
@@ -426,6 +434,154 @@ class DashboardClassTimetableTest extends TestCase
 
     /*
     |--------------------------------------------------------------------------
+    | Manual delete — goes through TimetableLessonService like save()
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_deleting_a_lesson_through_the_dashboard_removes_it_via_the_service_layer(): void
+    {
+        $admin = $this->adminUser();
+        $class = $this->makeClass();
+        $days = $this->makeAllDays();
+        $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+        $subject = Subject::create(['code' => 'S-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+        $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B-' . uniqid(), 'is_active' => true]);
+
+        Timetable::create([
+            'class_id' => $class->id, 'day_id' => $days['sun']->id, 'period_id' => $period->id,
+            'subject_id' => $subject->id, 'teacher_id' => $teacher->id,
+        ]);
+
+        $response = $this->actingAs($admin)->delete(route('dashboard.classes.timetable.destroy', $class), [
+            'day_id' => $days['sun']->id,
+            'period_id' => $period->id,
+        ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('success');
+        $this->assertSame(0, Timetable::where('class_id', $class->id)
+            ->where('day_id', $days['sun']->id)->where('period_id', $period->id)->count());
+    }
+
+    public function test_deleting_an_empty_slot_is_a_safe_no_op(): void
+    {
+        $admin = $this->adminUser();
+        $class = $this->makeClass();
+        $days = $this->makeAllDays();
+        $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+
+        $response = $this->actingAs($admin)->delete(route('dashboard.classes.timetable.destroy', $class), [
+            'day_id' => $days['sun']->id,
+            'period_id' => $period->id,
+        ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('success');
+        $this->assertSame(0, Timetable::where('class_id', $class->id)->count());
+    }
+
+    public function test_delete_action_is_forbidden_for_a_view_only_user(): void
+    {
+        (new RolesAndPermissionsSeeder)->run();
+        $user = User::factory()->create(['is_active' => true]);
+        $user->assignRole('school-admin');
+        $user->givePermissionTo('view timetable');
+
+        $class = $this->makeClass();
+        $days = $this->makeAllDays();
+        $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+
+        $this->actingAs($user)
+            ->delete(route('dashboard.classes.timetable.destroy', $class), [
+                'day_id' => $days['sun']->id,
+                'period_id' => $period->id,
+            ])
+            ->assertForbidden();
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PDF preview / download / print — share the same working-day-filtered
+    | grid data as the interactive surface (App\Http\Controllers\Dashboard\
+    | ClassTimetableController::gridData()).
+    |--------------------------------------------------------------------------
+    */
+
+    public function test_pdf_preview_route_returns_a_pdf_for_an_authorized_user(): void
+    {
+        $admin = $this->adminUser();
+        $class = $this->makeClass();
+        $this->makeAllDays();
+        TimetableSetting::updateOrCreate(['id' => 1], ['non_working_days' => ['fri', 'sat']]);
+        Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+
+        $response = $this->actingAs($admin)->get(route('dashboard.classes.timetable.pdf', $class));
+
+        $response->assertOk();
+        $this->assertSame('application/pdf', $response->headers->get('content-type'));
+    }
+
+    public function test_pdf_download_route_uses_a_safe_transliterated_filename_not_the_raw_database_id(): void
+    {
+        $admin = $this->adminUser();
+        $class = $this->makeClass();
+        $class->forceFill(['name_ru' => 'Выпускной класс'])->save();
+        $this->makeAllDays();
+        TimetableSetting::updateOrCreate(['id' => 1], ['non_working_days' => ['fri', 'sat']]);
+        Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+
+        $response = $this->actingAs($admin)->get(route('dashboard.classes.timetable.pdf.download', $class));
+
+        $response->assertOk();
+        $disposition = $response->headers->get('content-disposition');
+        // Transliterated from the class name, not "{$class->id}.pdf" — the
+        // bare numeric primary key never appears as the filename itself.
+        $this->assertStringContainsString('raspisanie-vypusknoi-klass.pdf', $disposition);
+        $this->assertStringNotContainsString('filename=' . $class->id . '.pdf', $disposition);
+    }
+
+    public function test_print_route_renders_the_schedule_without_dashboard_navigation_chrome(): void
+    {
+        $admin = $this->adminUser();
+        $class = $this->makeClass();
+        $days = $this->makeAllDays();
+        TimetableSetting::updateOrCreate(['id' => 1], ['non_working_days' => ['fri', 'sat']]);
+        $period = Period::create(['number' => 1, 'start_time' => '08:00', 'end_time' => '08:45']);
+        $subject = Subject::create(['code' => 'S-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'Русский язык', 'is_active' => true]);
+        $teacher = Teacher::create(['first_name' => 'A', 'last_name' => 'B-' . uniqid(), 'is_active' => true]);
+
+        Timetable::create([
+            'class_id' => $class->id, 'day_id' => $days['sun']->id, 'period_id' => $period->id,
+            'subject_id' => $subject->id, 'teacher_id' => $teacher->id,
+        ]);
+
+        $response = $this->actingAs($admin)->get(route('dashboard.classes.timetable.print', $class));
+
+        $response->assertOk();
+        $response->assertSee('Русский язык');
+        // Not wrapped in the dashboard shell: no sidebar, no add/save/delete/generate controls.
+        $response->assertDontSee(__('timetable.add_lesson'));
+        $response->assertDontSee(__('timetable.generate_smart_timetable'));
+        $response->assertDontSee(__('timetable.save'));
+        $response->assertDontSee(__('timetable.delete_lesson'));
+    }
+
+    public function test_pdf_and_print_routes_follow_the_same_view_timetable_permission_as_the_interactive_grid(): void
+    {
+        $schoolAdmin = $this->schoolAdminUser();
+        $class = $this->makeClass();
+
+        foreach ([
+            route('dashboard.classes.timetable.pdf', $class),
+            route('dashboard.classes.timetable.pdf.download', $class),
+            route('dashboard.classes.timetable.print', $class),
+        ] as $url) {
+            $this->actingAs($schoolAdmin)->get($url)->assertForbidden();
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
     | Dashboard-only routing
     |--------------------------------------------------------------------------
     */
@@ -437,7 +593,11 @@ class DashboardClassTimetableTest extends TestCase
         foreach ([
             route('dashboard.classes.timetable', $class),
             route('dashboard.classes.timetable.save', $class),
+            route('dashboard.classes.timetable.destroy', $class),
             route('dashboard.classes.timetable.generate', $class),
+            route('dashboard.classes.timetable.pdf', $class),
+            route('dashboard.classes.timetable.pdf.download', $class),
+            route('dashboard.classes.timetable.print', $class),
         ] as $url) {
             $this->assertStringStartsWith(url('/dashboard'), $url);
             $this->assertStringNotContainsString('/admin', $url);

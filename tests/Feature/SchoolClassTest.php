@@ -361,4 +361,28 @@ class SchoolClassTest extends TestCase
         $response->assertOk();
         $response->assertViewHas('classes', fn ($classes) => $classes->pluck('code')->all() === ['L', 'U']);
     }
+
+    /**
+     * UAT hardening: the class list table exposed the raw DB primary key as
+     * a visible "ID" column. It must be removed from the markup while the
+     * underlying record ids (and natural academic ordering) stay intact.
+     */
+    public function test_class_list_does_not_display_the_internal_database_id_column(): void
+    {
+        $user = $this->portalUser();
+        $grade = $this->makeGrade();
+
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id, 'code' => 'ID-TEST-A', 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true,
+        ]);
+
+        $response = $this->actingAs($user)->get(route('dashboard.classes.index'));
+
+        $response->assertOk();
+        $response->assertSee($class->code);
+
+        // The removed column's header/body markup must be gone, not just relabeled.
+        $response->assertDontSee('<th>' . __('classes.id') . '</th>', false);
+        $response->assertDontSee('<td>' . $class->id . '</td>', false);
+    }
 }

@@ -179,8 +179,16 @@ Route::middleware(['auth', 'administrative'])
             ->name('classes.timetable');
         Route::post('classes/{class}/timetable', [ClassTimetableController::class, 'save'])
             ->name('classes.timetable.save');
+        Route::delete('classes/{class}/timetable', [ClassTimetableController::class, 'destroy'])
+            ->name('classes.timetable.destroy');
         Route::post('classes/{class}/timetable/generate', [ClassTimetableController::class, 'generate'])
             ->name('classes.timetable.generate');
+        Route::get('classes/{class}/timetable/pdf', [ClassTimetableController::class, 'pdf'])
+            ->name('classes.timetable.pdf');
+        Route::get('classes/{class}/timetable/pdf/download', [ClassTimetableController::class, 'pdfDownload'])
+            ->name('classes.timetable.pdf.download');
+        Route::get('classes/{class}/timetable/print', [ClassTimetableController::class, 'print'])
+            ->name('classes.timetable.print');
         Route::resource('subjects', SubjectController::class);
         Route::resource('academic-years', AcademicYearController::class)->except(['show']);
         Route::resource('academic-years.quarters', QuarterController::class)

@@ -30,7 +30,6 @@
                 <table class="table table-bordered table-striped align-middle mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th>{{ __('classes.id') }}</th>
                             <th>{{ __('classes.code') }}</th>
                             <th>{{ __('classes.name') }}</th>
                             <th>{{ __('classes.grade') }}</th>
@@ -43,8 +42,6 @@
                     <tbody>
                         @forelse($classes as $class)
                             <tr>
-                                <td>{{ $class->id }}</td>
-
                                 <td>{{ $class->code ?? '-' }}</td>
 
                                 <td>{{ $class->name_ru ?? $class->name ?? '-' }}</td>
@@ -96,7 +93,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="7" class="text-center text-muted py-4">
+                                <td colspan="6" class="text-center text-muted py-4">
                                     {{ __('classes.no_data') }}
                                 </td>
                             </tr>

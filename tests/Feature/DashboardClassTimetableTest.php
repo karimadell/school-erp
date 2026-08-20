@@ -15,6 +15,7 @@ use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use App\Models\TimetableSetting;
 use App\Models\User;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -519,6 +520,91 @@ class DashboardClassTimetableTest extends TestCase
 
         $response->assertOk();
         $this->assertSame('application/pdf', $response->headers->get('content-type'));
+    }
+
+    public function test_empty_standard_week_pdf_renders_on_one_landscape_page(): void
+    {
+        $class = $this->makeClass();
+        $class->forceFill(['name_ru' => '1 КЛАСС'])->save();
+        $days = collect($this->makeAllDays())->only(['sun', 'mon', 'tue', 'wed', 'thu'])->values();
+        $periods = collect(range(1, 6))->map(fn (int $number) => Period::create([
+            'number' => $number,
+            'start_time' => sprintf('%02d:00', $number + 7),
+            'end_time' => sprintf('%02d:45', $number + 7),
+        ]));
+
+        $pdf = Pdf::loadView('dashboard.classes.timetable-pdf', [
+            'class' => $class,
+            'days' => $days,
+            'periods' => $periods,
+            'lessons' => collect(),
+            'academicYear' => null,
+            'schoolSettings' => null,
+        ])->setPaper('a4', 'landscape');
+
+        $pdf->output();
+
+        $this->assertSame(1, $pdf->getDomPDF()->getCanvas()->get_page_count());
+    }
+
+    public function test_populated_standard_week_with_long_russian_names_renders_on_one_page(): void
+    {
+        $class = $this->makeClass();
+        $class->forceFill(['name_ru' => '4 КЛАСС'])->save();
+        $days = collect($this->makeAllDays())->only(['sun', 'mon', 'tue', 'wed', 'thu'])->values();
+        $periods = collect(range(1, 6))->map(fn (int $number) => Period::create([
+            'number' => $number,
+            'start_time' => sprintf('%02d:00', $number + 7),
+            'end_time' => sprintf('%02d:45', $number + 7),
+        ]));
+        $subject = Subject::create([
+            'code' => 'LONG-RU',
+            'name_ar' => 'a',
+            'name_ru' => 'Литературное чтение и развитие речи',
+            'is_active' => true,
+        ]);
+        $teacher = Teacher::create([
+            'first_name' => 'Александра-Мария',
+            'last_name' => 'Константинопольская-Смирнова',
+            'is_active' => true,
+        ]);
+
+        foreach ($periods as $period) {
+            foreach ($days as $day) {
+                Timetable::create([
+                    'class_id' => $class->id,
+                    'day_id' => $day->id,
+                    'period_id' => $period->id,
+                    'subject_id' => $subject->id,
+                    'teacher_id' => $teacher->id,
+                ]);
+            }
+        }
+
+        $lessons = Timetable::with(['subject', 'teacher'])
+            ->where('class_id', $class->id)
+            ->get()
+            ->keyBy(fn (Timetable $lesson) => $lesson->day_id.'-'.$lesson->period_id);
+        $viewData = [
+            'class' => $class,
+            'days' => $days,
+            'periods' => $periods,
+            'lessons' => $lessons,
+            'academicYear' => null,
+            'schoolSettings' => null,
+        ];
+        $html = view('dashboard.classes.timetable-pdf', $viewData)->render();
+        $pdf = Pdf::loadHTML($html)->setPaper('a4', 'landscape');
+
+        $pdf->output();
+
+        $this->assertSame(1, $pdf->getDomPDF()->getCanvas()->get_page_count());
+        $this->assertStringContainsString('table-layout: fixed', $html);
+        $this->assertStringContainsString('page-break-inside: avoid', $html);
+        $this->assertStringContainsString('Литературное чтение и развитие речи', $html);
+        $this->assertStringContainsString('Константинопольская-Смирнова', $html);
+        $this->assertSame(6, substr_count($html, '<tr>') - 2); // Excludes document header and grid header rows.
+        $this->assertSame(30, substr_count($html, '<span class="subject">'));
     }
 
     public function test_pdf_download_route_uses_a_safe_transliterated_filename_not_the_raw_database_id(): void

@@ -49,6 +49,7 @@
                 ['label' => __('academic_calendar.navigation'), 'icon' => 'calendar_range', 'route' => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ? 'dashboard.academic-calendars.index' : null, 'active' => 'dashboard.academic-calendars.*'],
                 ['label' => __('classroom.navigation'), 'icon' => 'building_2', 'route' => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ? 'dashboard.classrooms.index' : null, 'active' => 'dashboard.classrooms.*'],
                 ['label' => 'Расписание', 'icon' => 'calendar_clock', 'route' => 'dashboard.classes.index', 'active' => 'dashboard.classes.*'],
+                ['label' => __('timetable.school_wide_navigation'), 'icon' => 'calendar_range', 'route' => auth()->user()?->hasAnyPermission(['view timetable', 'manage timetable']) ? 'dashboard.school-timetable.index' : null, 'active' => 'dashboard.school-timetable.*'],
                 ['label' => 'Посещаемость', 'icon' => 'clipboard_list', 'route' => 'dashboard.attendance.index', 'active' => 'dashboard.attendance.*'],
                 ['label' => 'Отчёт по классу', 'icon' => 'bar_chart_3', 'route' => 'dashboard.attendance.reports.class', 'active' => 'dashboard.attendance.reports.class', 'indent' => true],
                 ['label' => 'Отчёт по ученику', 'icon' => 'bar_chart_3', 'route' => 'dashboard.attendance.reports.student', 'active' => 'dashboard.attendance.reports.student', 'indent' => true],

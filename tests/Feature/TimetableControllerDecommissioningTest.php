@@ -30,8 +30,9 @@ use Tests\TestCase;
  * (docs/TIMETABLE_ARCHITECTURE_DECISIONS.md §6): the deprecated
  * TimetableController, its 9 dashboard.timetable.* routes, and its 4
  * Blade views (index/create/pdf/show — edit was already removed in
- * Batch 8) have been fully removed. No navigation ever linked to them
- * (confirmed at inspection time), so this is pure dead-surface removal.
+ * Batch 8) have been fully removed. The later school-wide read-only view
+ * deliberately uses dashboard.school-timetable.index and a different URL,
+ * so it does not restore any retired controller route or write surface.
  * The canonical timetable UI, ClassResource -> TimetableGrid, and the
  * shared CurriculumAwareTimetableConflictChecker engine it (and,
  * formerly, the legacy controller) resolves are untouched by this batch
@@ -76,6 +77,11 @@ class TimetableControllerDecommissioningTest extends TestCase
             ->filter();
 
         $this->assertFalse($names->contains(fn ($name) => str_starts_with($name, 'dashboard.timetable.')));
+        $this->assertTrue(Route::has('dashboard.school-timetable.index'));
+        $this->assertSame(
+            '/dashboard/school-timetable',
+            route('dashboard.school-timetable.index', absolute: false),
+        );
     }
 
     public function test_the_former_controller_class_no_longer_exists(): void

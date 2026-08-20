@@ -84,4 +84,17 @@ return [
    'loading' => 'Загрузка...',
 'smart_teachers_loaded' => 'Показаны преподаватели, связанные с выбранным предметом.',
 'no_teachers_for_subject' => 'Нет преподавателей, связанных с этим предметом.',
+
+    'school_wide_title' => 'Расписание школы',
+    'school_wide_navigation' => 'Расписание школы',
+    'filter_classes' => 'Классы',
+    'all_classes' => 'Все классы',
+    'apply_filter' => 'Применить',
+    'no_lessons_yet' => 'Уроки ещё не заданы',
+    'teacher_conflict_badge' => 'Конфликт преподавателя',
+    'class_conflict_badge' => 'Конфликт класса',
+    'duplicate_cell_badge' => 'Дублирующая запись',
+    'empty_slot' => 'Нет урока',
+    'no_active_classes' => 'Нет активных классов для отображения.',
+    'open_class_timetable' => 'Открыть расписание класса',
 ];

@@ -25,6 +25,7 @@ use App\Http\Controllers\Dashboard\FeeController;
 use App\Http\Controllers\Dashboard\FeePriceController;
 use App\Http\Controllers\Dashboard\ClassController;
 use App\Http\Controllers\Dashboard\ClassTimetableController;
+use App\Http\Controllers\Dashboard\SchoolTimetableController;
 use App\Http\Controllers\Dashboard\SubjectController;
 use App\Http\Controllers\Dashboard\TeacherController;
 use App\Http\Controllers\Dashboard\StageController;
@@ -189,6 +190,8 @@ Route::middleware(['auth', 'administrative'])
             ->name('classes.timetable.pdf.download');
         Route::get('classes/{class}/timetable/print', [ClassTimetableController::class, 'print'])
             ->name('classes.timetable.print');
+        Route::get('school-timetable', [SchoolTimetableController::class, 'index'])
+            ->name('school-timetable.index');
         Route::resource('subjects', SubjectController::class);
         Route::resource('academic-years', AcademicYearController::class)->except(['show']);
         Route::resource('academic-years.quarters', QuarterController::class)

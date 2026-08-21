@@ -75,6 +75,57 @@ class SchoolClassTest extends TestCase
         $response = $this->actingAs($user)->get(route('dashboard.classes.index'));
 
         $response->assertOk();
+        $response->assertSee(__('classes.empty_heading'));
+    }
+
+    public function test_index_renders_class_details_and_correct_timetable_link(): void
+    {
+        $user = $this->portalUser();
+        Permission::findOrCreate('view timetable', 'web');
+        $user->givePermissionTo('view timetable');
+        $grade = $this->makeGrade();
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'UAT-5A',
+            'name_ar' => 'UAT 5',
+            'name_ru' => 'UAT — 5 класс',
+            'capacity' => 20,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('dashboard.classes.index'))
+            ->assertOk()
+            ->assertSee('UAT — 5 класс')
+            ->assertSee('UAT-5A')
+            ->assertSee(__('classes.active'))
+            ->assertSee(route('dashboard.classes.timetable', $class), false);
+    }
+
+    public function test_index_keeps_management_actions_permission_gated(): void
+    {
+        $grade = $this->makeGrade();
+        $class = SchoolClass::create([
+            'grade_id' => $grade->id,
+            'code' => 'A',
+            'name_ar' => 'A',
+            'name_ru' => 'Класс A',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($this->portalUser())
+            ->get(route('dashboard.classes.index'))
+            ->assertOk()
+            ->assertDontSee(route('dashboard.classes.create'), false)
+            ->assertDontSee(route('dashboard.classes.edit', $class), false)
+            ->assertDontSee(route('dashboard.classes.destroy', $class), false);
+
+        $this->actingAs($this->authorizedUser())
+            ->get(route('dashboard.classes.index'))
+            ->assertOk()
+            ->assertSee(route('dashboard.classes.create'), false)
+            ->assertSee(route('dashboard.classes.edit', $class), false)
+            ->assertSee(route('dashboard.classes.destroy', $class), false);
     }
 
     public function test_unauthorized_user_cannot_open_create_page(): void

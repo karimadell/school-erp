@@ -4,9 +4,13 @@ return [
     'navigation_group' => 'Academic Process',
     'title' => 'Classes',
     'list' => 'Classes List',
+    'list_description' => 'Academic groups, grade levels, and timetable access.',
+    'total' => '{0} No classes|{1} :count class|[2,*] :count classes',
     'create' => 'Add Class',
     'edit' => 'Edit',
+    'edit_short' => 'Edit',
     'delete' => 'Delete',
+    'delete_short' => 'Delete',
 
     'id' => 'ID',
     'code' => 'Class Code',

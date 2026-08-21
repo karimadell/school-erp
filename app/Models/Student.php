@@ -13,6 +13,8 @@ class Student extends Model
     public const STATUS_UNDER_REVIEW = 'under_review';
     public const STATUS_REGISTRATION_COMPLETED = 'registration_completed';
 
+    public const REGISTRATION_STATUSES = ['draft', 'data_incomplete', 'documents_incomplete', 'ready_for_review', 'completed'];
+
     protected $fillable = [
         'name',
         'status',
@@ -33,11 +35,23 @@ class Student extends Model
         'address',
         'photo',
         'documents',
+        'birth_place',
+        'citizenship_code',
+        'residential_address',
+        'registration_address',
+        'snils',
+        'inn',
+        'registration_status',
+        'registration_submitted_at',
+        'registration_completed_at',
+        'registration_completed_by',
     ];
 
     protected $casts = [
         'birth_date' => 'date',
         'documents' => 'array',
+        'registration_submitted_at' => 'datetime',
+        'registration_completed_at' => 'datetime',
     ];
 
     protected static function booted(): void
@@ -51,7 +65,18 @@ class Student extends Model
 
             if (filled($student->last_name_ru) && filled($student->first_name_ru)) {
                 $student->name = $student->russianFullName();
+                $student->last_name ??= $student->last_name_ru;
+                $student->first_name ??= $student->first_name_ru;
+                $student->patronymic ??= $student->patronymic_ru;
             }
+
+            $student->residential_address ??= $student->address;
+            $student->registration_status ??= match ($student->status ?? self::STATUS_ACTIVE) {
+                self::STATUS_REGISTRATION_COMPLETED, self::STATUS_ACTIVE, 'suspended', 'graduated' => 'completed',
+                self::STATUS_DOCUMENTS_REQUIRED => 'documents_incomplete',
+                self::STATUS_UNDER_REVIEW => 'ready_for_review',
+                default => 'draft',
+            };
         });
     }
 
@@ -120,6 +145,60 @@ class Student extends Model
         return $this->hasMany(StudentFile::class);
     }
 
+    public function representatives()
+    {
+        return $this->hasMany(StudentRepresentative::class);
+    }
+
+    public function emergencyContacts()
+    {
+        return $this->hasMany(StudentEmergencyContact::class)->orderBy('priority');
+    }
+
+    public function educationalNeed()
+    {
+        return $this->hasOne(StudentEducationalNeed::class);
+    }
+
+    public function registrationCompletedBy()
+    {
+        return $this->belongsTo(User::class, 'registration_completed_by');
+    }
+
+    public function representativeData(string $relationship): ?array
+    {
+        $representative = $this->relationLoaded('representatives')
+            ? $this->representatives->firstWhere('relationship_type', $relationship)
+            : $this->representatives()->where('relationship_type', $relationship)->first();
+
+        if ($representative) {
+            return $representative->toArray();
+        }
+
+        $legacy = data_get($this->documents, $relationship);
+
+        return is_array($legacy) && collect($legacy)->filter(fn ($value) => filled($value))->isNotEmpty() ? $legacy : null;
+    }
+
+    public function emergencyContactData(): ?array
+    {
+        $contact = $this->relationLoaded('emergencyContacts')
+            ? $this->emergencyContacts->sortBy('priority')->first()
+            : $this->emergencyContacts()->first();
+
+        if ($contact) {
+            return $contact->toArray();
+        }
+
+        $legacy = data_get($this->documents, 'emergency');
+        if (is_array($legacy) && collect($legacy)->filter(fn ($value) => filled($value))->isNotEmpty()) {
+            return $legacy;
+        }
+        $legacyText = data_get($this->documents, 'emergency_contact');
+
+        return filled($legacyText) ? ['name' => $legacyText] : null;
+    }
+
     public function statusLabel(): string
     {
         return match ($this->status) {
@@ -169,14 +248,8 @@ class Student extends Model
 
     public function getProfileCompletionPercentageAttribute(): int
     {
-        $requiredParts = [
-            filled($this->last_name_ru) && filled($this->first_name_ru) || filled($this->name),
-            filled($this->phone), filled($this->birth_date), filled($this->gender),
-            filled($this->nationality), filled($this->address), filled($this->email), filled($this->documents),
-        ];
-        $completed = collect($requiredParts)->filter()->count();
-
-        return (int) round(($completed / count($requiredParts)) * 100);
+        return app(\App\Services\Students\StudentProfileCompletionService::class)
+            ->calculate($this)['student_data_percentage'];
     }
 
     public function getHasIncompleteProfileAttribute(): bool

@@ -26,7 +26,7 @@ class StudentProfileController extends Controller
             'enrollments.academicYear', 'enrollments.serviceSubscriptions.fee', 'enrollments.serviceSubscriptions.events.creator',
             'enrollments.serviceSubscriptions.invoiceItems.invoice',
             'invoices.academicYear', 'invoices.createdBy', 'invoices.payments.cashAccount',
-            'invoices.payments.creator', 'files.uploader',
+            'invoices.payments.creator', 'files.uploader', 'representatives', 'emergencyContacts', 'educationalNeed',
         ]);
 
         $completion = $this->completion->calculate($student);
@@ -47,13 +47,14 @@ class StudentProfileController extends Controller
 
     public function print(Student $student): View
     {
-        $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','currentEnrollment.enrollmentMode','files']);
+        $student->load(['currentEnrollment.academicYear', 'currentEnrollment.stage', 'currentEnrollment.grade', 'currentEnrollment.schoolClass', 'currentEnrollment.enrollmentMode', 'files', 'representatives', 'emergencyContacts']);
+
         return view('dashboard.students.print', [
-            'student'=>$student,
-            'enrollment'=>$student->currentEnrollment,
-            'completion'=>$this->completion->calculate($student),
-            'contacts'=>$student->documents ?? [],
-            'photoUrl'=>$this->photoUrl($student),
+            'student' => $student,
+            'enrollment' => $student->currentEnrollment,
+            'completion' => $this->completion->calculate($student),
+            'contacts' => $this->contacts($student),
+            'photoUrl' => $this->photoUrl($student),
         ]);
     }
 
@@ -71,14 +72,14 @@ class StudentProfileController extends Controller
         ];
 
         return [
-            'profile'=>[
-                'student'=>$student, 'photo_url'=>$this->photoUrl($student), 'current_enrollment'=>$student->currentEnrollment,
-                'contacts'=>$student->documents ?? [], 'completion'=>$completion, 'financial'=>$financial,
-                'subscriptions'=>$subscriptions, 'invoices'=>$invoices, 'payments'=>$payments,
-                'documents'=>[
-                    'active_count'=>$activeFiles->count(), 'archived_count'=>$archivedFiles->count(),
-                    'latest'=>$activeFiles->sortByDesc('created_at')->take(5)->values(),
-                    'expiry_warnings'=>$activeFiles->filter(fn ($file) => in_array($file->expiryStatus(), ['Просрочен','Скоро истекает'], true))->values(),
+            'profile' => [
+                'student' => $student, 'photo_url' => $this->photoUrl($student), 'current_enrollment' => $student->currentEnrollment,
+                'contacts' => $this->contacts($student), 'completion' => $completion, 'financial' => $financial,
+                'subscriptions' => $subscriptions, 'invoices' => $invoices, 'payments' => $payments,
+                'documents' => [
+                    'active_count' => $activeFiles->count(), 'archived_count' => $archivedFiles->count(),
+                    'latest' => $activeFiles->sortByDesc('created_at')->take(5)->values(),
+                    'expiry_warnings' => $activeFiles->filter(fn ($file) => in_array($file->expiryStatus(), ['Просрочен', 'Скоро истекает'], true))->values(),
                 ],
                 'timeline'=>$this->timeline($student, $invoices, $payments, $subscriptions),
             ],
@@ -116,4 +117,18 @@ class StudentProfileController extends Controller
     { return $records->reduce(fn (string $sum,$record) => bcadd($sum,(string)$record->{$field},2),'0.00'); }
     private function photoUrl(Student $student): ?string
     { $disk=Storage::disk(config('filesystems.uploads.public')); return $student->photo && $disk->exists($student->photo) ? $disk->url($student->photo) : null; }
+    private function contacts(Student $student): array
+    {
+        $contacts = $student->documents ?? [];
+        foreach (['father', 'mother'] as $relationship) {
+            if ($normalized = $student->representativeData($relationship)) {
+                $contacts[$relationship] = $normalized;
+            }
+        }
+        if ($emergency = $student->emergencyContactData()) {
+            $contacts['emergency'] = $emergency;
+        }
+
+        return $contacts;
+    }
 }

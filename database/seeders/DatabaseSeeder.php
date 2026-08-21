@@ -20,6 +20,7 @@ class DatabaseSeeder extends Seeder
             PeriodSeeder::class,
             DaySeeder::class,
             EnrollmentModeSeeder::class,
+            DocumentTypeSeeder::class,
 
         ]);
     }

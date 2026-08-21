@@ -31,12 +31,26 @@ class StudentFile extends Model
         'archived_at',
         'archived_by',
         'archive_reason',
+        'document_type_id',
+        'student_representative_id',
+        'enrollment_id',
+        'series',
+        'document_number',
+        'issued_by',
+        'subdivision_code',
+        'issuing_country_code',
+        'verification_status',
+        'verified_at',
+        'verified_by',
+        'metadata',
     ];
 
     protected $casts = [
         'issue_date' => 'date',
         'expiry_date' => 'date',
         'archived_at' => 'datetime',
+        'verified_at' => 'datetime',
+        'metadata' => 'array',
     ];
 
     public function student()
@@ -54,6 +68,26 @@ class StudentFile extends Model
         return $this->belongsTo(User::class, 'archived_by');
     }
 
+    public function documentType()
+    {
+        return $this->belongsTo(DocumentType::class);
+    }
+
+    public function representative()
+    {
+        return $this->belongsTo(StudentRepresentative::class, 'student_representative_id');
+    }
+
+    public function enrollment()
+    {
+        return $this->belongsTo(Enrollment::class);
+    }
+
+    public function verifier()
+    {
+        return $this->belongsTo(User::class, 'verified_by');
+    }
+
     public function scopeActive($query)
     {
         return $query->whereNull('archived_at');
@@ -61,7 +95,7 @@ class StudentFile extends Model
 
     public function typeLabel(): string
     {
-        return self::TYPES[$this->type] ?? 'Другой документ';
+        return $this->documentType?->localized_name ?? self::TYPES[$this->type] ?? __('student_registration.documents.other');
     }
 
     public function expiryStatus(): ?string

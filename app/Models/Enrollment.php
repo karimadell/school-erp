@@ -21,6 +21,12 @@ class Enrollment extends Model implements ResolvesAcademicYear
         'notes',
         'is_active',
         'registration_fee_charged_at',
+        'admission_context',
+        'previous_school_name',
+        'previous_school_country_code',
+        'previous_grade',
+        'previous_class',
+        'previous_education_notes',
     ];
 
     protected $casts = [
@@ -79,6 +85,11 @@ class Enrollment extends Model implements ResolvesAcademicYear
     public function invoices()
     {
         return $this->hasMany(Invoice::class);
+    }
+
+    public function studentFiles()
+    {
+        return $this->hasMany(StudentFile::class);
     }
 
     public function serviceSubscriptions()

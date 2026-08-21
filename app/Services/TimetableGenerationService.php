@@ -5,174 +5,274 @@ namespace App\Services;
 use App\Models\AcademicYear;
 use App\Models\Curriculum;
 use App\Models\SchoolClass;
-use App\Models\Teacher;
+use App\Models\TeacherAssignment;
 use App\Models\Timetable;
-use App\Support\TimetableSlot;
+use App\Support\TimetableGenerationTelemetry;
 use App\Support\WorkingDays;
+use Illuminate\Database\Connection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
 /**
- * Extracted verbatim from ClassResource\Pages\TimetableGrid::generateTimetable()
- * so the dashboard timetable surface (App\Http\Controllers\Dashboard\ClassTimetableController)
- * and the Filament grid share the one canonical generation algorithm instead of
- * each keeping its own copy. Behavior is unchanged — see
- * tests/Feature/TimetableGridGenerateTest.php, which exercises this indirectly
- * through TimetableGrid::generateTimetable() and must keep passing unmodified.
+ * Deterministic most-constrained-first timetable solver.
  *
- * Placement algorithm (Phase 5A): most-constrained-first backtracking, not a
- * single-pass greedy pool. A single pass can "starve" a tightly-booked
- * teacher out of their only remaining valid slot when a more flexible
- * subject happens to get tried first — a real UAT class with two subjects
- * whose teachers each had very little spare capacity elsewhere failed
- * unpredictably even though a complete schedule existed. Ordering subjects
- * by each requirement's current valid domain, and backtracking (undoing a
- * placement and trying the next slot) instead of accepting the first success
- * unconditionally, finds constrained schedules the greedy pass missed. Every
- * candidate slot is still validated through the exact same
- * CurriculumAwareTimetableConflictChecker rule chain as before — this
- * change is to search *order*, not to any conflict rule.
+ * All rule inputs are loaded before search. Recursive search is pure memory:
+ * no conflict SQL and no tentative Eloquent writes. A completed solution is
+ * bulk-persisted once; failure leaves the previous timetable unchanged.
  */
 class TimetableGenerationService
 {
-    /**
-     * Hard node budget for pathological inputs. Normal 5 × 6 timetables take
-     * one node per lesson when MRV finds a direct path; the constrained UAT
-     * regression remains far below this ceiling. The existing domain only
-     * has one public incomplete-result key, so exhaustion intentionally uses
-     * the same generation_incomplete response as an unsatisfiable search.
-     */
     private const MAX_BACKTRACK_STEPS = 100000;
 
-    public function __construct(
-        private readonly CurriculumAwareTimetableConflictChecker $conflictChecker,
-        private readonly WorkingDays $workingDays,
-    ) {}
+    private ?TimetableGenerationTelemetry $lastTelemetry = null;
+
+    public function __construct(private readonly WorkingDays $workingDays) {}
+
+    public function lastTelemetry(): ?TimetableGenerationTelemetry
+    {
+        return $this->lastTelemetry;
+    }
 
     /**
      * @param  Collection  $days  Day models
-     * @param  Collection  $periods  Period models
+     * @param  Collection  $periods  Legacy Period models
      * @return string|null translation key of the failure reason, or null on success
      */
     public function generate(int $classId, Collection $days, Collection $periods): ?string
     {
-        $activeYearId = AcademicYear::where('is_active', true)->value('id');
+        $startedAt = hrtime(true);
+        $connection = DB::connection();
+        $wasLogging = $connection->logging();
+        $queryOffset = $this->startQueryMeasurement($connection, $wasLogging);
+        $nodes = 0;
+        $backtracks = 0;
+        $succeeded = false;
 
-        if (! $activeYearId) {
-            return 'timetable.generation_no_active_year';
-        }
+        try {
+            $activeYearId = AcademicYear::where('is_active', true)->value('id');
 
-        $class = SchoolClass::find($classId);
+            if (! $activeYearId) {
+                return 'timetable.generation_no_active_year';
+            }
 
-        if (! $class || ! $class->is_active || ! $class->grade_id) {
-            return 'timetable.generation_inactive_class';
-        }
+            $class = SchoolClass::find($classId);
 
-        $workingDays = $this->workingDays->workingDays($days);
-        $periods = collect($periods);
+            if (! $class || ! $class->is_active || ! $class->grade_id) {
+                return 'timetable.generation_inactive_class';
+            }
 
-        $curricula = Curriculum::with('subject')
-            ->where('academic_year_id', $activeYearId)
-            ->where('grade_id', $class->grade_id)
-            ->where('is_active', true)
-            ->get();
+            $workingDays = $this->workingDays->workingDays($days)->values();
+            $periods = $this->applicablePeriods($periods);
 
-        if ($curricula->isEmpty()) {
-            return 'timetable.generation_no_curriculum';
-        }
-
-        if ($curricula->contains(fn (Curriculum $curriculum) => ! $curriculum->subject?->is_active)) {
-            return 'timetable.generation_inactive_subject';
-        }
-
-        $teachersBySubject = collect();
-
-        foreach ($curricula as $curriculum) {
-            $teachers = Teacher::where('is_active', true)
-                ->whereHas('assignments', function ($query) use ($activeYearId, $class, $curriculum) {
-                    $query->where('academic_year_id', $activeYearId)
-                        ->where('class_id', $class->id)
-                        ->where('subject_id', $curriculum->subject_id);
-                })
+            $curricula = Curriculum::with('subject')
+                ->where('academic_year_id', $activeYearId)
+                ->where('grade_id', $class->grade_id)
+                ->where('is_active', true)
                 ->get();
 
-            if ($teachers->isEmpty()) {
+            if ($curricula->isEmpty()) {
+                return 'timetable.generation_no_curriculum';
+            }
+
+            if ($curricula->contains(fn (Curriculum $curriculum) => ! $curriculum->subject?->is_active)) {
+                return 'timetable.generation_inactive_subject';
+            }
+
+            $assignments = TeacherAssignment::with('teacher')
+                ->where('academic_year_id', $activeYearId)
+                ->where('class_id', $class->id)
+                ->whereIn('subject_id', $curricula->pluck('subject_id'))
+                ->get()
+                ->filter(fn (TeacherAssignment $assignment) => $assignment->teacher?->is_active)
+                ->groupBy('subject_id');
+
+            if ($curricula->contains(fn (Curriculum $curriculum) => $assignments->get($curriculum->subject_id, collect())->isEmpty())) {
                 return 'timetable.generation_missing_teacher';
             }
 
-            $teachersBySubject->put($curriculum->subject_id, $teachers);
-        }
+            $requiredHours = (int) $curricula->sum('weekly_hours');
 
-        $requiredHours = (int) $curricula->sum('weekly_hours');
-        $availableSlots = $workingDays->count() * $periods->count();
+            if ($requiredHours > $workingDays->count() * $periods->count()) {
+                return 'timetable.generation_insufficient_slots';
+            }
 
-        if ($requiredHours > $availableSlots) {
-            return 'timetable.generation_insufficient_slots';
-        }
+            $requirements = $curricula->mapWithKeys(fn (Curriculum $curriculum) => [
+                $curriculum->subject_id => [
+                    'remaining' => (int) $curriculum->weekly_hours,
+                ],
+            ])->all();
 
-        $requirements = $curricula->mapWithKeys(fn (Curriculum $curriculum) => [
-            $curriculum->subject_id => [
-                'subject' => $curriculum->subject,
-                'remaining' => (int) $curriculum->weekly_hours,
-            ],
-        ])->all();
+            $teacherIds = $assignments->flatten()->pluck('teacher_id')->unique()->values();
 
-        try {
-            DB::transaction(function () use ($class, $workingDays, $periods, $teachersBySubject, $requirements) {
+            $failure = DB::transaction(function () use (
+                $class,
+                $workingDays,
+                $periods,
+                $assignments,
+                $requirements,
+                $teacherIds,
+                &$nodes,
+                &$backtracks,
+                &$succeeded,
+            ): ?string {
+                // Lock the occupancy snapshot for the short in-memory search and
+                // final replacement. The target class's old rows are intentionally
+                // excluded: generation replaces them only after solving succeeds.
+                $existing = Timetable::query()
+                    ->where('class_id', '!=', $class->id)
+                    ->whereIn('teacher_id', $teacherIds)
+                    ->lockForUpdate()
+                    ->get(['class_id', 'teacher_id', 'day_id', 'period_id']);
+
+                $occupiedTeacherSlots = [];
+                $occupiedClassSlots = [];
+
+                foreach ($existing as $lesson) {
+                    $occupiedTeacherSlots[$this->teacherSlotKey(
+                        $lesson->teacher_id,
+                        $lesson->day_id,
+                        $lesson->period_id,
+                    )] = true;
+                    $occupiedClassSlots[$this->classSlotKey(
+                        $lesson->class_id,
+                        $lesson->day_id,
+                        $lesson->period_id,
+                    )] = true;
+                }
+
+                $candidateDomains = $this->candidateDomains(
+                    $class->id,
+                    $requirements,
+                    $workingDays,
+                    $periods,
+                    $assignments,
+                    $occupiedClassSlots,
+                    $occupiedTeacherSlots,
+                );
+                $placements = [];
+                $occupiedTargetClassSlots = [];
+
+                if (! $this->placeRequirements(
+                    $requirements,
+                    $candidateDomains,
+                    $occupiedTargetClassSlots,
+                    $occupiedTeacherSlots,
+                    $placements,
+                    $nodes,
+                    $backtracks,
+                )) {
+                    return 'timetable.generation_incomplete';
+                }
+
+                $now = now();
+                $rows = array_map(fn (array $placement) => [
+                    'class_id' => $class->id,
+                    'day_id' => $placement['day_id'],
+                    'period_id' => $placement['period_id'],
+                    'subject_id' => $placement['subject_id'],
+                    'teacher_id' => $placement['teacher_id'],
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ], $placements);
+
                 Timetable::where('class_id', $class->id)->delete();
+                DB::table('timetables')->insert($rows);
+                $succeeded = true;
 
-                $candidateDomains = [];
-                foreach ($requirements as $subjectId => $requirement) {
-                    $candidateDomains[$subjectId] = $this->validCandidates(
-                        $class->id,
-                        (int) $subjectId,
-                        $workingDays,
-                        $periods,
-                        $teachersBySubject->get($subjectId),
-                    );
-                }
-
-                $steps = 0;
-
-                if (! $this->placeRequirements($class->id, $requirements, $candidateDomains, [], [], $steps)) {
-                    throw new \RuntimeException('Unable to place every required curriculum lesson.');
-                }
+                return null;
             });
+
+            return $failure;
         } catch (Throwable) {
             return 'timetable.generation_incomplete';
+        } finally {
+            $queryMetrics = $this->finishQueryMeasurement($connection, $wasLogging, $queryOffset);
+            $this->lastTelemetry = new TimetableGenerationTelemetry(
+                nodes: $nodes,
+                backtracks: $backtracks,
+                elapsedSeconds: (hrtime(true) - $startedAt) / 1_000_000_000,
+                queryCount: $queryMetrics['count'],
+                queryTimeMs: $queryMetrics['time_ms'],
+                succeeded: $succeeded,
+            );
         }
-
-        return null;
     }
 
     /**
-     * Dynamic MRV backtracking. Rebuild every remaining subject's valid
-     * domain after each placement, reject a subject that no longer has enough
-     * distinct class slots, and choose the subject with the smallest slack
-     * (valid slots minus required lessons). Candidate slots needed by fewer
-     * other subjects are tried first so scarce shared slots are preserved.
-     *
-     * @param  array<int, array{subject: mixed, remaining: int}>  $requirements
-     * @param  array<int, array<int, array{day_id: int, period_id: int, teacher_id: int, slot_key: string, teacher_slot_key: string, day_order: int, period_order: int}>>  $candidateDomains
-     * @param  array<string, true>  $occupiedClassSlots
-     * @param  array<string, true>  $occupiedTeacherSlots
+     * The legacy timetable UI is a six-period workflow. Bell schedules belong
+     * to the versioned timetable system and do not map their period IDs to the
+     * legacy Period model, so the stable shared domain key is period number.
      */
-    private function placeRequirements(
+    private function applicablePeriods(Collection $periods): Collection
+    {
+        return $periods
+            ->filter(fn ($period) => (int) $period->number >= 1 && (int) $period->number <= 6)
+            ->sortBy('number')
+            ->values();
+    }
+
+    private function candidateDomains(
         int $classId,
         array $requirements,
-        array $candidateDomains,
+        Collection $workingDays,
+        Collection $periods,
+        Collection $assignments,
         array $occupiedClassSlots,
         array $occupiedTeacherSlots,
-        int &$steps,
-    ): bool {
-        $remainingTotal = array_sum(array_column($requirements, 'remaining'));
+    ): array {
+        $domains = [];
 
-        if ($remainingTotal === 0) {
+        foreach ($requirements as $subjectId => $_requirement) {
+            $domains[$subjectId] = [];
+
+            foreach ($workingDays as $dayOrder => $day) {
+                foreach ($periods as $periodOrder => $period) {
+                    $classSlotKey = $this->classSlotKey($classId, $day->id, $period->id);
+
+                    if (isset($occupiedClassSlots[$classSlotKey])) {
+                        continue;
+                    }
+
+                    foreach ($assignments->get($subjectId)->sortBy('teacher_id') as $assignment) {
+                        $teacherSlotKey = $this->teacherSlotKey($assignment->teacher_id, $day->id, $period->id);
+
+                        if (isset($occupiedTeacherSlots[$teacherSlotKey])) {
+                            continue;
+                        }
+
+                        $domains[$subjectId][] = [
+                            'day_id' => $day->id,
+                            'period_id' => $period->id,
+                            'teacher_id' => $assignment->teacher_id,
+                            'subject_id' => (int) $subjectId,
+                            'slot_key' => $classSlotKey,
+                            'teacher_slot_key' => $teacherSlotKey,
+                            'day_order' => $dayOrder,
+                            'period_order' => $periodOrder,
+                        ];
+                    }
+                }
+            }
+        }
+
+        return $domains;
+    }
+
+    private function placeRequirements(
+        array &$requirements,
+        array $candidateDomains,
+        array &$occupiedTargetClassSlots,
+        array &$occupiedTeacherSlots,
+        array &$placements,
+        int &$nodes,
+        int &$backtracks,
+    ): bool {
+        if (array_sum(array_column($requirements, 'remaining')) === 0) {
             return true;
         }
 
-        if (++$steps > self::MAX_BACKTRACK_STEPS) {
+        if (++$nodes > self::MAX_BACKTRACK_STEPS) {
             return false;
         }
 
@@ -186,7 +286,7 @@ class TimetableGenerationService
 
             $candidates = array_values(array_filter(
                 $candidateDomains[$subjectId],
-                fn (array $candidate): bool => ! isset($occupiedClassSlots[$candidate['slot_key']])
+                fn (array $candidate) => ! isset($occupiedTargetClassSlots[$candidate['slot_key']])
                     && ! isset($occupiedTeacherSlots[$candidate['teacher_slot_key']]),
             ));
             $uniqueSlotCount = count(array_unique(array_column($candidates, 'slot_key')));
@@ -206,7 +306,7 @@ class TimetableGenerationService
             ];
         }
 
-        if (count($allCandidateSlots) < $remainingTotal) {
+        if (count($allCandidateSlots) < array_sum(array_column($requirements, 'remaining'))) {
             return false;
         }
 
@@ -236,92 +336,66 @@ class TimetableGenerationService
         );
 
         foreach ($candidates as $candidate) {
-            $slot = new TimetableSlot(
-                classId: $classId,
-                dayId: $candidate['day_id'],
-                periodId: $candidate['period_id'],
-                teacherId: $candidate['teacher_id'],
-                subjectId: $subjectId,
-            );
-
-            if ($this->conflictChecker->check($slot)->hasConflict()) {
-                continue;
-            }
-
-            $lesson = Timetable::create([
-                'class_id' => $classId,
-                'day_id' => $candidate['day_id'],
-                'period_id' => $candidate['period_id'],
-                'subject_id' => $subjectId,
-                'teacher_id' => $candidate['teacher_id'],
-            ]);
-
             $requirements[$subjectId]['remaining']--;
-            $occupiedClassSlots[$candidate['slot_key']] = true;
+            $occupiedTargetClassSlots[$candidate['slot_key']] = true;
             $occupiedTeacherSlots[$candidate['teacher_slot_key']] = true;
+            $placements[] = $candidate;
 
             if ($this->placeRequirements(
-                $classId,
                 $requirements,
                 $candidateDomains,
-                $occupiedClassSlots,
+                $occupiedTargetClassSlots,
                 $occupiedTeacherSlots,
-                $steps,
+                $placements,
+                $nodes,
+                $backtracks,
             )) {
                 return true;
             }
 
-            $lesson->delete();
+            array_pop($placements);
             $requirements[$subjectId]['remaining']++;
-            unset($occupiedClassSlots[$candidate['slot_key']], $occupiedTeacherSlots[$candidate['teacher_slot_key']]);
+            unset($occupiedTargetClassSlots[$candidate['slot_key']], $occupiedTeacherSlots[$candidate['teacher_slot_key']]);
+            $backtracks++;
         }
 
         return false;
     }
 
-    /**
-     * Return deterministic, conflict-checked (day, period, teacher) choices.
-     * The canonical checker remains the source of truth for every rule.
-     *
-     * @return array<int, array{day_id: int, period_id: int, teacher_id: int, slot_key: string, teacher_slot_key: string, day_order: int, period_order: int}>
-     */
-    private function validCandidates(
-        int $classId,
-        int $subjectId,
-        Collection $workingDays,
-        Collection $periods,
-        Collection $teachers,
-    ): array {
-        $candidates = [];
+    private function teacherSlotKey(int $teacherId, int $dayId, int $periodId): string
+    {
+        return $teacherId.'-'.$dayId.'-'.$periodId;
+    }
 
-        foreach ($workingDays->values() as $dayOrder => $day) {
-            foreach ($periods->values() as $periodOrder => $period) {
-                foreach ($teachers->sortBy('id') as $teacher) {
-                    $slot = new TimetableSlot(
-                        classId: $classId,
-                        dayId: $day->id,
-                        periodId: $period->id,
-                        teacherId: $teacher->id,
-                        subjectId: $subjectId,
-                    );
+    private function classSlotKey(int $classId, int $dayId, int $periodId): string
+    {
+        return $classId.'-'.$dayId.'-'.$periodId;
+    }
 
-                    if ($this->conflictChecker->check($slot)->hasConflict()) {
-                        continue;
-                    }
-
-                    $candidates[] = [
-                        'day_id' => $day->id,
-                        'period_id' => $period->id,
-                        'teacher_id' => $teacher->id,
-                        'slot_key' => $day->id.'-'.$period->id,
-                        'teacher_slot_key' => $teacher->id.'-'.$day->id.'-'.$period->id,
-                        'day_order' => $dayOrder,
-                        'period_order' => $periodOrder,
-                    ];
-                }
-            }
+    private function startQueryMeasurement(Connection $connection, bool $wasLogging): int
+    {
+        if (! $wasLogging) {
+            $connection->flushQueryLog();
+            $connection->enableQueryLog();
         }
 
-        return $candidates;
+        return count($connection->getQueryLog());
+    }
+
+    /** @return array{count: int, time_ms: float} */
+    private function finishQueryMeasurement(Connection $connection, bool $wasLogging, int $offset): array
+    {
+        $queries = array_slice($connection->getQueryLog(), $offset);
+        $metrics = [
+            'count' => count($queries),
+            'time_ms' => array_sum(array_column($queries, 'time')),
+        ];
+
+        if (! $wasLogging) {
+            $connection->disableQueryLog();
+            $connection->flushQueryLog();
+        }
+
+        return $metrics;
     }
 }

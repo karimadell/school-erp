@@ -15,20 +15,16 @@ use App\Models\TeacherAssignment;
 use App\Models\Timetable;
 use App\Services\TimetableGenerationService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
  * UAT hardening (item 11): investigated a Cloudflare 504 on
  * POST /dashboard/classes/{class}/timetable/generate. TimetableGenerationService::generate()
- * was read end-to-end and confirmed to already be bounded — every loop is
- * capped by small collections (working days, periods, curriculum subjects,
- * assigned teachers per subject), and the whole operation runs inside one
- * DB::transaction(). These tests turn that investigation into permanent
- * regression coverage instead of the throwaway scripts used to verify it,
- * at both a realistic scale and a deliberately larger one, plus the
- * unsatisfiable-schedule termination path. No change was made to the
- * generation algorithm itself — the 504 is not reproducible from the
- * algorithm's own runtime.
+ * performed thousands of SQL conflict checks and tentative writes from the
+ * recursive search. These tests keep search in memory, enforce a bounded
+ * initial-load/final-write query budget, and cover realistic, stress-scale,
+ * and unsatisfiable schedules.
  */
 class TimetableGenerationPerformanceTest extends TestCase
 {
@@ -37,21 +33,21 @@ class TimetableGenerationPerformanceTest extends TestCase
     protected function makeYear(): AcademicYear
     {
         return AcademicYear::create([
-            'name' => 'Year ' . uniqid(), 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+            'name' => 'Year '.uniqid(), 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
     }
 
     protected function makeGrade(): Grade
     {
-        $stage = Stage::create(['name' => 'Primary ' . uniqid()]);
+        $stage = Stage::create(['name' => 'Primary '.uniqid()]);
 
-        return Grade::create(['name' => 'Grade ' . uniqid(), 'stage_id' => $stage->id]);
+        return Grade::create(['name' => 'Grade '.uniqid(), 'stage_id' => $stage->id]);
     }
 
     protected function makeClass(Grade $grade): SchoolClass
     {
         return SchoolClass::create([
-            'grade_id' => $grade->id, 'code' => 'C-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true,
+            'grade_id' => $grade->id, 'code' => 'C-'.uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true,
         ]);
     }
 
@@ -86,12 +82,12 @@ class TimetableGenerationPerformanceTest extends TestCase
         $periods = $this->makePeriods(7);
 
         foreach (range(1, 8) as $i) {
-            $subject = Subject::create(['code' => "S{$i}-" . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
-            $teacher = Teacher::create(['first_name' => 'T', 'last_name' => "T{$i}-" . uniqid(), 'is_active' => true]);
+            $subject = Subject::create(['code' => "S{$i}-".uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+            $teacher = Teacher::create(['first_name' => 'T', 'last_name' => "T{$i}-".uniqid(), 'is_active' => true]);
 
             Curriculum::create([
                 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
-                'weekly_hours' => 4, 'type' => Curriculum::TYPE_MANDATORY,
+                'weekly_hours' => 3, 'type' => Curriculum::TYPE_MANDATORY,
             ]);
             TeacherAssignment::create([
                 'teacher_id' => $teacher->id, 'class_id' => $class->id,
@@ -100,12 +96,59 @@ class TimetableGenerationPerformanceTest extends TestCase
         }
 
         $start = microtime(true);
-        $failureKey = app(TimetableGenerationService::class)->generate($class->id, $days, $periods);
+        $writes = [];
+        DB::listen(function ($query) use (&$writes): void {
+            if (preg_match('/^(insert|update|delete)/i', ltrim($query->sql))) {
+                $writes[] = $query->sql;
+            }
+        });
+        $service = app(TimetableGenerationService::class);
+        $failureKey = $service->generate($class->id, $days, $periods);
         $elapsed = microtime(true) - $start;
+        $telemetry = $service->lastTelemetry();
 
         $this->assertNull($failureKey);
-        $this->assertSame(32, Timetable::where('class_id', $class->id)->count());
+        $this->assertSame(24, Timetable::where('class_id', $class->id)->count());
         $this->assertLessThan(5.0, $elapsed, 'Realistic-scale generation must not approach request-timeout territory.');
+        $this->assertNotNull($telemetry);
+        $this->assertTrue($telemetry->succeeded);
+        $this->assertLessThan(30, $telemetry->queryCount, 'Search query count must stay independent of solver nodes.');
+        $this->assertGreaterThanOrEqual(24, $telemetry->nodes);
+        $this->assertCount(2, $writes, 'Only the final class delete and one bulk insert may write during successful generation.');
+        $this->assertStringStartsWith('delete', strtolower(ltrim($writes[0])));
+        $this->assertStringStartsWith('insert', strtolower(ltrim($writes[1])));
+    }
+
+    public function test_legacy_workflow_uses_periods_one_through_six_and_never_period_seven(): void
+    {
+        $year = $this->makeYear();
+        $grade = $this->makeGrade();
+        $class = $this->makeClass($grade);
+        $days = $this->makeDays();
+        $periods = $this->makePeriods(7);
+        $subject = Subject::create(['code' => 'S-'.uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+        $teacher = Teacher::create(['first_name' => 'T', 'last_name' => 'T-'.uniqid(), 'is_active' => true]);
+
+        Curriculum::create([
+            'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
+            'weekly_hours' => 30, 'type' => Curriculum::TYPE_MANDATORY,
+        ]);
+        TeacherAssignment::create([
+            'teacher_id' => $teacher->id, 'class_id' => $class->id,
+            'subject_id' => $subject->id, 'academic_year_id' => $year->id,
+        ]);
+
+        $failureKey = app(TimetableGenerationService::class)->generate($class->id, $days, $periods);
+
+        $this->assertNull($failureKey);
+        $this->assertSame(30, Timetable::where('class_id', $class->id)->count());
+        $this->assertSame(
+            [1, 2, 3, 4, 5, 6],
+            Timetable::where('class_id', $class->id)
+                ->join('periods', 'periods.id', '=', 'timetables.period_id')
+                ->distinct()->orderBy('periods.number')->pluck('periods.number')->all(),
+        );
+        $this->assertSame(0, Timetable::where('class_id', $class->id)->where('period_id', $periods->last()->id)->count());
     }
 
     /**
@@ -122,7 +165,7 @@ class TimetableGenerationPerformanceTest extends TestCase
         $periods = $this->makePeriods(7);
 
         foreach (range(1, 20) as $i) {
-            $subject = Subject::create(['code' => "S{$i}-" . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+            $subject = Subject::create(['code' => "S{$i}-".uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
 
             Curriculum::create([
                 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,
@@ -130,7 +173,7 @@ class TimetableGenerationPerformanceTest extends TestCase
             ]);
 
             foreach (range(1, 3) as $t) {
-                $teacher = Teacher::create(['first_name' => 'T', 'last_name' => "T{$i}-{$t}-" . uniqid(), 'is_active' => true]);
+                $teacher = Teacher::create(['first_name' => 'T', 'last_name' => "T{$i}-{$t}-".uniqid(), 'is_active' => true]);
                 TeacherAssignment::create([
                     'teacher_id' => $teacher->id, 'class_id' => $class->id,
                     'subject_id' => $subject->id, 'academic_year_id' => $year->id,
@@ -160,8 +203,8 @@ class TimetableGenerationPerformanceTest extends TestCase
         $days = $this->makeDays();
         $periods = $this->makePeriods(1); // 5 working slots/week available
 
-        $subject = Subject::create(['code' => 'S-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
-        $teacher = Teacher::create(['first_name' => 'T', 'last_name' => 'T-' . uniqid(), 'is_active' => true]);
+        $subject = Subject::create(['code' => 'S-'.uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+        $teacher = Teacher::create(['first_name' => 'T', 'last_name' => 'T-'.uniqid(), 'is_active' => true]);
 
         // 30 weekly hours can never fit into 5 available working-day slots.
         Curriculum::create([
@@ -194,8 +237,8 @@ class TimetableGenerationPerformanceTest extends TestCase
         $days = $this->makeDays();
         $periods = $this->makePeriods(1);
 
-        $subject = Subject::create(['code' => 'S-' . uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
-        $teacher = Teacher::create(['first_name' => 'T', 'last_name' => 'T-' . uniqid(), 'is_active' => true]);
+        $subject = Subject::create(['code' => 'S-'.uniqid(), 'name_ar' => 'a', 'name_ru' => 'a', 'is_active' => true]);
+        $teacher = Teacher::create(['first_name' => 'T', 'last_name' => 'T-'.uniqid(), 'is_active' => true]);
 
         Curriculum::create([
             'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'subject_id' => $subject->id,

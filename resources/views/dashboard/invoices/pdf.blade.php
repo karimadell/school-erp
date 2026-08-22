@@ -211,42 +211,47 @@
     </thead>
 
     <tbody>
-        @forelse($invoice->fees as $fee)
+        @forelse($invoice->items as $item)
             @php
                 $details = [];
+                $metadata = collect($item->metadata ?? []);
 
-                if (!empty($fee->pivot->item)) {
-                    $details[] = 'Тип: ' . ($itemLabels[$fee->pivot->item] ?? $fee->pivot->item);
+                if ($metadata->get('grade_group')) {
+                    $details[] = 'Класс: '.$metadata->get('grade_group');
                 }
 
-                if (!empty($fee->pivot->size)) {
-                    $details[] = 'Размер: ' . $fee->pivot->size;
+                if ($metadata->get('item')) {
+                    $details[] = 'Тип: '.($itemLabels[$metadata->get('item')] ?? $metadata->get('item'));
                 }
 
-                if (!empty($fee->payment_period)) {
-                    $details[] = 'Период: ' . ($periodLabels[$fee->payment_period] ?? $fee->payment_period);
+                if ($metadata->get('size')) {
+                    $details[] = 'Размер: '.$metadata->get('size');
                 }
 
-                if (!empty($fee->pivot->option_type)) {
-                    $details[] = 'Опция: ' . ($optionTypeLabels[$fee->pivot->option_type] ?? $fee->pivot->option_type);
+                if ($metadata->get('payment_period')) {
+                    $details[] = 'Период: '.($periodLabels[$metadata->get('payment_period')] ?? $metadata->get('payment_period'));
                 }
 
-                if (!empty($fee->pivot->option_value)) {
-                    $parts = explode(' / ', $fee->pivot->option_value);
+                if ($metadata->get('option_type')) {
+                    $details[] = 'Опция: '.($optionTypeLabels[$metadata->get('option_type')] ?? $metadata->get('option_type'));
+                }
+
+                if ($metadata->get('option_value')) {
+                    $parts = explode(' / ', $metadata->get('option_value'));
 
                     foreach ($parts as $part) {
                         $details[] = 'Детали: ' . ($optionValueLabels[$part] ?? $part);
                     }
                 }
 
-                $categoryText = $categoryLabels[$fee->category] ?? $fee->category ?? '—';
+                $categoryText = $categoryLabels[$item->fee?->category] ?? $item->fee?->category ?? '—';
             @endphp
 
             <tr>
                 <td class="center">{{ $loop->iteration }}</td>
 
                 <td>
-                    <strong>{{ $fee->name_ru ?? $fee->name ?? '—' }}</strong>
+                    <strong>{{ $item->description ?: $item->fee?->name_ru ?: '—' }}</strong>
                 </td>
 
                 <td>{{ $categoryText }}</td>
@@ -263,7 +268,7 @@
                     @endif
                 </td>
 
-                <td class="right">{{ number_format($fee->pivot->amount ?? 0, 2) }}</td>
+                <td class="right">{{ number_format($item->amount ?? 0, 2) }} EGP</td>
             </tr>
         @empty
             <tr>

@@ -498,6 +498,24 @@
 
     </table>
 
+    <div class="section-title">Назначение платежа</div>
+    <table class="items">
+        <thead><tr><th class="num">#</th><th class="service">Услуга</th><th class="details">Детали</th><th class="amount">Сумма</th></tr></thead>
+        <tbody>
+            @forelse($invoice->items as $item)
+                @php($details = collect($item->metadata ?? [])->except(['pricing_date', 'tariff_valid_from', 'tariff_valid_to', 'grade_id', 'academic_year_id', 'currency', 'enrollment_mode_id', 'fee_price_id'])->filter())
+                <tr>
+                    <td class="num">{{ $loop->iteration }}</td>
+                    <td class="service"><span class="service-name">{{ $item->description ?: $item->fee?->name_ru ?: '—' }}</span></td>
+                    <td class="details">{{ $details->implode(' · ') ?: '—' }}</td>
+                    <td class="amount">{{ number_format($item->amount ?? 0, 2) }} EGP</td>
+                </tr>
+            @empty
+                <tr><td colspan="4">Нет данных</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+
     <table class="summary">
         <tr><td>Сумма услуг:</td><td>{{ number_format($invoice->subtotal_amount ?? 0, 2) }} EGP</td></tr>
         <tr><td>Скидка:</td><td>{{ number_format($invoice->discount_amount ?? 0, 2) }} EGP</td></tr>

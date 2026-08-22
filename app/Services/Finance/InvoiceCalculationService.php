@@ -80,14 +80,15 @@ class InvoiceCalculationService
                 'amount' => $amount,
                 'unit_price' => $unitPrice,
                 'quantity' => $quantity,
-                'grade_group' => $item['grade_group'] ?? null,
-                'payment_period' => $item['payment_period'] ?? null,
-                'size' => $item['size'] ?? null,
-                'item' => $item['item'] ?? null,
-                'option_type' => $item['option_type'] ?? null,
-                'option_value' => $item['option_value'] ?? null,
+                'grade_group' => $resolvedPrice['metadata']['grade_group'] ?? null,
+                'payment_period' => $resolvedPrice['metadata']['payment_period'] ?? null,
+                'size' => $resolvedPrice['metadata']['size'] ?? null,
+                'item' => $resolvedPrice['metadata']['item'] ?? null,
+                'option_type' => $resolvedPrice['metadata']['option_type'] ?? null,
+                'option_value' => $resolvedPrice['metadata']['option_value'] ?? null,
                 'tariff_valid_from' => $resolvedPrice['valid_from'],
                 'tariff_valid_to' => $resolvedPrice['valid_to'],
+                'metadata' => $resolvedPrice['metadata'],
             ];
         }
 
@@ -127,9 +128,37 @@ class InvoiceCalculationService
     }
 
     /** @param array<string, mixed> $selection */
-    /** @return array{amount:string, valid_from:?string, valid_to:?string} */
+    /** @return array{amount:string, valid_from:?string, valid_to:?string, metadata:array<string, mixed>} */
     private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId): array
     {
+        if (filled($selection['fee_price_id'] ?? null)) {
+            $price = FeePrice::query()->lockForUpdate()->find((int) $selection['fee_price_id']);
+            $valid = $price
+                && $price->fee_id === $fee->id
+                && $price->is_active
+                && $price->currency === self::CURRENCY
+                && (! $academicYearId || $price->academic_year_id === $academicYearId)
+                && $price->start_date?->toDateString() <= $date
+                && (! $price->end_date || $price->end_date->toDateString() >= $date);
+
+            foreach (['grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'] as $field) {
+                if ($valid && filled($price->{$field}) && (string) ($selection[$field] ?? '') !== (string) $price->{$field}) {
+                    $valid = false;
+                }
+            }
+
+            if (! $valid) {
+                throw ValidationException::withMessages(['fees' => "Выбранный тариф не принадлежит услуге «{$fee->name_ru}» или недействителен."]);
+            }
+
+            return [
+                'amount' => $this->money($price->getRawOriginal('amount')),
+                'valid_from' => $price->start_date?->toDateString(),
+                'valid_to' => $price->end_date?->toDateString(),
+                'metadata' => $this->priceMetadata($price, $date),
+            ];
+        }
+
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
             ->where('is_active', true)
@@ -182,7 +211,28 @@ class InvoiceCalculationService
             'amount' => $this->money($price?->getRawOriginal('amount') ?? $fee->getRawOriginal('amount') ?? $fee->getRawOriginal('base_price') ?? '0'),
             'valid_from' => $price?->start_date?->toDateString(),
             'valid_to' => $price?->end_date?->toDateString(),
+            'metadata' => $price ? $this->priceMetadata($price, $date) : ['pricing_date' => $date],
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function priceMetadata(FeePrice $price, string $pricingDate): array
+    {
+        return collect([
+            'fee_price_id' => $price->id,
+            'academic_year_id' => $price->academic_year_id,
+            'currency' => $price->currency,
+            'pricing_date' => $pricingDate,
+            'tariff_valid_from' => $price->start_date?->toDateString(),
+            'tariff_valid_to' => $price->end_date?->toDateString(),
+            'grade_id' => $price->grade_id,
+            'grade_group' => $price->grade_group,
+            'payment_period' => $price->payment_period,
+            'size' => $price->size,
+            'item' => $price->item,
+            'option_type' => $price->option_type,
+            'option_value' => $price->option_value,
+        ])->reject(fn ($value) => $value === null || $value === '')->all();
     }
 
     private function gradeGroupFor(mixed $gradeId): ?string

@@ -92,7 +92,7 @@ class InvoiceController extends Controller
                 discountType: $data['discount_type'] ?? null,
                 discountValue: $data['discount_value'] ?? null,
                 initialPaymentAmount: $data['initial_payment_amount'] ?? '0',
-                pricingDate: now()->toDateString(),
+                pricingDate: $data['pricing_date'],
                 academicYearId: $academicYear->id,
             );
 
@@ -129,7 +129,12 @@ class InvoiceController extends Controller
                     'invoice_id' => $invoice->id,
                     'fee_id' => $line['fee_id'],
                     'description' => $line['description'],
+                    'unit_price' => $line['unit_price'],
+                    'quantity' => $line['quantity'],
                     'amount' => $line['amount'],
+                    'paid_amount' => '0.00',
+                    'remaining_amount' => $line['amount'],
+                    'metadata' => $line['metadata'],
                     'is_non_refundable' => Fee::findOrFail($line['fee_id'])->is_non_refundable,
                 ]);
 
@@ -232,7 +237,7 @@ class InvoiceController extends Controller
     {
         $invoice->load([
             'student.grade',
-            'items',
+            'items.fee',
             'fees',
             'cashAccount',
             'payments.cashAccount',
@@ -245,7 +250,7 @@ class InvoiceController extends Controller
     {
         $invoice->load([
             'student.grade',
-            'items',
+            'items.fee',
             'fees',
             'cashAccount',
             'payments.cashAccount',

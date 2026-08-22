@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\AcademicYear;
 use App\Models\Enrollment;
+use App\Models\Fee;
 use App\Models\FeePrice;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -21,6 +22,7 @@ class StoreInvoiceRequest extends FormRequest
         $items = collect($this->input('fees', []))->map(function ($feeId) {
             return [
                 'fee_id' => (int) $feeId,
+                'fee_price_id' => $this->input("fee_price_id.{$feeId}"),
                 'grade_group' => $this->input("grade_group.{$feeId}"),
                 'payment_period' => $this->input("payment_period.{$feeId}"),
                 'first_last_month' => $this->input("first_last_month.{$feeId}") === '1',
@@ -51,6 +53,7 @@ class StoreInvoiceRequest extends FormRequest
             'fees.*' => ['required', 'integer', 'distinct', 'exists:fees,id'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.fee_id' => ['required', 'integer'],
+            'items.*.fee_price_id' => ['nullable', 'integer', 'exists:fee_prices,id'],
             'items.*.grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
             'items.*.payment_period' => ['nullable', 'string', 'max:50'],
             'items.*.first_last_month' => ['boolean'],
@@ -91,6 +94,7 @@ class StoreInvoiceRequest extends FormRequest
 
             if (! $year?->is_active) {
                 $validator->errors()->add('academic_year_id', 'Счёт можно создать только для активного учебного года.');
+
                 return;
             }
 
@@ -109,6 +113,33 @@ class StoreInvoiceRequest extends FormRequest
 
             if (! $hasEnrollment) {
                 $validator->errors()->add('student_id', 'Ученик не имеет активного зачисления на выбранный учебный год.');
+            }
+
+            $fees = Fee::query()->whereIn('id', collect($this->input('items'))->pluck('fee_id'))->get()->keyBy('id');
+            foreach ($this->input('items') as $index => $item) {
+                $fee = $fees->get((int) $item['fee_id']);
+                if (! $fee?->is_active) {
+                    $validator->errors()->add("fees.{$index}", 'Выбранная услуга недоступна.');
+
+                    continue;
+                }
+
+                $allowed = match ($fee->category) {
+                    Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
+                    Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL => ['grade_group', 'payment_period', 'first_last_month'],
+                    Fee::CATEGORY_TRANSPORT, Fee::CATEGORY_FOOD => ['option_type', 'option_value'],
+                    Fee::CATEGORY_UNIFORM => ['size', 'item', 'option_type', 'option_value'],
+                    default => [],
+                };
+
+                foreach (['grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'] as $field) {
+                    if (filled($item[$field] ?? null) && ! in_array($field, $allowed, true)) {
+                        $validator->errors()->add("items.{$index}.{$field}", "Параметр не применяется к услуге «{$fee->name_ru}».");
+                    }
+                }
+                if (($item['first_last_month'] ?? false) && ! in_array('first_last_month', $allowed, true)) {
+                    $validator->errors()->add("items.{$index}.first_last_month", "Параметр не применяется к услуге «{$fee->name_ru}».");
+                }
             }
 
             if (bccomp((string) ($this->input('initial_payment_amount') ?? '0'), '0', 2) > 0) {
@@ -138,6 +169,7 @@ class StoreInvoiceRequest extends FormRequest
             'fees.min' => 'Выберите хотя бы одну услугу.',
             'fees.*.distinct' => 'Одну услугу нельзя добавлять в счёт несколько раз.',
             'fees.*.exists' => 'Одна из выбранных услуг не найдена.',
+            'items.*.fee_price_id.exists' => 'Выбранный тариф не найден.',
             'discount_type.in' => 'Выбран недопустимый тип скидки.',
             'discount_value.decimal' => 'Скидка должна содержать не более двух знаков после запятой.',
             'discount_value.min' => 'Скидка не может быть отрицательной.',

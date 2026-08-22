@@ -69,9 +69,12 @@ class QuickStudentRegistrationController extends Controller
     {
         $data = $request->validate([
             'fee_id' => ['required', 'integer', 'exists:fees,id'],
+            'fee_price_id' => ['nullable', 'integer', 'exists:fee_prices,id'],
             'quantity' => ['required', 'integer', 'min:1', 'max:100'],
             'item' => ['nullable', 'string', 'max:100'],
             'size' => ['nullable', 'string', 'max:50'],
+            'option_type' => ['nullable', 'string', 'max:100'],
+            'option_value' => ['nullable', 'string', 'max:255'],
             'transport_area' => ['nullable', 'string', 'max:150'],
             'grade_id' => ['nullable', 'integer', 'exists:grades,id'],
             'grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
@@ -80,13 +83,14 @@ class QuickStudentRegistrationController extends Controller
             'meal_plan_id' => ['nullable', 'integer', 'exists:meal_plans,id'],
             'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
             'enrollment_mode_id' => ['required', 'integer', 'exists:enrollment_modes,id'],
+            'pricing_date' => ['nullable', 'date'],
             'registration_date' => ['nullable', 'date'],
         ]);
         $fee = Fee::findOrFail($data['fee_id']);
         $year = AcademicYear::findOrFail($data['academic_year_id']);
         $mode = EnrollmentMode::active()->findOrFail($data['enrollment_mode_id']);
-        $pricingDate = isset($data['registration_date'])
-            ? \Illuminate\Support\Carbon::parse($data['registration_date'])
+        $pricingDate = isset($data['pricing_date']) || isset($data['registration_date'])
+            ? \Illuminate\Support\Carbon::parse($data['pricing_date'] ?? $data['registration_date'])
             : now();
         $tuitionCategories = [
             Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
@@ -94,6 +98,7 @@ class QuickStudentRegistrationController extends Controller
         ];
         $calculation = $calculator->calculate(items: [[
             'fee_id' => $fee->id,
+            'fee_price_id' => $data['fee_price_id'] ?? null,
             'quantity' => $data['quantity'],
             'enrollment_mode_id' => $mode->id,
             'grade_id' => in_array($fee->category, $tuitionCategories, true) && blank($data['grade_group'] ?? null)
@@ -104,12 +109,12 @@ class QuickStudentRegistrationController extends Controller
             'first_last_month' => (bool) ($data['first_last_month'] ?? false),
             'item' => $fee->category === Fee::CATEGORY_UNIFORM ? ($data['item'] ?? null) : null,
             'size' => $fee->category === Fee::CATEGORY_UNIFORM ? ($data['size'] ?? null) : null,
-            'option_type' => match ($fee->category) {
-                Fee::CATEGORY_TRANSPORT => 'zone',
-                Fee::CATEGORY_FOOD => 'meal_plan',
+            'option_type' => $data['option_type'] ?? match ($fee->category) {
+                Fee::CATEGORY_TRANSPORT => filled($data['transport_area'] ?? null) ? 'zone' : null,
+                Fee::CATEGORY_FOOD => filled($data['meal_plan_id'] ?? null) ? 'meal_plan' : null,
                 default => null,
             },
-            'option_value' => match ($fee->category) {
+            'option_value' => $data['option_value'] ?? match ($fee->category) {
                 Fee::CATEGORY_TRANSPORT => $data['transport_area'] ?? null,
                 Fee::CATEGORY_FOOD => isset($data['meal_plan_id']) ? (string) $data['meal_plan_id'] : null,
                 default => null,

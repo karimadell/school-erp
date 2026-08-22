@@ -145,7 +145,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const body = new FormData();
             body.append('_token', token); body.append('fee_id', fee); body.append('quantity', '1');
             body.append('academic_year_id', '{{ $year->id }}'); body.append('grade_id', '{{ $student->currentEnrollment?->grade_id }}');
-            body.append('enrollment_mode_id', '{{ $student->currentEnrollment?->enrollment_mode_id }}'); body.append('registration_date', date.value);
+            body.append('enrollment_mode_id', '{{ $student->currentEnrollment?->enrollment_mode_id }}'); body.append('pricing_date', date.value);
+            if (option?.value) body.append('fee_price_id', option.value);
             if (option) Object.entries(fields).forEach(([key, name]) => { if (option.dataset[key]) body.append(name === 'uniform_size' ? 'size' : name === 'uniform_item' ? 'item' : name, option.dataset[key]); });
             const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {Accept: 'application/json'}});
             if (!response.ok) { card.querySelector('.price-preview').textContent = 'Тариф не настроен'; unavailable = true; continue; }

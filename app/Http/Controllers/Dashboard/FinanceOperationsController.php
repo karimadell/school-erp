@@ -18,6 +18,7 @@ use App\Services\Finance\ChargeAndCollectService;
 use App\Services\Finance\InvoiceCancellationService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InvoiceRefundService;
+use App\Support\FinanceShareRecipient;
 use App\Services\Finance\StudentFinanceSummaryService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
@@ -29,7 +30,7 @@ class FinanceOperationsController extends Controller
 {
     public function __construct(private StudentFinanceSummaryService $summaries)
     {
-        $this->middleware('permission:view invoices')->only(['workspace', 'student', 'receipt', 'receiptPdf', 'refundReceipt']);
+        $this->middleware('permission:view invoices')->only(['workspace', 'student', 'statement', 'statementPdf', 'receipt', 'receiptPdf', 'refundReceipt']);
         $this->middleware('permission:manage invoices')->only(['createPayment', 'storePayment', 'chargeCreate', 'chargeStore']);
         $this->middleware('permission:void invoices')->only(['voidInvoice']);
         $this->middleware('permission:refund payments')->only(['createRefund', 'storeRefund']);
@@ -73,7 +74,7 @@ class FinanceOperationsController extends Controller
 
     public function student(Student $student): View
     {
-        $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','invoices.academicYear','invoices.installments.payments','invoices.payments.cashAccount','invoices.payments.creator','enrollments.serviceSubscriptions.fee','enrollments.serviceSubscriptions.invoiceItems']);
+        $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','invoices.academicYear','invoices.items.fee','invoices.installments.payments','invoices.payments.cashAccount','invoices.payments.creator','enrollments.serviceSubscriptions.fee','enrollments.serviceSubscriptions.invoiceItems']);
         $summary = $this->summaries->summarize($student);
         $subscriptions = $student->enrollments->flatMap->serviceSubscriptions->sortByDesc('created_at')->values();
         $history = collect()
@@ -82,6 +83,18 @@ class FinanceOperationsController extends Controller
             ->sortByDesc('at')->values();
 
         return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'history'));
+    }
+
+    public function statement(Student $student): View
+    {
+        return view('dashboard.finance.statement', $this->statementData($student));
+    }
+
+    public function statementPdf(Student $student)
+    {
+        return Pdf::loadView('dashboard.finance.statement', $this->statementData($student) + ['pdf' => true])
+            ->setPaper('a4')
+            ->download('student-finance-'.$student->id.'.pdf');
     }
 
     public function createPayment(Invoice $invoice): View
@@ -225,7 +238,7 @@ class FinanceOperationsController extends Controller
 
     private function receiptData(InvoicePayment $payment): array
     {
-        $payment->load(['invoice.student','invoice.academicYear','invoice.payments','invoice.items','installment','cashAccount','creator']);
+        $payment->load(['invoice.student.representatives','invoice.academicYear','invoice.payments','invoice.items','installment','cashAccount','creator']);
         $ordered = $payment->invoice->payments->sortBy(fn ($item) => sprintf('%s-%010d', ($item->paid_at ?? $item->created_at)?->format('YmdHis.u'), $item->id));
         $through = $ordered->takeUntil(fn ($item) => $item->id === $payment->id)->push($payment)->unique('id');
         $paidThrough = $this->money($through->sum('amount'));
@@ -236,6 +249,26 @@ class FinanceOperationsController extends Controller
             'previouslyPaid'=>$previouslyPaid,
             'remainingAfter'=>bcsub((string) $payment->invoice->total_amount, $paidThrough, 2),
             'methodLabels'=>['cash'=>'Наличные','card'=>'Банковская карта','bank'=>'Банковский перевод'],
+            'shareRecipient'=>FinanceShareRecipient::forStudent($payment->invoice->student),
+        ];
+    }
+
+    private function statementData(Student $student): array
+    {
+        $student->load([
+            'currentEnrollment.academicYear',
+            'currentEnrollment.grade',
+            'currentEnrollment.schoolClass',
+            'invoices.academicYear',
+            'invoices.items.fee',
+            'invoices.payments.cashAccount',
+        ]);
+
+        return [
+            'student' => $student,
+            'summary' => $this->summaries->summarize($student),
+            'settings' => SchoolSetting::current(),
+            'pdf' => false,
         ];
     }
 

@@ -8,6 +8,7 @@ use App\Models\AcademicYear;
 use App\Models\CashAccount;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
+use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\MealPlan;
 use App\Models\PaymentPlan;
@@ -18,6 +19,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 class QuickStudentRegistrationController extends Controller
@@ -72,7 +74,7 @@ class QuickStudentRegistrationController extends Controller
             'size' => ['nullable', 'string', 'max:50'],
             'transport_area' => ['nullable', 'string', 'max:150'],
             'grade_id' => ['nullable', 'integer', 'exists:grades,id'],
-            'grade_group' => ['nullable', 'string', 'max:100'],
+            'grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
             'payment_period' => ['nullable', 'string', 'max:50'],
             'first_last_month' => ['nullable', 'boolean'],
             'meal_plan_id' => ['nullable', 'integer', 'exists:meal_plans,id'],

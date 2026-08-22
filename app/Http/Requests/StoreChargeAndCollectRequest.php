@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests;
 
+use App\Models\FeePrice;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 /**
@@ -53,6 +55,13 @@ class StoreChargeAndCollectRequest extends FormRequest
             'pricing_date' => ['required', 'date'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.fee_id' => ['required', 'integer'],
+            'items.*.grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
+            'items.*.payment_period' => ['nullable', 'string', 'max:50'],
+            'items.*.first_last_month' => ['boolean'],
+            'items.*.size' => ['nullable', 'string', 'max:100'],
+            'items.*.item' => ['nullable', 'string', 'max:100'],
+            'items.*.option_type' => ['nullable', 'string', 'max:100'],
+            'items.*.option_value' => ['nullable', 'string', 'max:255'],
 
             'collect_amount' => ['nullable', 'decimal:0,2', 'min:0'],
             'payment_method' => ['nullable', 'in:cash,bank,card,transfer'],

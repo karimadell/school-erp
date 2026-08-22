@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Dashboard;
 
-use App\Filament\Resources\FeePrices\FeePriceResource;
 use App\Http\Controllers\Controller;
 use App\Models\FeePrice;
 use Illuminate\Http\RedirectResponse;
@@ -16,17 +15,17 @@ class FeePriceController extends Controller
 
     public function index(): RedirectResponse
     {
-        return redirect()->to(FeePriceResource::getUrl('index'));
+        return redirect()->route('dashboard.finance.tariffs.index');
     }
 
     public function create(): RedirectResponse
     {
-        return redirect()->to(FeePriceResource::getUrl('create'));
+        return redirect()->route('dashboard.finance.tariffs.create');
     }
 
     public function edit(FeePrice $feePrice): RedirectResponse
     {
-        return redirect()->to(FeePriceResource::getUrl('edit', ['record' => $feePrice]));
+        return redirect()->route('dashboard.finance.tariffs.show', $feePrice);
     }
 
     public function store(): never

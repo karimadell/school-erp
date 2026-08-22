@@ -77,7 +77,12 @@
 <div class="page-actions">
     <button onclick="window.print()">🖨️ Печать</button>
     <a class="primary" id="receipt-pdf" href="{{ route('dashboard.payments.receipt.pdf',$payment) }}">⬇ Скачать PDF</a>
-    <button type="button" id="share-receipt">Поделиться</button>
+	    <button type="button" id="share-receipt">{{ __('finance_uat.share') }}</button>
+	    @if($shareRecipient)
+	        <a href="{{ \App\Support\FinanceShareRecipient::whatsappUrl($shareRecipient, __('finance_uat.whatsapp_receipt_message',['number'=>$payment->payment_number,'amount'=>number_format((float)$payment->amount,2,'.','')])) }}" target="_blank" rel="noopener noreferrer">{{ __('finance_uat.send_whatsapp') }}</a>
+	    @else
+	        <button type="button" disabled title="{{ __('finance_uat.phone_missing') }}">{{ __('finance_uat.phone_missing') }}</button>
+	    @endif
 </div>
 
 <div class="receipt">

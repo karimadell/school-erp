@@ -19,7 +19,10 @@ class StudentFinanceSummaryService
             'invoices' => $invoices,
             'payments' => $payments,
             'invoiced' => $this->sum($invoices, 'total_amount'),
-            'paid' => $this->sum($payments, 'amount'),
+            // paid_amount is maintained net of refunds by the canonical payment
+            // and refund services. Summing raw payment rows would overstate cash
+            // retained after a refund.
+            'paid' => $this->sum($invoices, 'paid_amount'),
             'remaining' => $this->sum($invoices, 'remaining_amount'),
             'overdue' => $this->sum($invoices->filter(fn (Invoice $invoice) =>
                 bccomp((string) $invoice->remaining_amount, '0.00', 2) > 0

@@ -10,6 +10,8 @@ use BackedEnum;
 
 class StudentLedger extends Page
 {
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static BackedEnum|string|null $navigationIcon = 'heroicon-o-document-text';
 
     protected static ?string $navigationLabel = 'Финансы ученика';

@@ -14,4 +14,6 @@ return [
     'empty_heading' => 'Начислений зарплаты пока нет',
     'empty_description' => 'Создайте первое начисление зарплаты учителю.',
     'filters' => ['teacher' => 'Учитель'],
+    'payslip' => 'Расчётный лист', 'print' => 'Печать', 'pdf' => 'PDF', 'period' => 'Период',
+    'generated_at' => 'Дата формирования', 'component' => 'Составляющая', 'amount' => 'Сумма', 'status' => 'Статус', 'accrued' => 'Начислено',
 ];

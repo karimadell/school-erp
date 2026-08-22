@@ -14,4 +14,6 @@ return [
     'empty_heading' => 'لا توجد استحقاقات رواتب بعد',
     'empty_description' => 'أنشئ أول استحقاق راتب لمعلم.',
     'filters' => ['teacher' => 'المعلم'],
+    'payslip' => 'كشف الراتب', 'print' => 'طباعة', 'pdf' => 'PDF', 'period' => 'الفترة', 'generated_at' => 'تاريخ الإنشاء',
+    'component' => 'البند', 'amount' => 'المبلغ', 'status' => 'الحالة', 'accrued' => 'مستحق',
 ];

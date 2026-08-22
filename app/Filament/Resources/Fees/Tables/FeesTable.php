@@ -20,7 +20,7 @@ class FeesTable
                     ->label('Услуга')
                     ->searchable(),
                 TextColumn::make('category')
-                    ->label('Категория')
+                    ->label(__('finance_uat.service_kind'))
                     ->searchable(),
                 IconColumn::make('is_active')
                     ->label('Активна')

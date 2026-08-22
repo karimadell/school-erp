@@ -103,6 +103,24 @@ class UatResourceLocalizationTest extends TestCase
         }
     }
 
+    public function test_teacher_salary_print_and_pdf_actions_render(): void
+    {
+        $user = $this->admin();
+        $teacher = Teacher::create([
+            'first_name' => 'Иван', 'last_name' => 'Петров',
+            'email' => 'salary.print@example.invalid', 'is_active' => true,
+        ]);
+        $salary = TeacherSalary::create([
+            'teacher_id' => $teacher->id, 'base_salary' => 18000, 'bonus' => 1200,
+            'deductions' => 300, 'salary_month' => '2026-07-01',
+        ]);
+
+        $this->actingAs($user)->get(route('dashboard.teacher-salaries.print', $salary))
+            ->assertOk()->assertSee('Расчётный лист')->assertSee('18,900.00');
+        $this->actingAs($user)->get(route('dashboard.teacher-salaries.pdf', $salary))
+            ->assertOk()->assertHeader('content-type', 'application/pdf');
+    }
+
     private function admin(): User
     {
         $this->seed(RolesAndPermissionsSeeder::class);

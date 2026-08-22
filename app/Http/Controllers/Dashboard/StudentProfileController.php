@@ -64,7 +64,7 @@ class StudentProfileController extends Controller
         $archivedFiles = $student->files->whereNotNull('archived_at');
         $financial = [
             'invoiced'=>$this->sum($invoices, 'total_amount'),
-            'paid'=>$this->sum($payments, 'amount'),
+            'paid'=>$this->sum($invoices, 'paid_amount'),
             'remaining'=>$this->sum($invoices, 'remaining_amount'),
             'overdue'=>$this->sum($invoices->filter(fn ($invoice) => in_array($invoice->status, [Invoice::STATUS_UNPAID,Invoice::STATUS_PARTIAL], true) && $invoice->due_date?->isPast()), 'remaining_amount'),
             'upcoming_count'=>$invoices->filter(fn ($invoice) => bccomp((string) $invoice->remaining_amount, '0.00', 2) === 1 && $invoice->due_date?->isFuture())->count(),

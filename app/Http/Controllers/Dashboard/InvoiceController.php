@@ -16,6 +16,7 @@ use App\Models\AcademicYear;
 use App\Models\Enrollment;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoicePaymentService;
+use App\Support\FinanceShareRecipient;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -214,7 +215,7 @@ class InvoiceController extends Controller
     public function show(Invoice $invoice): View
     {
         $invoice->load([
-            'student.grade', 'academicYear', 'items.fee', 'items.subscription',
+            'student.grade', 'student.representatives', 'academicYear', 'items.fee', 'items.subscription',
             'fees',
             'cashAccount',
             'payments.cashAccount',
@@ -222,7 +223,9 @@ class InvoiceController extends Controller
             'installments.payments',
         ]);
 
-        return view('dashboard.invoices.show', compact('invoice'));
+        $shareRecipient = FinanceShareRecipient::forStudent($invoice->student);
+
+        return view('dashboard.invoices.show', compact('invoice', 'shareRecipient'));
     }
 
     public function print(Invoice $invoice): View

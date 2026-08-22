@@ -17,12 +17,12 @@ class FeeForm
                 TextInput::make('name_ru')
                     ->label('Название услуги')
                     ->required(),
-                Select::make('category')->label('Категория')->options([
+                Select::make('category')->label(__('finance_uat.service_kind'))->options([
                     'registration' => 'Регистрационный взнос', 'tuition' => 'Обучение',
                     'transport' => 'Транспорт', 'food' => 'Питание', 'uniform' => 'Школьная форма',
                     'books' => 'Книги', 'extra_classes' => 'Дополнительные занятия',
                     'activity' => 'Мероприятия', 'other' => 'Дополнительные услуги',
-                ])->required(),
+                ])->helperText(__('finance_uat.service_kind_help'))->required(),
                 Hidden::make('amount')->default('0.00'),
                 Toggle::make('is_active')
                     ->label('Активна')

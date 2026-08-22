@@ -14,7 +14,7 @@ class FeeInfolist
             ->components([
                 TextEntry::make('name_ru')->label('Услуга'),
                 TextEntry::make('category')
-                    ->label('Категория')
+                    ->label(__('finance_uat.service_kind'))
                     ->placeholder('-'),
                 IconEntry::make('is_active')
                     ->label('Активна')

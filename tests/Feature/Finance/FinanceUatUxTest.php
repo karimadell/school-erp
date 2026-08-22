@@ -2,11 +2,20 @@
 
 namespace Tests\Feature\Finance;
 
+use App\Filament\Pages\FinanceMonthlyReport;
+use App\Filament\Pages\FinancialReport;
+use App\Filament\Pages\StudentFinance;
+use App\Filament\Pages\StudentFinanceReport;
+use App\Filament\Pages\StudentLedger;
+use App\Filament\Resources\Expenses\ExpenseResource;
+use App\Filament\Resources\Fees\FeeResource;
+use App\Filament\Resources\Invoices\InvoiceResource;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\Expense;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InvoiceRefundService;
+use App\Support\FinanceShareRecipient;
 
 class FinanceUatUxTest extends FinanceOperationsTestCase
 {
@@ -45,6 +54,81 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             ->assertForbidden();
     }
 
+    public function test_employee_finance_navigation_uses_dashboard_routes(): void
+    {
+        $response = $this->actingAs($this->user('admin'))->get(route('dashboard.finance.workspace'));
+
+        $response->assertOk()
+            ->assertSee(route('dashboard.finance.services.index'), false)
+            ->assertSee(route('dashboard.finance.tariffs.index'), false)
+            ->assertSee(route('dashboard.invoices.index'), false)
+            ->assertSee(route('dashboard.cash.expenses'), false)
+            ->assertSee(route('dashboard.cash.reports'), false)
+            ->assertSee(route('dashboard.finance.workspace'), false);
+    }
+
+    public function test_whatsapp_uses_primary_representative_without_exposing_private_pdf_url(): void
+    {
+        $this->student->representatives()->create([
+            'relationship_type' => 'father',
+            'full_name' => 'Основной контакт',
+            'phone' => '010 1234 5678',
+            'is_primary_contact' => true,
+        ]);
+        $invoice = $this->invoice();
+
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.invoices.show', $invoice));
+        $response->assertOk()->assertSee(__('finance_uat.send_whatsapp'));
+        $html = $response->getContent();
+        $this->assertStringContainsString('https://wa.me/201012345678', $html);
+        $this->assertStringNotContainsString(route('dashboard.invoices.pdf', $invoice), urldecode($this->whatsappHref($html)));
+    }
+
+    public function test_whatsapp_falls_back_to_disabled_no_phone_state(): void
+    {
+        $this->student->update(['phone' => null]);
+        $invoice = $this->invoice();
+
+        $this->actingAs($this->accountant)->get(route('dashboard.invoices.show', $invoice))
+            ->assertOk()
+            ->assertSee(__('finance_uat.phone_missing'))
+            ->assertDontSee('wa.me/', false);
+    }
+
+    public function test_receipt_sharing_uses_text_only_whatsapp_and_safe_pdf_share(): void
+    {
+        $this->student->representatives()->create([
+            'relationship_type' => 'mother',
+            'full_name' => 'Основной контакт',
+            'phone' => '+20 100 111 2233',
+            'is_primary_contact' => true,
+        ]);
+        $invoice = $this->invoice();
+        $payment = app(InvoicePaymentService::class)->record(
+            invoiceId: $invoice->id,
+            cashAccountId: $this->cash->id,
+            paymentMethod: 'cash',
+            amount: '100.00',
+            idempotencyKey: '99999999-9999-4999-8999-999999999999',
+            actor: $this->accountant,
+        );
+
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.payments.receipt', $payment));
+        $response->assertOk()
+            ->assertSee(__('finance_uat.share'))
+            ->assertSee(__('finance_uat.send_whatsapp'));
+        $html = $response->getContent();
+        $this->assertStringContainsString('https://wa.me/201001112233', $html);
+        $this->assertStringNotContainsString(route('dashboard.payments.receipt.pdf', $payment), urldecode($this->whatsappHref($html)));
+    }
+
+    public function test_phone_normalization_rejects_invalid_numbers(): void
+    {
+        $this->assertSame('201012345678', FinanceShareRecipient::normalize('010 1234 5678'));
+        $this->assertSame('201001112233', FinanceShareRecipient::normalize('+20 100 111 2233'));
+        $this->assertNull(FinanceShareRecipient::normalize('123'));
+    }
+
     public function test_cash_report_explains_automatic_cash_basis_and_totals_all_filtered_rows(): void
     {
         foreach (range(1, 25) as $index) {
@@ -68,7 +152,7 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
 
     public function test_internal_transfer_is_visible_but_excluded_from_operating_totals(): void
     {
-        $invoice = $this->invoice('500.00');
+        $invoice = $this->invoice('1200.00');
         $payment = app(InvoicePaymentService::class)->record(
             invoiceId: $invoice->id,
             cashAccountId: $this->cash->id,
@@ -77,6 +161,7 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             idempotencyKey: '77777777-7777-4777-8777-777777777777',
             actor: $this->accountant,
         );
+        $this->assertSame('partial', $invoice->fresh()->status);
         app(InvoiceRefundService::class)->refund(
             invoicePaymentId: $payment->id,
             amount: '100.00',
@@ -145,5 +230,22 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
         $this->assertEquals('300.00', $response->viewData('totalOut'));
         $this->assertEquals([500.0], $response->viewData('chartIn')->map(fn ($value) => (float) $value)->values()->all());
         $this->assertEquals([300.0], $response->viewData('chartOut')->map(fn ($value) => (float) $value)->values()->all());
+    }
+
+    public function test_obsolete_filament_finance_navigation_is_hidden_but_tools_remain_registered(): void
+    {
+        foreach ([FinancialReport::class, FinanceMonthlyReport::class, StudentLedger::class, StudentFinance::class, StudentFinanceReport::class] as $page) {
+            $this->assertFalse($page::shouldRegisterNavigation());
+        }
+        foreach ([FeeResource::class, InvoiceResource::class, ExpenseResource::class] as $resource) {
+            $this->assertFalse($resource::shouldRegisterNavigation());
+        }
+    }
+
+    private function whatsappHref(string $html): string
+    {
+        preg_match('/href="([^"]*wa\.me[^"]*)"/', $html, $matches);
+
+        return html_entity_decode($matches[1] ?? '');
     }
 }

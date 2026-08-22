@@ -12,6 +12,7 @@ use App\Models\Teacher;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 
+use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Tables;
@@ -135,6 +136,15 @@ class TeacherSalaryResource extends Resource
             ->emptyStateHeading(__('teacher_salary.empty_heading'))
             ->emptyStateDescription(__('teacher_salary.empty_description'))
             ->actions([
+                Action::make('print')
+                    ->label(__('teacher_salary.print'))
+                    ->icon('heroicon-o-printer')
+                    ->url(fn (TeacherSalary $record): string => route('dashboard.teacher-salaries.print', $record))
+                    ->openUrlInNewTab(),
+                Action::make('pdf')
+                    ->label(__('teacher_salary.pdf'))
+                    ->icon('heroicon-o-document-arrow-down')
+                    ->url(fn (TeacherSalary $record): string => route('dashboard.teacher-salaries.pdf', $record)),
                 EditAction::make()
                     ->iconButton()
                     ->tooltip(__('filament-actions::edit.single.label')),

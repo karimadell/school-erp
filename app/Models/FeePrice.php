@@ -7,6 +7,14 @@ use Illuminate\Validation\ValidationException;
 
 class FeePrice extends Model
 {
+    public const GRADE_GROUPS = [
+        'Подготовительный класс',
+        '1–4 классы',
+        '5–6 классы',
+        '7–8 классы',
+        '9–11 классы',
+    ];
+
     protected $attributes = [
         'currency' => 'EGP',
         'is_active' => true,

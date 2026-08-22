@@ -6,6 +6,7 @@ use App\Models\AcademicYear;
 use App\Models\CashAccount;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
+use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use Illuminate\Foundation\Http\FormRequest;
@@ -59,7 +60,7 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'services.*.item' => ['nullable', 'string', 'max:100'],
             'services.*.size' => ['nullable', 'string', 'max:50'],
             'services.*.uniform_product_id' => ['nullable', 'integer', 'exists:uniform_products,id'],
-            'services.*.grade_group' => ['nullable', 'string', 'max:100'],
+            'services.*.grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
             'services.*.payment_period' => ['nullable', Rule::in(['once', 'daily', 'monthly', 'quarterly', 'term', 'yearly', 'package'])],
             'services.*.first_last_month' => ['nullable', 'boolean'],
             'services.*.transport_area' => ['nullable', 'string', 'max:150'],

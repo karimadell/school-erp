@@ -14,7 +14,8 @@ class CashTransactionController extends Controller
         // Phase 0 safety lockdown: every cash action is gated. This module has
         // no separate read-only cash permission, so reads fall back to the same
         // 'manage cash' gate.
-        $this->middleware('permission:manage cash');
+        $this->middleware('permission:manage cash')->except('reports');
+        $this->middleware('permission:view cash reports')->only('reports');
     }
 
     public function income()

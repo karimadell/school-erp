@@ -14,4 +14,6 @@ return [
     'empty_heading' => 'No salary accruals yet',
     'empty_description' => 'Create the first teacher salary accrual.',
     'filters' => ['teacher' => 'Teacher'],
+    'payslip' => 'Salary statement', 'print' => 'Print', 'pdf' => 'PDF', 'period' => 'Period', 'generated_at' => 'Generated at',
+    'component' => 'Component', 'amount' => 'Amount', 'status' => 'Status', 'accrued' => 'Accrued',
 ];

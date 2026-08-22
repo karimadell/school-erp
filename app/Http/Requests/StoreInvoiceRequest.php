@@ -4,7 +4,9 @@ namespace App\Http\Requests;
 
 use App\Models\AcademicYear;
 use App\Models\Enrollment;
+use App\Models\FeePrice;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class StoreInvoiceRequest extends FormRequest
@@ -49,7 +51,7 @@ class StoreInvoiceRequest extends FormRequest
             'fees.*' => ['required', 'integer', 'distinct', 'exists:fees,id'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.fee_id' => ['required', 'integer'],
-            'items.*.grade_group' => ['nullable', 'string', 'max:100'],
+            'items.*.grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
             'items.*.payment_period' => ['nullable', 'string', 'max:50'],
             'items.*.first_last_month' => ['boolean'],
             'items.*.size' => ['nullable', 'string', 'max:100'],

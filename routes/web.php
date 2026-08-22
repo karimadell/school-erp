@@ -61,12 +61,18 @@ use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\AuditLogController;
 
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\Dashboard\TeacherSalaryPrintController;
 
 Route::get('/', function () {
     return redirect('/dashboard');
 });
 
 Route::middleware(['auth', 'administrative'])->group(function () {
+    Route::get('/dashboard/teacher-salaries/{teacherSalary}/print', [TeacherSalaryPrintController::class, 'show'])
+        ->name('dashboard.teacher-salaries.print');
+    Route::get('/dashboard/teacher-salaries/{teacherSalary}/pdf', [TeacherSalaryPrintController::class, 'pdf'])
+        ->name('dashboard.teacher-salaries.pdf');
+
     Route::get('/dashboard/cash-reports', [CashReportController::class, 'index'])
         ->name('cash.reports.index');
 
@@ -390,6 +396,8 @@ Route::middleware(['auth', 'administrative'])
 
         Route::get('students/{student}/finance', [FinanceOperationsController::class, 'student'])->name('students.finance');
         Route::get('students/{student}/subscriptions/renew', [StudentSubscriptionController::class, 'renew'])->name('students.subscriptions.renew');
+        Route::get('students/{student}/finance/statement', [FinanceOperationsController::class, 'statement'])->name('students.finance.statement');
+        Route::get('students/{student}/finance/statement/pdf', [FinanceOperationsController::class, 'statementPdf'])->name('students.finance.statement.pdf');
         Route::post('students/{student}/subscriptions/renew/preview', [StudentSubscriptionController::class, 'renewPreview'])->name('students.subscriptions.renew.preview');
         Route::post('students/{student}/subscriptions/renew', [StudentSubscriptionController::class, 'renewStore'])->name('students.subscriptions.renew.store');
         Route::get('students/{student}/subscriptions', [StudentSubscriptionController::class, 'index'])->name('students.subscriptions.index');

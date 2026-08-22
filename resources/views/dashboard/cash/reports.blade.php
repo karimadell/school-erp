@@ -6,7 +6,7 @@
 
 
     <h3 class="mb-2">📊 {{ __('app.cash_reports') }}</h3>
-    <div class="alert alert-info">{{ __('finance_uat.automatic_cash_report') }}</div>
+    <div class="alert alert-info">{{ __('finance_uat.automatic_cash_report') }}<br><strong>{{ __('finance_uat.cash_report_date_basis') }}</strong></div>
 
     {{-- ================= Filters ================= --}}
     <div class="card mb-4">

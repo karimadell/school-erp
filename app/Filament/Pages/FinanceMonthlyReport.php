@@ -11,6 +11,8 @@ use BackedEnum;
 
 class FinanceMonthlyReport extends Page
 {
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static string|BackedEnum|null $navigationIcon = 'heroicon-o-calendar';
 
     protected static string|UnitEnum|null $navigationGroup = 'Финансы';

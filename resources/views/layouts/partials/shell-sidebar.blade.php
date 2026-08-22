@@ -92,17 +92,17 @@
         [
             'label' => 'Финансы',
             'items' => [
-                ['label' => 'Финансовый центр', 'icon' => 'landmark', 'route' => 'dashboard.finance.workspace', 'active' => 'dashboard.finance.workspace'],
-                ['label' => 'Счета', 'icon' => 'receipt', 'route' => 'dashboard.invoices.index', 'active' => 'dashboard.invoices.*'],
+                ['label' => __('finance_uat.student_finance'), 'icon' => 'landmark', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.workspace' : null, 'active' => 'dashboard.finance.workspace'],
+                ['label' => __('finance_uat.invoices'), 'icon' => 'receipt', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.invoices.index' : null, 'active' => 'dashboard.invoices.*'],
                 ['label' => 'Массовое начисление', 'icon' => 'banknote', 'route' => auth()->user()?->can('view mass billing') ? 'dashboard.finance.mass-billing.index' : null, 'active' => 'dashboard.finance.mass-billing.*'],
-                ['label' => 'Услуги и сборы', 'icon' => 'credit_card', 'route' => 'dashboard.finance.services.index', 'active' => 'dashboard.finance.services.*'],
-                ['label' => 'Цены на услуги', 'icon' => 'payments', 'route' => 'dashboard.finance.tariffs.index', 'active' => 'dashboard.finance.tariffs.*'],
+                ['label' => __('finance_uat.services_and_fees'), 'icon' => 'credit_card', 'route' => auth()->user()?->can('manage fees') ? 'dashboard.finance.services.index' : null, 'active' => 'dashboard.finance.services.*'],
+                ['label' => __('finance_uat.service_prices'), 'icon' => 'payments', 'route' => auth()->user()?->can('manage fee prices') ? 'dashboard.finance.tariffs.index' : null, 'active' => 'dashboard.finance.tariffs.*'],
                 // Платежи: no standalone page — payments happen as an action from within Счета.
                 ['label' => 'Касса', 'icon' => 'landmark', 'route' => 'dashboard.cash.ledger', 'active' => 'dashboard.cash.ledger'],
                 ['label' => 'Кассовые смены', 'icon' => 'briefcase', 'route' => auth()->user()?->can('view cash sessions') ? 'dashboard.cash.sessions.index' : null, 'active' => 'dashboard.cash.sessions.*'],
                 ['label' => 'Кассовые счета', 'icon' => 'briefcase', 'route' => 'dashboard.cash.accounts', 'active' => 'dashboard.cash.accounts'],
-                ['label' => 'Расходы', 'icon' => 'trending_down', 'route' => 'dashboard.cash.expenses', 'active' => 'dashboard.cash.expenses'],
-                ['label' => 'Финансовые отчёты', 'icon' => 'pie_chart', 'route' => 'dashboard.cash.reports', 'active' => 'dashboard.cash.reports'],
+                ['label' => __('finance_uat.expenses'), 'icon' => 'trending_down', 'route' => auth()->user()?->can('manage cash') ? 'dashboard.cash.expenses' : null, 'active' => 'dashboard.cash.expenses'],
+                ['label' => __('finance_uat.financial_reports'), 'icon' => 'pie_chart', 'route' => auth()->user()?->can('view cash reports') ? 'dashboard.cash.reports' : null, 'active' => 'dashboard.cash.reports'],
             ],
         ],
         [

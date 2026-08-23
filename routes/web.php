@@ -398,6 +398,13 @@ Route::middleware(['auth', 'administrative'])
         Route::get('students/{student}/subscriptions/renew', [StudentSubscriptionController::class, 'renew'])->name('students.subscriptions.renew');
         Route::get('students/{student}/finance/statement', [FinanceOperationsController::class, 'statement'])->name('students.finance.statement');
         Route::get('students/{student}/finance/statement/pdf', [FinanceOperationsController::class, 'statementPdf'])->name('students.finance.statement.pdf');
+        Route::post('students/{student}/finance/coverages', [\App\Http\Controllers\Dashboard\ServiceCoverageController::class, 'store'])->name('students.finance.coverages.store');
+        Route::post('finance/adjustments/preview', [\App\Http\Controllers\Dashboard\FinanceAdjustmentController::class, 'preview'])->name('finance.adjustments.preview');
+        Route::post('finance/adjustments', [\App\Http\Controllers\Dashboard\FinanceAdjustmentController::class, 'store'])->name('finance.adjustments.store');
+        Route::post('students/{student}/finance/promises', [\App\Http\Controllers\Dashboard\PromiseToPayController::class, 'store'])->name('students.finance.promises.store');
+        Route::post('finance/promises/{promiseToPay}/cancel', [\App\Http\Controllers\Dashboard\PromiseToPayController::class, 'cancel'])->name('finance.promises.cancel');
+        Route::post('finance/promises/{promiseToPay}/fulfill', [\App\Http\Controllers\Dashboard\PromiseToPayController::class, 'fulfill'])->name('finance.promises.fulfill');
+        Route::post('finance/credits/{studentCredit}/apply', [\App\Http\Controllers\Dashboard\StudentCreditController::class, 'apply'])->name('finance.credits.apply');
         Route::post('students/{student}/subscriptions/renew/preview', [StudentSubscriptionController::class, 'renewPreview'])->name('students.subscriptions.renew.preview');
         Route::post('students/{student}/subscriptions/renew', [StudentSubscriptionController::class, 'renewStore'])->name('students.subscriptions.renew.store');
         Route::get('students/{student}/subscriptions', [StudentSubscriptionController::class, 'index'])->name('students.subscriptions.index');

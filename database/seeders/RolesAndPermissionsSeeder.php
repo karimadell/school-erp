@@ -95,6 +95,9 @@ class RolesAndPermissionsSeeder extends Seeder
         foreach ($permissions as $permission) {
             Permission::firstOrCreate(['name' => $permission]);
         }
+        // Phase 2: defined but deliberately not added to operational roles.
+        // Assignment is a separate separation-of-duties policy decision.
+        Permission::firstOrCreate(['name' => 'approve tariff adjustments']);
 
         // Protected Super Admin — full access and the application-wide bypass.
         $superAdmin = Role::firstOrCreate(['name' => 'super-admin']);

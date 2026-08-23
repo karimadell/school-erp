@@ -9,9 +9,11 @@ use App\Http\Requests\StoreModernInvoicePaymentRequest;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
 use App\Models\Fee;
+use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\SchoolSetting;
+use App\Models\ServiceCoverage;
 use App\Models\Student;
 use App\Models\PaymentRefund;
 use App\Services\Finance\ChargeAndCollectService;
@@ -77,12 +79,18 @@ class FinanceOperationsController extends Controller
         $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','invoices.academicYear','invoices.items.fee','invoices.installments.payments','invoices.payments.cashAccount','invoices.payments.creator','enrollments.serviceSubscriptions.fee','enrollments.serviceSubscriptions.invoiceItems']);
         $summary = $this->summaries->summarize($student);
         $subscriptions = $student->enrollments->flatMap->serviceSubscriptions->sortByDesc('created_at')->values();
+        $coverages = ServiceCoverage::with(['fee', 'feePrice', 'invoiceItem.invoice'])
+            ->where('student_id', $student->id)->latest()->get();
+        $coveragePrices = FeePrice::active()->whereIn('fee_id', $coverages->pluck('fee_id'))
+            ->orderBy('start_date')->get()->groupBy('fee_id');
         $history = collect()
             ->concat($summary['invoices']->map(fn ($invoice) => ['at'=>$invoice->created_at,'label'=>'Создан счёт','text'=>$invoice->display_number]))
             ->concat($summary['payments']->map(fn ($payment) => ['at'=>$payment->paid_at ?? $payment->created_at,'label'=>'Принят платёж','text'=>$payment->payment_number]))
+            ->concat($summary['adjustments']->map(fn ($adjustment) => ['at' => $adjustment->approved_at, 'label' => $adjustment->kind === 'debit' ? 'Доначисление' : 'Кредит', 'text' => $adjustment->total_difference.' EGP']))
+            ->concat($summary['promises']->map(fn ($promise) => ['at' => $promise->created_at, 'label' => 'Обещание оплаты', 'text' => $promise->promised_amount.' EGP · '.$promise->status]))
             ->sortByDesc('at')->values();
 
-        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'history'));
+        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'coverages', 'coveragePrices', 'history'));
     }
 
     public function statement(Student $student): View

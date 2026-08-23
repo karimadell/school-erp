@@ -39,9 +39,10 @@ class MultiServiceInvoicePricePreviewTest extends QuickRegistrationUxTestCase
         $cases = [
             [$tuition, $this->tariff($tuition, '40500.00', ['grade_group' => '1–4 классы', 'payment_period' => 'yearly']), '40500.00'],
             [$registration, $this->tariff($registration, '7000.00'), '7000.00'],
-            [$transport, $this->tariff($transport, '13500.00', ['option_type' => 'zone_period', 'option_value' => 'Зона 1 · Год']), '13500.00'],
-            [$transport, $this->tariff($transport, '1500.00', ['option_type' => 'zone_period', 'option_value' => 'Зона 1 · Месяц']), '1500.00'],
-            [$transport, $this->tariff($transport, '16200.00', ['option_type' => 'zone_period', 'option_value' => 'Зона 2 · Год']), '16200.00'],
+            [$transport, $this->tariff($transport, '13500.00', ['option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'yearly']), '13500.00'],
+            [$transport, $this->tariff($transport, '1500.00', ['option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly']), '1500.00'],
+            [$transport, $this->tariff($transport, '16200.00', ['option_type' => 'zone', 'option_value' => 'Зона 2', 'payment_period' => 'yearly']), '16200.00'],
+            [$transport, $this->tariff($transport, '1800.00', ['option_type' => 'zone', 'option_value' => 'Зона 2', 'payment_period' => 'monthly']), '1800.00'],
             [$food, $this->tariff($food, '170.00', ['option_type' => 'meal_plan', 'option_value' => 'Комплексное питание']), '170.00'],
             [$food, $this->tariff($food, '70.00', ['option_type' => 'meal_plan', 'option_value' => 'Завтрак']), '70.00'],
             [$uniform, $this->tariff($uniform, '2500.00', ['item' => 'Комплект', 'size' => '12–16']), '2500.00'],
@@ -54,7 +55,7 @@ class MultiServiceInvoicePricePreviewTest extends QuickRegistrationUxTestCase
             $this->canonicalPreview($fee, $price)->assertOk()->assertJsonPath('amount', $amount);
             $sum = bcadd($sum, $amount, 2);
         }
-        $this->assertSame('110240.00', $sum);
+        $this->assertSame('112040.00', $sum);
     }
 
     public function test_selected_tariff_must_match_service(): void
@@ -69,7 +70,7 @@ class MultiServiceInvoicePricePreviewTest extends QuickRegistrationUxTestCase
     public function test_selected_tariff_rejects_inactive_wrong_year_currency_and_invalid_dates(): void
     {
         $fee = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT);
-        $dimensions = ['option_type' => 'zone_period', 'option_value' => 'Зона 1 · Год'];
+        $dimensions = ['option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'yearly'];
         $inactive = $this->tariff($fee, '13500.00', $dimensions + ['is_active' => false]);
         $otherYear = AcademicYear::create(['name' => '2027/2028', 'start_date' => '2027-09-01', 'end_date' => '2028-05-31', 'is_active' => true]);
         $wrongYear = $this->tariff($fee, '13500.00', $dimensions + ['academic_year_id' => $otherYear->id]);
@@ -98,6 +99,39 @@ class MultiServiceInvoicePricePreviewTest extends QuickRegistrationUxTestCase
         $this->preview($food, ['meal_plan_id' => $meal->id])->assertOk()->assertJsonPath('amount', '70.00');
     }
 
+    public function test_transport_tariff_rejects_wrong_zone_and_payment_period(): void
+    {
+        $transport = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT);
+        $price = $this->tariff($transport, '1500.00', [
+            'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly',
+        ]);
+
+        $this->canonicalPreview($transport, $price, ['option_value' => 'Зона 2'])
+            ->assertUnprocessable()->assertJsonValidationErrors('fees');
+        $this->canonicalPreview($transport, $price, ['payment_period' => 'yearly'])
+            ->assertUnprocessable()->assertJsonValidationErrors('fees');
+    }
+
+    public function test_tariff_controlled_service_never_falls_back_to_placeholder_base_amount(): void
+    {
+        $transport = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '1.00');
+        $this->tariff($transport, '1500.00', [
+            'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly',
+        ]);
+
+        $this->preview($transport, ['option_type' => 'zone', 'option_value' => 'Зона 2', 'payment_period' => 'monthly'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('fees');
+        $this->preview($transport)->assertUnprocessable()->assertJsonValidationErrors('fees');
+    }
+
+    public function test_ordinary_service_without_tariffs_can_use_its_base_amount(): void
+    {
+        $activity = $this->service('Кружок', Fee::CATEGORY_OTHER, '350.00');
+
+        $this->preview($activity)->assertOk()->assertJsonPath('amount', '350.00');
+    }
+
     private function canonicalPreview(Fee $fee, FeePrice $price, array $overrides = []): TestResponse
     {
         return $this->preview($fee, array_replace([
@@ -116,9 +150,9 @@ class MultiServiceInvoicePricePreviewTest extends QuickRegistrationUxTestCase
         ], $overrides));
     }
 
-    private function service(string $name, string $category): Fee
+    private function service(string $name, string $category, string $amount = '0.00'): Fee
     {
-        return Fee::create(['name_ru' => $name, 'category' => $category, 'amount' => '0.00', 'is_active' => true]);
+        return Fee::create(['name_ru' => $name, 'category' => $category, 'amount' => $amount, 'is_active' => true]);
     }
 
     private function tariff(Fee $fee, string $amount, array $overrides = []): FeePrice

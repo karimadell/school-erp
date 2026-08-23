@@ -159,6 +159,24 @@ class InvoiceCalculationService
             ];
         }
 
+        $requiredContext = match ($fee->category) {
+            Fee::CATEGORY_TRANSPORT => ['option_type', 'option_value'],
+            Fee::CATEGORY_FOOD => ['option_type', 'option_value'],
+            Fee::CATEGORY_UNIFORM => ['size', 'item'],
+            default => [],
+        };
+        if ($fee->category === Fee::CATEGORY_TRANSPORT
+            && $fee->prices()->whereNotNull('payment_period')->exists()) {
+            $requiredContext[] = 'payment_period';
+        }
+        foreach ($requiredContext as $field) {
+            if (blank($selection[$field] ?? null) && $fee->prices()->whereNotNull($field)->exists()) {
+                throw ValidationException::withMessages([
+                    'fees' => "Для услуги «{$fee->name_ru}» выберите все параметры тарифа.",
+                ]);
+            }
+        }
+
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
             ->where('is_active', true)
@@ -180,13 +198,18 @@ class InvoiceCalculationService
             });
         }
 
-        foreach (['payment_period', 'size', 'item', 'option_value'] as $field) {
+        foreach (['payment_period', 'size', 'item'] as $field) {
             if (filled($selection[$field] ?? null)) {
                 $query->where($field, $selection[$field]);
             }
         }
 
-        if (filled($selection['enrollment_mode_id'] ?? null)) {
+        if (filled($selection['option_value'] ?? null)) {
+            $query->where('option_value', $selection['option_value']);
+            filled($selection['option_type'] ?? null)
+                ? $query->where('option_type', $selection['option_type'])
+                : $query->whereNull('option_type');
+        } elseif (filled($selection['enrollment_mode_id'] ?? null)) {
             $mode = EnrollmentMode::find((int) $selection['enrollment_mode_id']);
             $modeTypes = ['enrollment_mode', 'Форма', 'Форма обучения'];
             $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->unique()->values();

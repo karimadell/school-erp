@@ -53,6 +53,8 @@
                         $isTuition = in_array($fee->category, $tuitionCategories, true);
                         $isContextual = $isTuition || in_array($fee->category, [\App\Models\Fee::CATEGORY_TRANSPORT, \App\Models\Fee::CATEGORY_FOOD, \App\Models\Fee::CATEGORY_UNIFORM], true);
                         $oldSelected = in_array($fee->id, old('fees', []));
+                        $isStructuredTransport = $fee->category === \App\Models\Fee::CATEGORY_TRANSPORT
+                            && $fee->prices->contains(fn ($price) => $price->option_type === 'zone' && filled($price->option_value) && filled($price->payment_period));
                     @endphp
                     <div class="col-md-6">
                         <div class="card h-100 shadow-sm service-card {{ $oldSelected ? 'border-primary' : 'border-0' }}" data-fee="{{ $fee->id }}">
@@ -63,7 +65,34 @@
                                 </div>
 
                                 <div class="service-config mt-3 {{ $oldSelected ? '' : 'd-none' }}">
-                                    @if($fee->prices->count() > 1 || ($fee->prices->first() && $isContextual))
+                                    @if($isStructuredTransport)
+                                        <div class="row g-2">
+                                            <div class="col-md-7">
+                                                <label class="form-label">Зона тарифа</label>
+                                                <select class="form-select transport-zone-select">
+                                                    @foreach($fee->prices->where('option_type', 'zone')->pluck('option_value')->filter()->unique() as $zone)
+                                                        <option value="{{ $zone }}">{{ $zone }}</option>
+                                                    @endforeach
+                                                </select>
+                                            </div>
+                                            <div class="col-md-5">
+                                                <label class="form-label">Период оплаты</label>
+                                                <select class="form-select transport-period-select">
+                                                    @foreach($fee->prices->where('option_type', 'zone')->pluck('payment_period')->filter()->unique() as $period)
+                                                        <option value="{{ $period }}">{{ ['monthly' => 'Ежемесячно', 'yearly' => 'За год'][$period] ?? $period }}</option>
+                                                    @endforeach
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <select class="tariff-select d-none" aria-hidden="true" tabindex="-1">
+                                            @foreach($fee->prices->where('option_type', 'zone') as $price)
+                                                <option value="{{ $price->id }}"
+                                                    data-grade-group="{{ $price->grade_group }}" data-payment-period="{{ $price->payment_period }}"
+                                                    data-size="{{ $price->size }}" data-item="{{ $price->item }}"
+                                                    data-option-type="{{ $price->option_type }}" data-option-value="{{ $price->option_value }}"></option>
+                                            @endforeach
+                                        </select>
+                                    @elseif($fee->prices->count() > 1 || ($fee->prices->first() && $isContextual))
                                         <label class="form-label">
                                             {{ $isTuition ? 'Класс и период оплаты' : match($fee->category) {
                                                 \App\Models\Fee::CATEGORY_TRANSPORT => 'Зона / вариант трансфера',
@@ -88,7 +117,8 @@
                                             data-size="{{ $fee->prices->first()->size }}" data-item="{{ $fee->prices->first()->item }}"
                                             data-option-type="{{ $fee->prices->first()->option_type }}" data-option-value="{{ $fee->prices->first()->option_value }}">
                                     @endif
-                                    <div class="mt-2">Цена: <strong class="price-preview">Определяется сервером</strong></div>
+                                    <div class="mt-2">Цена: <strong class="price-preview" aria-live="polite">Не выбрано</strong></div>
+                                    <div class="price-error small text-danger d-none" role="alert"></div>
                                     <div class="tariff-validity small text-muted"></div>
                                 </div>
 
@@ -106,7 +136,7 @@
 
             <div class="card border-0 shadow-sm mt-4"><div class="card-body d-flex justify-content-between align-items-center">
                 <div><div class="text-muted">Предварительный итог</div><strong id="invoice-preview-total">0.00 EGP</strong><div class="small text-muted">Окончательная сумма рассчитывается сервером.</div></div>
-                <button class="btn btn-primary">Создать счёт</button>
+                <button type="submit" class="btn btn-primary">Создать счёт</button>
             </div></div>
         </form>
     @endif
@@ -120,22 +150,46 @@ document.addEventListener('DOMContentLoaded', () => {
     const date = document.getElementById('invoice-pricing-date');
     const token = form.querySelector('[name="_token"]').value;
     const fields = {gradeGroup: 'grade_group', paymentPeriod: 'payment_period', size: 'uniform_size', item: 'uniform_item', optionType: 'option_type', optionValue: 'option_value'};
+    const submit = form.querySelector('button[type="submit"]');
+    const money = amount => Number(amount).toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' EGP';
+    let previewGeneration = 0;
+    let previewController = null;
 
     const update = async () => {
+        const generation = ++previewGeneration;
+        previewController?.abort();
+        previewController = new AbortController();
         let cents = 0;
         let unavailable = false;
         let selected = 0;
+        form.dataset.pricingAvailable = 'false';
+        submit.disabled = true;
         for (const card of document.querySelectorAll('.service-card')) {
             const check = card.querySelector('.fee-check');
             const config = card.querySelector('.service-config');
+            const preview = card.querySelector('.price-preview');
+            const error = card.querySelector('.price-error');
             card.classList.toggle('border-primary', check.checked);
             card.classList.toggle('border-0', !check.checked);
             config.classList.toggle('d-none', !check.checked);
-            if (!check.checked) continue;
+            if (!check.checked) {
+                preview.textContent = 'Не выбрано';
+                error.classList.add('d-none');
+                card.querySelector('.tariff-validity').textContent = '';
+                continue;
+            }
             selected++;
+            preview.textContent = 'Расчёт…';
+            error.classList.add('d-none');
 
             const fee = card.dataset.fee;
             const select = card.querySelector('.tariff-select');
+            const zone = card.querySelector('.transport-zone-select');
+            const period = card.querySelector('.transport-period-select');
+            if (select?.tagName === 'SELECT' && zone && period) {
+                const matching = Array.from(select.options).find(candidate => candidate.dataset.optionValue === zone.value && candidate.dataset.paymentPeriod === period.value);
+                select.value = matching?.value || '';
+            }
             const option = select?.selectedOptions?.[0] || select;
             if (option) {
                 card.querySelector(`[name="fee_price_id[${fee}]"]`).value = option.value || '';
@@ -148,19 +202,42 @@ document.addEventListener('DOMContentLoaded', () => {
             body.append('enrollment_mode_id', '{{ $student->currentEnrollment?->enrollment_mode_id }}'); body.append('pricing_date', date.value);
             if (option?.value) body.append('fee_price_id', option.value);
             if (option) Object.entries(fields).forEach(([key, name]) => { if (option.dataset[key]) body.append(name === 'uniform_size' ? 'size' : name === 'uniform_item' ? 'item' : name, option.dataset[key]); });
-            const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {Accept: 'application/json'}});
-            if (!response.ok) { card.querySelector('.price-preview').textContent = 'Тариф не настроен'; unavailable = true; continue; }
+            let response;
+            try {
+                response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {Accept: 'application/json'}, signal: previewController.signal});
+            } catch (requestError) {
+                if (requestError.name === 'AbortError' || generation !== previewGeneration) return;
+                response = null;
+            }
+            if (generation !== previewGeneration) return;
+            if (!response?.ok) {
+                preview.textContent = 'Цена не определена';
+                error.textContent = 'Для выбранных параметров тариф не найден.';
+                error.classList.remove('d-none');
+                unavailable = true;
+                continue;
+            }
             const result = await response.json();
+            if (generation !== previewGeneration) return;
+            if (!Number.isFinite(Number(result.amount)) || Number(result.amount) <= 0) {
+                preview.textContent = 'Цена не определена';
+                error.textContent = 'Сервер не вернул корректную цену тарифа.';
+                error.classList.remove('d-none');
+                unavailable = true;
+                continue;
+            }
             cents += Math.round(Number(result.amount) * 100);
-            card.querySelector('.price-preview').textContent = Number(result.amount).toFixed(2) + ' EGP';
+            preview.textContent = money(result.amount);
             const format = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU') : '';
             card.querySelector('.tariff-validity').textContent = result.valid_from ? `Действует с ${format(result.valid_from)}${result.valid_to ? ` по ${format(result.valid_to)}` : ''}` : '';
         }
+        if (generation !== previewGeneration) return;
         document.getElementById('selected-service-count').textContent = `Выбрано: ${selected}`;
-        document.getElementById('invoice-preview-total').textContent = (cents / 100).toFixed(2) + ' EGP';
-        form.dataset.pricingAvailable = unavailable ? 'false' : 'true';
+        document.getElementById('invoice-preview-total').textContent = money(cents / 100);
+        form.dataset.pricingAvailable = !unavailable && selected > 0 ? 'true' : 'false';
+        submit.disabled = form.dataset.pricingAvailable !== 'true';
     };
-    document.querySelectorAll('.fee-check,.tariff-select').forEach(element => element.addEventListener('change', update));
+    document.querySelectorAll('.fee-check,.tariff-select,.transport-zone-select,.transport-period-select').forEach(element => element.addEventListener('change', update));
     date.addEventListener('change', update);
     form.addEventListener('submit', event => { if (!form.querySelector('.fee-check:checked') || form.dataset.pricingAvailable === 'false') event.preventDefault(); });
     update();

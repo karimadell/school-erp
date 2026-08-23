@@ -127,7 +127,8 @@ class StoreInvoiceRequest extends FormRequest
                 $allowed = match ($fee->category) {
                     Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
                     Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL => ['grade_group', 'payment_period', 'first_last_month'],
-                    Fee::CATEGORY_TRANSPORT, Fee::CATEGORY_FOOD => ['option_type', 'option_value'],
+                    Fee::CATEGORY_TRANSPORT => ['payment_period', 'option_type', 'option_value'],
+                    Fee::CATEGORY_FOOD => ['option_type', 'option_value'],
                     Fee::CATEGORY_UNIFORM => ['size', 'item', 'option_type', 'option_value'],
                     default => [],
                 };

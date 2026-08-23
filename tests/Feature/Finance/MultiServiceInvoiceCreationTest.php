@@ -84,13 +84,14 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
 
     public function test_tuition_and_transport_keep_independent_context_and_deselected_service_is_ignored(): void
     {
-        [$transport, $transportPrice] = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '200.00', ['option_type' => 'zone', 'option_value' => 'A']);
+        [$transport, $transportPrice] = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '200.00', ['option_type' => 'zone', 'option_value' => 'A', 'payment_period' => 'monthly']);
         [$ignored, $ignoredPrice] = $this->service('Не выбран', Fee::CATEGORY_OTHER, '999.00');
 
         $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store', $this->student),
             $this->payload([$this->fee, $transport], [$transportPrice], [
                 'option_type' => [$transport->id => 'zone', $ignored->id => 'ignored'],
                 'option_value' => [$transport->id => 'A', $ignored->id => 'ignored'],
+                'payment_period' => [$transport->id => 'monthly'],
                 'fee_price_id' => [$transport->id => $transportPrice->id, $ignored->id => $ignoredPrice->id],
             ]))->assertRedirect();
 
@@ -225,7 +226,7 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
     public function test_tuition_transport_food_and_uniform_context_is_persisted_from_tariffs(): void
     {
         [$tuition, $tuitionPrice] = $this->service('Обучение 1–4', Fee::CATEGORY_TUITION, '1000.00', ['grade_group' => '1–4 классы', 'payment_period' => 'yearly']);
-        [$transport, $transportPrice] = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '200.00', ['option_type' => 'zone', 'option_value' => 'A']);
+        [$transport, $transportPrice] = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '200.00', ['option_type' => 'zone', 'option_value' => 'A', 'payment_period' => 'monthly']);
         [$food, $foodPrice] = $this->service('Питание', Fee::CATEGORY_FOOD, '150.00', ['option_type' => 'meal_plan', 'option_value' => 'monthly']);
         [$uniform, $uniformPrice] = $this->service('Форма', Fee::CATEGORY_UNIFORM, '250.00', ['item' => 'polo', 'size' => 'M']);
         $fees = [$tuition, $transport, $food, $uniform];
@@ -234,7 +235,7 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
         $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store', $this->student),
             $this->payload($fees, $prices, [
                 'grade_group' => [$tuition->id => '1–4 классы'],
-                'payment_period' => [$tuition->id => 'yearly'],
+                'payment_period' => [$tuition->id => 'yearly', $transport->id => 'monthly'],
                 'option_type' => [$transport->id => 'zone', $food->id => 'meal_plan'],
                 'option_value' => [$transport->id => 'A', $food->id => 'monthly'],
                 'uniform_item' => [$uniform->id => 'polo'],
@@ -244,7 +245,7 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
         $invoice = Invoice::with('items')->sole();
         $items = $invoice->items->keyBy('fee_id');
         $this->assertSame(['1–4 классы', 'yearly'], [$items[$tuition->id]->metadata['grade_group'], $items[$tuition->id]->metadata['payment_period']]);
-        $this->assertSame(['zone', 'A'], [$items[$transport->id]->metadata['option_type'], $items[$transport->id]->metadata['option_value']]);
+        $this->assertSame(['zone', 'A', 'monthly'], [$items[$transport->id]->metadata['option_type'], $items[$transport->id]->metadata['option_value'], $items[$transport->id]->metadata['payment_period']]);
         $this->assertSame(['meal_plan', 'monthly'], [$items[$food->id]->metadata['option_type'], $items[$food->id]->metadata['option_value']]);
         $this->assertSame(['polo', 'M'], [$items[$uniform->id]->metadata['item'], $items[$uniform->id]->metadata['size']]);
 
@@ -271,6 +272,29 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
         $this->assertSame(Invoice::STATUS_PAID, $invoice->fresh()->status);
         $this->assertSame('0.00', $invoice->fresh()->remaining_amount);
         $this->assertDatabaseCount('invoice_items', 2);
+    }
+
+    public function test_invoice_page_exposes_structured_transport_controls_and_stale_preview_protection(): void
+    {
+        [$transport] = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '13500.00', [
+            'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'yearly',
+        ]);
+        foreach ([
+            ['1500.00', 'Зона 1', 'monthly'], ['16200.00', 'Зона 2', 'yearly'], ['1800.00', 'Зона 2', 'monthly'],
+        ] as [$amount, $zone, $period]) {
+            FeePrice::create([
+                'fee_id' => $transport->id, 'academic_year_id' => $this->year->id,
+                'amount' => $amount, 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30',
+                'option_type' => 'zone', 'option_value' => $zone, 'payment_period' => $period, 'is_active' => true,
+            ]);
+        }
+
+        $this->actingAs($this->accountant)->get(route('dashboard.students.invoices.create', $this->student))
+            ->assertOk()
+            ->assertSee('Зона тарифа')->assertSee('Период оплаты')->assertSee('Ежемесячно')->assertSee('За год')
+            ->assertSee('transport-zone-select')->assertSee('transport-period-select')
+            ->assertSee('previewGeneration')->assertSee('new AbortController()')->assertSee('generation !== previewGeneration')
+            ->assertSee('Для выбранных параметров тариф не найден.')->assertSee('price-error');
     }
 
     public function test_detail_print_pdf_and_student_finance_render_each_payment_purpose(): void

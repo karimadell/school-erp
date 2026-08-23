@@ -30,22 +30,11 @@ class ServiceCoverageService
             throw ValidationException::withMessages(['billing_unit' => 'Поддерживаются месячные и дневные единицы покрытия.']);
         }
 
-        if (empty($data['fee_price_id'])) {
-            throw ValidationException::withMessages(['fee_price_id' => 'Для тарифного покрытия требуется исходный тариф.']);
-        }
-        $price = FeePrice::findOrFail($data['fee_price_id']);
-        if ($price->fee_id !== $item->fee_id) {
-            throw ValidationException::withMessages(['fee_price_id' => 'Тариф не относится к услуге позиции счёта.']);
+        $price = $this->sourceTariff($item);
+        if (empty($data['fee_price_id']) || (int) $data['fee_price_id'] !== $price->id) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Выбранный тариф не совпадает с исходным тарифом позиции счёта.']);
         }
         $metadata = $item->metadata ?? [];
-        if (isset($metadata['fee_price_id']) && (int) $metadata['fee_price_id'] !== $price->id) {
-            throw ValidationException::withMessages(['fee_price_id' => 'Тариф не совпадает со снимком тарифа позиции счёта.']);
-        }
-        foreach (['payment_period', 'option_type', 'option_value', 'grade_group', 'item', 'size'] as $field) {
-            if (array_key_exists($field, $metadata) && (string) $metadata[$field] !== (string) ($price->{$field} ?? '')) {
-                throw ValidationException::withMessages(['fee_price_id' => 'Измерения тарифа конфликтуют со снимком позиции счёта.']);
-            }
-        }
         if ($item->subscription_id) {
             $subscription = $item->subscription;
             if (! $subscription || $subscription->fee_id !== $item->fee_id || $subscription->enrollment?->student_id !== $item->invoice->student_id) {
@@ -92,5 +81,46 @@ class ServiceCoverageService
                 'created_by' => $actor->id,
             ],
         );
+    }
+
+    public function sourceTariff(InvoiceItem $item): FeePrice
+    {
+        $item->loadMissing(['invoice', 'fee']);
+        $metadata = $item->metadata ?? [];
+        if (empty($metadata['fee_price_id']) || ! is_numeric($metadata['fee_price_id'])) {
+            throw ValidationException::withMessages([
+                'invoice_item_id' => 'Позиция счёта не содержит подтверждённую ссылку на исходный тариф.',
+            ]);
+        }
+
+        $price = FeePrice::find((int) $metadata['fee_price_id']);
+        if (! $price) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Исходный тариф позиции счёта больше не существует.']);
+        }
+        if ($price->fee_id !== $item->fee_id) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Тариф не относится к услуге позиции счёта.']);
+        }
+        if ($price->currency !== 'EGP') {
+            throw ValidationException::withMessages(['fee_price_id' => 'Для покрытия поддерживаются только тарифы в EGP.']);
+        }
+        if ($item->invoice?->academic_year_id && $price->academic_year_id !== $item->invoice->academic_year_id) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Тариф относится к другому учебному году.']);
+        }
+        foreach (['grade_id', 'grade_group', 'payment_period', 'option_type', 'option_value', 'item', 'size'] as $field) {
+            if (array_key_exists($field, $metadata) && (string) $metadata[$field] !== (string) ($price->{$field} ?? '')) {
+                throw ValidationException::withMessages(['fee_price_id' => 'Измерения тарифа конфликтуют со снимком позиции счёта.']);
+            }
+        }
+        if (! in_array($price->payment_period, ['monthly', 'daily'], true)) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Тариф не поддерживает месячное или дневное покрытие.']);
+        }
+        if ($price->payment_period === 'daily' && $item->fee?->category !== \App\Models\Fee::CATEGORY_FOOD) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Дневное покрытие поддерживается только для питания.']);
+        }
+        if (bccomp((string) $item->unit_price, (string) $price->amount, 2) !== 0) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Цена позиции счёта не совпадает со снимком исходного тарифа.']);
+        }
+
+        return $price;
     }
 }

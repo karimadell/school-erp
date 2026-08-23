@@ -21,6 +21,7 @@ use App\Services\Finance\InvoiceCancellationService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InvoiceRefundService;
 use App\Support\FinanceShareRecipient;
+use App\Services\Finance\ServiceCoverageService;
 use App\Services\Finance\StudentFinanceSummaryService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
@@ -74,7 +75,7 @@ class FinanceOperationsController extends Controller
         ]);
     }
 
-    public function student(Student $student): View
+    public function student(Student $student, ServiceCoverageService $coverageService): View
     {
         $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','invoices.academicYear','invoices.items.fee','invoices.installments.payments','invoices.payments.cashAccount','invoices.payments.creator','enrollments.serviceSubscriptions.fee','enrollments.serviceSubscriptions.invoiceItems']);
         $summary = $this->summaries->summarize($student);
@@ -83,6 +84,17 @@ class FinanceOperationsController extends Controller
             ->where('student_id', $student->id)->latest()->get();
         $coveragePrices = FeePrice::active()->whereIn('fee_id', $coverages->pluck('fee_id'))
             ->orderBy('start_date')->get()->groupBy('fee_id');
+        $coveredItemIds = $coverages->pluck('invoice_item_id');
+        $coverageSources = $student->invoices->flatMap->items->whereNotIn('id', $coveredItemIds)
+            ->map(function ($item) use ($coverageService): array {
+                try {
+                    $price = $coverageService->sourceTariff($item);
+
+                    return ['item' => $item, 'price' => $price, 'billing_unit' => $price->payment_period, 'reason' => null];
+                } catch (\Illuminate\Validation\ValidationException $exception) {
+                    return ['item' => $item, 'price' => null, 'billing_unit' => null, 'reason' => collect($exception->errors())->flatten()->first()];
+                }
+            })->values();
         $history = collect()
             ->concat($summary['invoices']->map(fn ($invoice) => ['at'=>$invoice->created_at,'label'=>'Создан счёт','text'=>$invoice->display_number]))
             ->concat($summary['payments']->map(fn ($payment) => ['at'=>$payment->paid_at ?? $payment->created_at,'label'=>'Принят платёж','text'=>$payment->payment_number]))
@@ -90,7 +102,7 @@ class FinanceOperationsController extends Controller
             ->concat($summary['promises']->map(fn ($promise) => ['at' => $promise->created_at, 'label' => 'Обещание оплаты', 'text' => $promise->promised_amount.' EGP · '.$promise->status]))
             ->sortByDesc('at')->values();
 
-        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'coverages', 'coveragePrices', 'history'));
+        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'coverages', 'coveragePrices', 'coverageSources', 'history'));
     }
 
     public function statement(Student $student): View

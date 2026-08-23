@@ -23,5 +23,6 @@ return [
     'whatsapp_receipt_message' => 'Квитанция :number на сумму :amount EGP. PDF-файл можно отправить отдельно через кнопку «Поделиться».',
     'service' => 'Услуга', 'description' => 'Описание / назначение', 'variant' => 'Вариант', 'quantity' => 'Количество', 'unit_price' => 'Цена за единицу', 'amount' => 'Сумма', 'no_invoice_items' => 'Позиции счёта отсутствуют.',
     'student_statement' => 'Финансовая выписка ученика', 'print_statement' => 'Печать выписки', 'statement_pdf' => 'PDF выписки', 'print' => 'Печать',
+    'coverage_source_invoice' => 'Исходный счёт / позиция', 'original_tariff' => 'Исходный тариф', 'pricing_context' => 'Контекст тарифа', 'coverage_start' => 'Начало покрытия', 'coverage_end' => 'Окончание покрытия', 'billing_unit' => 'Единица покрытия', 'billing_unit_monthly' => 'Месяц', 'billing_unit_daily' => 'День', 'record_coverage' => 'Зафиксировать покрытие', 'coverage_unsafe' => 'Покрытие нельзя создать безопасно:', 'no_coverage_sources' => 'Нет доступных позиций счёта для создания покрытия.',
     'charged' => 'Начислено', 'paid' => 'Оплачено', 'balance' => 'Остаток', 'overdue' => 'Просрочено', 'number' => 'Номер', 'date' => 'Дата', 'payments' => 'Платежи', 'invoice' => 'Счёт', 'payment_method' => 'Способ оплаты', 'no_invoices' => 'Счета отсутствуют.', 'no_payments' => 'Платежи отсутствуют.',
 ];

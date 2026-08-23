@@ -62,7 +62,8 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             ->assertSee(route('dashboard.finance.services.index'), false)
             ->assertSee(route('dashboard.finance.tariffs.index'), false)
             ->assertSee(route('dashboard.invoices.index'), false)
-            ->assertSee(route('dashboard.cash.expenses'), false)
+            ->assertSee(route('filament.admin.resources.expenses.index'), false)
+            ->assertDontSee(route('dashboard.cash.expenses'), false)
             ->assertSee(route('dashboard.cash.reports'), false)
             ->assertSee(route('dashboard.finance.workspace'), false);
     }

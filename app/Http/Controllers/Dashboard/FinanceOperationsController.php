@@ -59,7 +59,11 @@ class FinanceOperationsController extends Controller
             ->when($request->filled('date_to'), fn ($query) => $query->whereHas('invoices', fn ($q) => $q->whereDate('created_at', '<=', $request->date('date_to'))))
             ->orderBy('last_name_ru')->orderBy('first_name_ru')->paginate(25)->withQueryString();
 
-        $rows = $students->getCollection()->map(fn (Student $student) => ['student' => $student, 'summary' => $this->summaries->summarize($student)]);
+        $summaries = $this->summaries->summarizeMany($students->getCollection());
+        $rows = $students->getCollection()->map(fn (Student $student) => [
+            'student' => $student,
+            'summary' => $summaries->get($student->id),
+        ]);
         $students->setCollection($rows);
 
         return view('dashboard.finance.workspace', [

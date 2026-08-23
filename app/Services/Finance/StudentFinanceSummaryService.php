@@ -8,24 +8,75 @@ use App\Models\Student;
 use App\Models\StudentCredit;
 use App\Models\StudentCreditApplication;
 use App\Models\TariffAdjustment;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 
 class StudentFinanceSummaryService
 {
     public function summarize(Student $student): array
     {
-        $invoices = $student->invoices->sortByDesc('created_at')->values();
+        return $this->summarizeMany(new EloquentCollection([$student]))->get($student->id);
+    }
+
+    /**
+     * Build the same canonical summary for several students with a bounded
+     * number of Phase 2 queries. Results are keyed by student ID.
+     *
+     * @param  Collection<int, Student>  $students
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function summarizeMany(Collection $students): Collection
+    {
+        if ($students->isEmpty()) {
+            return collect();
+        }
+
+        $students = new EloquentCollection($students->values()->all());
+        $students->loadMissing('invoices.payments');
+        $studentIds = $students->modelKeys();
+
+        $adjustments = TariffAdjustment::with(['fee', 'segments'])
+            ->whereIn('student_id', $studentIds)
+            ->where('status', TariffAdjustment::STATUS_POSTED)
+            ->latest('approved_at')
+            ->get()
+            ->groupBy('student_id');
+        $promises = PromiseToPay::with(['invoice', 'payment'])
+            ->whereIn('student_id', $studentIds)
+            ->latest()
+            ->get()
+            ->groupBy('student_id');
+        $credits = StudentCredit::with(['sourceAdjustment', 'applications.invoice'])
+            ->whereIn('student_id', $studentIds)
+            ->latest()
+            ->get()
+            ->groupBy('student_id');
+        $applications = StudentCreditApplication::whereIn('student_id', $studentIds)
+            ->get()
+            ->groupBy('student_id');
+
+        return $students->mapWithKeys(fn (Student $student): array => [
+            $student->id => $this->calculate(
+                $student->invoices,
+                $adjustments->get($student->id, collect()),
+                $promises->get($student->id, collect()),
+                $credits->get($student->id, collect()),
+                $applications->get($student->id, collect()),
+            ),
+        ]);
+    }
+
+    private function calculate(
+        Collection $studentInvoices,
+        Collection $adjustments,
+        Collection $promises,
+        Collection $credits,
+        Collection $applications,
+    ): array {
+        $invoices = $studentInvoices->sortByDesc('created_at')->values();
         $payments = $invoices->flatMap->payments
             ->sortByDesc(fn ($payment) => $payment->paid_at ?? $payment->created_at)
             ->values();
-        $adjustments = TariffAdjustment::with(['fee', 'segments'])
-            ->where('student_id', $student->id)->where('status', TariffAdjustment::STATUS_POSTED)
-            ->latest('approved_at')->get();
-        $promises = PromiseToPay::with(['invoice', 'payment'])
-            ->where('student_id', $student->id)->latest()->get();
-        $credits = StudentCredit::with(['sourceAdjustment', 'applications.invoice'])
-            ->where('student_id', $student->id)->latest()->get();
-        $applications = StudentCreditApplication::where('student_id', $student->id)->get();
         $appliedByInvoice = $applications->groupBy('invoice_id')->map(fn ($rows) => $this->sum($rows, 'amount'));
         $grossRemaining = $this->sum($invoices, 'remaining_amount');
         $creditApplied = $this->sum($applications, 'amount');

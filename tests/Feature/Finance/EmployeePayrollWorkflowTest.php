@@ -149,11 +149,11 @@ class EmployeePayrollWorkflowTest extends TestCase
         $this->actingAs($unauthorized)->get(route('dashboard.teacher-salaries.print', $payroll))->assertForbidden();
     }
 
-    public function test_payroll_permissions_are_defined_but_not_granted_to_operational_roles(): void
+    public function test_payroll_permissions_are_granted_to_admin_only(): void
     {
         foreach (['view payroll', 'manage payroll', 'approve payroll', 'pay payroll'] as $permission) {
-            $this->assertTrue(Permission::where('name', $permission)->exists());
-            $this->assertSame(0, Permission::where('name', $permission)->firstOrFail()->roles()->count());
+            $permissionModel = Permission::where('name', $permission)->firstOrFail();
+            $this->assertSame(['admin'], $permissionModel->roles()->pluck('name')->all());
         }
     }
 

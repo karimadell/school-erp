@@ -113,6 +113,10 @@ class RolesAndPermissionsSeeder extends Seeder
         // but it is no longer the protected application-wide bypass role.
         $admin = Role::firstOrCreate(['name' => 'admin']);
         $admin->syncPermissions($permissions);
+        // UAT payroll testing: admin-only grant of the four payroll
+        // permissions, deliberately left out of $permissions above. No
+        // other role is affected by this call.
+        $admin->givePermissionTo(['view payroll', 'manage payroll', 'approve payroll', 'pay payroll']);
 
         // 2. School Admin — full operational access, no system
         // configuration (manage users/roles/permissions).

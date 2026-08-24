@@ -2,9 +2,11 @@
 
 namespace Tests\Feature\Finance;
 
+use App\Filament\Resources\TeacherSalaries\Pages\CreateTeacherSalary;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\EmployeeSalaryRate;
+use App\Models\PayrollAdjustment;
 use App\Models\Teacher;
 use App\Models\TeacherSalary;
 use App\Models\User;
@@ -12,6 +14,7 @@ use App\Services\Finance\EmployeePayrollService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
+use Livewire\Livewire;
 use Spatie\Permission\Models\Permission;
 use Tests\TestCase;
 
@@ -155,6 +158,44 @@ class EmployeePayrollWorkflowTest extends TestCase
             $permissionModel = Permission::where('name', $permission)->firstOrFail();
             $this->assertSame(['admin'], $permissionModel->roles()->pluck('name')->all());
         }
+    }
+
+    public function test_create_form_reactively_previews_net_salary_from_base_salary_and_adjustments(): void
+    {
+        $employee = $this->employee('reception', 'Секретарь');
+
+        $form = Livewire::actingAs($this->payrollUser)->test(CreateTeacherSalary::class);
+
+        $form->set('data.base_salary', '25000');
+        $this->assertSame('25000.00', $form->get('data.net_salary'));
+
+        $form->set('data.adjustments', [
+            ['type' => PayrollAdjustment::TYPE_BONUS, 'amount' => '2000', 'reason' => 'Премия'],
+        ]);
+        $this->assertSame('27000.00', $form->get('data.net_salary'));
+
+        $form->set('data.adjustments', [
+            ['type' => PayrollAdjustment::TYPE_BONUS, 'amount' => '2000', 'reason' => 'Премия'],
+            ['type' => PayrollAdjustment::TYPE_DEDUCTION, 'amount' => '500', 'reason' => 'Аванс'],
+        ]);
+        $this->assertSame('26500.00', $form->get('data.net_salary'));
+
+        $form->set('data.adjustments', []);
+        $this->assertSame('25000.00', $form->get('data.net_salary'));
+
+        // The preview never reaches the persisted record: net_salary stays
+        // server-computed by TeacherSalary::calculateNet() regardless of
+        // what the client displayed.
+        $form->set('data.employee_user_id', $employee->id)
+            ->set('data.salary_month', '2026-09-01')
+            ->set('data.adjustments', [
+                ['type' => PayrollAdjustment::TYPE_BONUS, 'amount' => '2000', 'reason' => 'Премия'],
+            ])
+            ->set('data.net_salary', '999999.99')
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $this->assertSame('27000.00', TeacherSalary::sole()->net_salary);
     }
 
     public function test_legacy_salary_routes_cannot_create_a_second_cash_posting_path(): void

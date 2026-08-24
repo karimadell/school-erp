@@ -16,6 +16,8 @@ use Filament\Actions\EditAction;
 use Filament\Forms;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
+use Filament\Schemas\Components\Utilities\Get;
+use Filament\Schemas\Components\Utilities\Set;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use UnitEnum;
@@ -57,9 +59,13 @@ class TeacherSalaryResource extends Resource
                 ->searchable()->preload()->required()->disabledOn('edit'),
             Forms\Components\TextInput::make('position')->label(__('teacher_salary.position'))->maxLength(255),
             Forms\Components\DatePicker::make('salary_month')->label(__('teacher_salary.month'))->required()->native(false)->disabledOn('edit'),
-            Forms\Components\TextInput::make('base_salary')->label(__('teacher_salary.base_salary'))->numeric()->minValue(0)->required(),
+            Forms\Components\TextInput::make('base_salary')->label(__('teacher_salary.base_salary'))->numeric()->minValue(0)->required()
+                ->live(onBlur: true)
+                ->afterStateUpdated(fn (Get $get, Set $set) => self::updateNetSalaryPreview($get, $set)),
             Forms\Components\Repeater::make('adjustments')
                 ->label(__('teacher_salary.adjustments'))
+                ->live()
+                ->afterStateUpdated(fn (Get $get, Set $set) => self::updateNetSalaryPreview($get, $set))
                 ->schema([
                     Forms\Components\Select::make('type')->label(__('teacher_salary.adjustment_type'))->options([
                         PayrollAdjustment::TYPE_BONUS => __('teacher_salary.bonus'),
@@ -71,6 +77,48 @@ class TeacherSalaryResource extends Resource
                 ])->columns(3)->defaultItems(0)->addActionLabel(__('teacher_salary.add_adjustment')),
             Forms\Components\TextInput::make('net_salary')->label(__('teacher_salary.net_salary'))->disabled()->dehydrated(false),
         ]);
+    }
+
+    /**
+     * UI-only preview: recomputes the same base + bonuses + allowances -
+     * deductions formula as TeacherSalary::calculateNet() so the "Net
+     * payable" field reflects unsaved edits immediately. Purely cosmetic —
+     * net_salary is dehydrated(false), so this never reaches the request;
+     * EmployeePayrollService/TeacherSalary::calculateNet() remain the sole
+     * source of truth for the persisted amount.
+     */
+    protected static function updateNetSalaryPreview(Get $get, Set $set): void
+    {
+        $totals = [
+            PayrollAdjustment::TYPE_BONUS => '0.00',
+            PayrollAdjustment::TYPE_ALLOWANCE => '0.00',
+            PayrollAdjustment::TYPE_DEDUCTION => '0.00',
+        ];
+
+        foreach ((array) ($get('adjustments') ?? []) as $line) {
+            $type = $line['type'] ?? null;
+
+            if (! array_key_exists($type, $totals)) {
+                continue;
+            }
+
+            $totals[$type] = bcadd($totals[$type], self::normalizeAmount($line['amount'] ?? null), 2);
+        }
+
+        $net = bcsub(
+            bcadd(bcadd(self::normalizeAmount($get('base_salary')), $totals[PayrollAdjustment::TYPE_BONUS], 2), $totals[PayrollAdjustment::TYPE_ALLOWANCE], 2),
+            $totals[PayrollAdjustment::TYPE_DEDUCTION],
+            2,
+        );
+
+        $set('net_salary', $net);
+    }
+
+    private static function normalizeAmount(mixed $value): string
+    {
+        $value = (string) ($value ?? '0');
+
+        return preg_match('/^\d+(?:\.\d+)?$/', $value) ? bcadd($value, '0', 2) : '0.00';
     }
 
     public static function table(Tables\Table $table): Tables\Table

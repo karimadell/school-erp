@@ -77,15 +77,9 @@
                 // TeacherAssignmentResource's real gate — Filament resolves
                 // it from TeacherAssignmentPolicy::viewAny(), which is
                 // 'manage teachers' (app/Policies/TeacherAssignmentPolicy.php).
-                // "Зарплаты" has no dedicated policy or permission at all
-                // (TeacherSalaryResource defines no canViewAny() and no
-                // TeacherSalaryPolicy is registered), so the only real
-                // authorization boundary Filament itself enforces there is
-                // admin-panel access — $canAccessAdminPanel mirrors that
-                // exactly rather than inventing a new permission.
                 ['label' => 'Назначения', 'icon' => 'link_2', 'href' => (Route::has('filament.admin.resources.teacher-assignments.index') && (auth()->user()?->can('manage teachers') ?? false)) ? route('filament.admin.resources.teacher-assignments.index') : null],
                 // Квалификации: only exists embedded in the Teacher edit page — no standalone page to link.
-                ['label' => 'Зарплаты', 'icon' => 'wallet', 'href' => (Route::has('filament.admin.resources.teacher-salaries.index') && $canAccessAdminPanel) ? route('filament.admin.resources.teacher-salaries.index') : null],
+                ['label' => __('teacher_salary.navigation'), 'icon' => 'wallet', 'href' => (Route::has('filament.admin.resources.teacher-salaries.index') && (auth()->user()?->can('view payroll') ?? false)) ? route('filament.admin.resources.teacher-salaries.index') : null],
                 // Сотрудники: no non-teaching-staff concept exists yet — hidden.
             ],
         ],

@@ -1,19 +1,6 @@
 <?php
 
 return [
-    'navigation_group' => 'Teachers and Staff',
-    'navigation' => 'Teacher Salaries',
-    'model' => 'Salary Accrual',
-    'models' => 'Teacher Salary Accruals',
-    'teacher' => 'Teacher',
-    'month' => 'Salary Month',
-    'base_salary' => 'Base Salary',
-    'bonus' => 'Bonus',
-    'deductions' => 'Deductions',
-    'net_salary' => 'Net Salary',
-    'empty_heading' => 'No salary accruals yet',
-    'empty_description' => 'Create the first teacher salary accrual.',
-    'filters' => ['teacher' => 'Teacher'],
-    'payslip' => 'Salary statement', 'print' => 'Print', 'pdf' => 'PDF', 'period' => 'Period', 'generated_at' => 'Generated at',
-    'component' => 'Component', 'amount' => 'Amount', 'status' => 'Status', 'accrued' => 'Accrued',
+    'navigation_group' => 'Teachers and Staff', 'navigation' => 'Employee Payroll', 'model' => 'Payroll', 'models' => 'Employee Payroll', 'teacher' => 'Teacher', 'employee' => 'Employee', 'position' => 'Position', 'month' => 'Month', 'base_salary' => 'Base salary', 'bonus' => 'Bonus', 'bonuses' => 'Bonuses', 'allowance' => 'Allowance', 'allowances' => 'Allowances', 'deduction' => 'Deduction', 'deductions' => 'Deductions', 'net_salary' => 'Net payable', 'adjustments' => 'Adjustments', 'adjustment_type' => 'Type', 'reason' => 'Reason', 'add_adjustment' => 'Add line', 'empty_heading' => 'No payroll yet', 'empty_description' => 'Create payroll for an employee.', 'filters' => ['teacher' => 'Teacher', 'employee' => 'Employee', 'month' => 'Month', 'position' => 'Position', 'status' => 'Status'], 'payslip' => 'Employee payslip', 'print' => 'Print', 'pdf' => 'PDF', 'period' => 'Period', 'generated_at' => 'Generated at', 'paid_at' => 'Paid at', 'component' => 'Component', 'amount' => 'Amount', 'status' => 'Status', 'approve' => 'Approve', 'pay' => 'Pay', 'approved' => 'Payroll approved', 'paid' => 'Payroll paid', 'cash_account' => 'Cash account', 'payment_method' => 'Payment method', 'legacy_amount' => 'Historical amount', 'statuses' => ['draft' => 'Draft', 'approved' => 'Approved', 'paid' => 'Paid'], 'types' => ['bonus' => 'Bonus', 'allowance' => 'Allowance', 'deduction' => 'Deduction'], 'methods' => ['cash' => 'Cash', 'card' => 'Card', 'bank' => 'Bank', 'transfer' => 'Transfer'], 'payment_description' => 'Salary payment: :employee, :month',
+    'validation' => ['adjustment_type' => 'Invalid adjustment type.', 'positive_amount' => 'Amount must be greater than zero.', 'locked' => 'Approved or paid payroll cannot be changed.', 'duplicate' => 'Payroll already exists for this employee and month.', 'rate_mismatch' => 'Base salary does not match the effective rate.', 'negative_net' => 'Deductions cannot make net pay negative.', 'ambiguous_rate' => 'Employee salary rates overlap.', 'employee' => 'Select an active employee.', 'amount' => 'Enter a valid monetary amount.', 'payment_method' => 'Invalid payment method.', 'approve_first' => 'Approve payroll before payment.', 'cash_account' => 'Cash account is unavailable.', 'cash_session' => 'An open cash session is required for cash payment.', 'legacy_disabled' => 'The legacy salary module is disabled. Use Employee Payroll.', 'reason' => 'Each adjustment requires a reason.'],
 ];

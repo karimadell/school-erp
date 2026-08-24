@@ -2,13 +2,13 @@
 
 namespace Tests\Feature;
 
-use App\Filament\Resources\ClassResource\Pages\ListClasses;
 use App\Filament\Resources\ClassResource;
-use App\Filament\Resources\TeacherAssignments\TeacherAssignmentResource;
+use App\Filament\Resources\ClassResource\Pages\ListClasses;
 use App\Filament\Resources\TeacherAssignments\Pages\ListTeacherAssignments;
-use App\Filament\Resources\TeacherSalaries\TeacherSalaryResource;
+use App\Filament\Resources\TeacherAssignments\TeacherAssignmentResource;
 use App\Filament\Resources\TeacherSalaries\Pages\CreateTeacherSalary;
 use App\Filament\Resources\TeacherSalaries\Pages\ListTeacherSalaries;
+use App\Filament\Resources\TeacherSalaries\TeacherSalaryResource;
 use App\Models\Teacher;
 use App\Models\TeacherSalary;
 use App\Models\User;
@@ -26,7 +26,7 @@ class UatResourceLocalizationTest extends TestCase
         $user = $this->admin();
         app()->setLocale('ru');
 
-        $this->assertSame('Зарплаты учителей', TeacherSalaryResource::getNavigationLabel());
+        $this->assertSame('Зарплаты сотрудников', TeacherSalaryResource::getNavigationLabel());
         $this->assertSame('Назначения учителей', TeacherAssignmentResource::getNavigationLabel());
         $this->assertSame('Классы', ClassResource::getNavigationLabel());
 
@@ -51,7 +51,10 @@ class UatResourceLocalizationTest extends TestCase
     public function test_teacher_salary_create_workflow_uses_russian_labels_and_calculates_net_salary(): void
     {
         $user = $this->admin();
-        $teacher = Teacher::create([
+        $teacherUser = User::factory()->create(['name' => 'Тестовый учитель', 'is_active' => true]);
+        $teacherUser->assignRole('teacher');
+        Teacher::create([
+            'user_id' => $teacherUser->id,
             'first_name' => 'Тестовый учитель',
             'last_name' => 'УАТ-Проверка',
             'email' => 'salary.ui.uat@example.invalid',
@@ -61,17 +64,18 @@ class UatResourceLocalizationTest extends TestCase
 
         Livewire::actingAs($user)->test(CreateTeacherSalary::class)
             ->assertSuccessful()
-            ->assertSee('Учитель')
+            ->assertSee('Сотрудник')
             ->assertSee('Базовая зарплата')
-            ->assertSee('Премия')
-            ->assertSee('Удержания')
-            ->assertSee('Зарплата к выплате')
-            ->assertSee('Месяц начисления')
+            ->assertSee('Премии, надбавки и удержания')
+            ->assertSee('К выплате')
+            ->assertSee('Месяц')
             ->fillForm([
-                'teacher_id' => $teacher->id,
+                'employee_user_id' => $teacherUser->id,
                 'base_salary' => 18000,
-                'bonus' => 1200,
-                'deductions' => 300,
+                'adjustments' => [
+                    ['type' => 'bonus', 'amount' => 1200, 'reason' => 'Премия'],
+                    ['type' => 'deduction', 'amount' => 300, 'reason' => 'Удержание'],
+                ],
                 'salary_month' => '2026-07-01',
             ])
             ->call('create')
@@ -126,6 +130,7 @@ class UatResourceLocalizationTest extends TestCase
         $this->seed(RolesAndPermissionsSeeder::class);
         $user = User::factory()->create();
         $user->assignRole('admin');
+        $user->givePermissionTo(['view payroll', 'manage payroll', 'approve payroll', 'pay payroll']);
 
         return $user;
     }

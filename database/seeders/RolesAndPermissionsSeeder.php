@@ -98,6 +98,12 @@ class RolesAndPermissionsSeeder extends Seeder
         // Phase 2: defined but deliberately not added to operational roles.
         // Assignment is a separate separation-of-duties policy decision.
         Permission::firstOrCreate(['name' => 'approve tariff adjustments']);
+        // Employee payroll: deliberately defined without role grants. Payroll
+        // visibility, editing, approval and cash posting require a separate HR
+        // and separation-of-duties policy decision.
+        foreach (['view payroll', 'manage payroll', 'approve payroll', 'pay payroll'] as $permission) {
+            Permission::firstOrCreate(['name' => $permission]);
+        }
 
         // Protected Super Admin — full access and the application-wide bypass.
         $superAdmin = Role::firstOrCreate(['name' => 'super-admin']);

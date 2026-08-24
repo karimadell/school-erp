@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class CashTransaction extends Model
 {
@@ -50,6 +51,7 @@ class CashTransaction extends Model
         'created_by',      // Phase 3: cashier who posted the movement (nullable)
         'invoice_id',
         'invoice_payment_id',
+        'teacher_salary_id',
         'amount',
         'type',
         'category', // 🔥 جديد
@@ -99,6 +101,11 @@ class CashTransaction extends Model
     public function invoicePayment()
     {
         return $this->belongsTo(InvoicePayment::class);
+    }
+
+    public function payroll()
+    {
+        return $this->belongsTo(TeacherSalary::class, 'teacher_salary_id');
     }
 
     /*
@@ -151,6 +158,12 @@ class CashTransaction extends Model
 
     protected static function booted()
     {
+        static::updating(function ($transaction) {
+            if ($transaction->teacher_salary_id) {
+                throw ValidationException::withMessages(['transaction' => __('teacher_salary.validation.locked')]);
+            }
+        });
+
         // إنشاء
         static::created(function ($transaction) {
 
@@ -180,6 +193,12 @@ class CashTransaction extends Model
 
             if ($transaction->type === self::TYPE_OUT) {
                 $account->increment('balance', $transaction->amount);
+            }
+        });
+
+        static::deleting(function ($transaction) {
+            if ($transaction->teacher_salary_id) {
+                throw ValidationException::withMessages(['transaction' => __('teacher_salary.validation.locked')]);
             }
         });
     }

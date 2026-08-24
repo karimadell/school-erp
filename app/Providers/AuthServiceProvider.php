@@ -14,6 +14,7 @@ use App\Models\StudentFile;
 use App\Models\StudentServiceSubscription;
 use App\Models\StudentSubjectEnrollment;
 use App\Models\TeacherAssignment;
+use App\Models\TeacherSalary;
 use App\Models\User;
 use App\Policies\AcademicYearPolicy;
 use App\Policies\ClassTeacherPolicy;
@@ -29,6 +30,7 @@ use App\Policies\StudentFilePolicy;
 use App\Policies\StudentServiceSubscriptionPolicy;
 use App\Policies\StudentSubjectEnrollmentPolicy;
 use App\Policies\TeacherAssignmentPolicy;
+use App\Policies\TeacherSalaryPolicy;
 use App\Policies\UserPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Gate;
@@ -60,6 +62,7 @@ class AuthServiceProvider extends ServiceProvider
         LessonJournalEntry::class => LessonJournalEntryPolicy::class,
         StudentServiceSubscription::class => StudentServiceSubscriptionPolicy::class,
         TeacherAssignment::class => TeacherAssignmentPolicy::class,
+        TeacherSalary::class => TeacherSalaryPolicy::class,
         User::class => UserPolicy::class,
         Role::class => RolePolicy::class,
         Permission::class => PermissionPolicy::class,

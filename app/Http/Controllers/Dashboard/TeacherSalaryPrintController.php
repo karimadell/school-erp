@@ -11,17 +11,19 @@ class TeacherSalaryPrintController extends Controller
 {
     public function show(TeacherSalary $teacherSalary): View
     {
-        $teacherSalary->load('teacher');
+        $this->authorize('view', $teacherSalary);
+        $teacherSalary->load(['teacher', 'employee', 'adjustments', 'cashTransaction.account']);
 
         return view('dashboard.teacher-salaries.print', ['salary' => $teacherSalary, 'pdf' => false]);
     }
 
     public function pdf(TeacherSalary $teacherSalary)
     {
-        $teacherSalary->load('teacher');
+        $this->authorize('view', $teacherSalary);
+        $teacherSalary->load(['teacher', 'employee', 'adjustments', 'cashTransaction.account']);
 
         return Pdf::loadView('dashboard.teacher-salaries.print', ['salary' => $teacherSalary, 'pdf' => true])
             ->setPaper('a4')
-            ->download('teacher-salary-'.$teacherSalary->id.'.pdf');
+            ->download('employee-payroll-'.$teacherSalary->id.'.pdf');
     }
 }

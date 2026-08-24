@@ -46,6 +46,16 @@ class User extends Authenticatable implements FilamentUser
         return $this->hasOne(Teacher::class);
     }
 
+    public function payrolls(): HasMany
+    {
+        return $this->hasMany(TeacherSalary::class, 'employee_user_id');
+    }
+
+    public function salaryRates(): HasMany
+    {
+        return $this->hasMany(EmployeeSalaryRate::class, 'employee_user_id');
+    }
+
     // Phase 3: cash-drawer sessions this user opened.
     public function cashSessions(): HasMany
     {

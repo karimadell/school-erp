@@ -2,90 +2,47 @@
 
 namespace App\Http\Controllers\Dashboard;
 
+use App\Filament\Resources\TeacherSalaries\TeacherSalaryResource;
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use App\Models\Salary;
-use App\Models\Teacher;
-use App\Models\CashTransaction;
-use Barryvdh\DomPDF\Facade\Pdf;
-use Maatwebsite\Excel\Facades\Excel;
-use App\Imports\SalaryImport;
+use Illuminate\Http\RedirectResponse;
 
+/**
+ * Compatibility bridge for the obsolete, disconnected /salaries workflow.
+ * Payroll creation and payment now live exclusively in the canonical
+ * employee payroll resource and EmployeePayrollService.
+ */
 class SalaryController extends Controller
 {
-    public function index()
+    public function __construct()
     {
-        $salaries = Salary::with('teacher')->latest()->get();
-        return view('dashboard.salaries.index', compact('salaries'));
+        $this->middleware('permission:view payroll')->only(['index', 'create', 'payslip']);
+        $this->middleware('permission:manage payroll')->only(['store', 'import']);
     }
 
-    public function create()
+    public function index(): RedirectResponse
     {
-        $teachers = Teacher::all();
-        return view('dashboard.salaries.create', compact('teachers'));
+        return redirect(TeacherSalaryResource::getUrl('index'));
     }
 
-    public function store(Request $request)
+    public function create(): RedirectResponse
     {
-        $request->validate([
-            'teacher_id' => 'required|exists:teachers,id',
-            'base_salary' => 'required|numeric',
-            'bonus' => 'nullable|numeric',
-            'deduction' => 'nullable|numeric',
-        ]);
+        abort_unless(auth()->user()?->can('manage payroll'), 403);
 
-        $net = $request->base_salary + ($request->bonus ?? 0) - ($request->deduction ?? 0);
-
-        $salary = Salary::create([
-            'teacher_id' => $request->teacher_id,
-            'base_salary' => $request->base_salary,
-            'bonus' => $request->bonus ?? 0,
-            'deduction' => $request->deduction ?? 0,
-            'net_salary' => $net,
-            'month' => now(),
-        ]);
-
-        // 💰 تسجيل في الخزنة
-        CashTransaction::create([
-            'cash_account_id' => 1,
-            'type' => 'out',
-            'amount' => $net,
-            'description' => 'Salary payment - Teacher ID: '.$salary->teacher_id
-        ]);
-
-        return redirect()->route('dashboard.salaries.index')
-            ->with('success','Salary saved');
+        return redirect(TeacherSalaryResource::getUrl('create'));
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | 📄 PDF Payslip
-    |--------------------------------------------------------------------------
-    */
-
-    public function payslip($id)
+    public function store(): never
     {
-        $salary = Salary::with('teacher')->findOrFail($id);
-
-        $pdf = Pdf::loadView('dashboard.salaries.payslip', compact('salary'));
-
-        return $pdf->download('salary_'.$salary->id.'.pdf');
+        abort(410, __('teacher_salary.validation.legacy_disabled'));
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | 📥 Import Excel
-    |--------------------------------------------------------------------------
-    */
-
-    public function import(Request $request)
+    public function payslip(): RedirectResponse
     {
-        $request->validate([
-            'file' => 'required|file|mimes:xlsx,csv'
-        ]);
+        return redirect(TeacherSalaryResource::getUrl('index'));
+    }
 
-        Excel::import(new SalaryImport, $request->file('file'));
-
-        return back()->with('success','Salaries imported successfully');
+    public function import(): never
+    {
+        abort(410, __('teacher_salary.validation.legacy_disabled'));
     }
 }

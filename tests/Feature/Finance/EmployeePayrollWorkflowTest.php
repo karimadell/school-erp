@@ -198,6 +198,51 @@ class EmployeePayrollWorkflowTest extends TestCase
         $this->assertSame('27000.00', TeacherSalary::sole()->net_salary);
     }
 
+    public function test_net_salary_preview_reacts_to_editing_an_existing_adjustment_row_in_place(): void
+    {
+        // Mutates the exact nested state paths a real browser's
+        // wire:model.live bindings send for repeater item fields
+        // (data.adjustments.{index}.{field}), rather than replacing the
+        // whole 'adjustments' array — this is what fillForm()/whole-array
+        // set() calls do NOT exercise.
+        $form = Livewire::actingAs($this->payrollUser)->test(CreateTeacherSalary::class);
+        $form->set('data.base_salary', '25000');
+
+        $form->set('data.adjustments', [
+            ['type' => PayrollAdjustment::TYPE_BONUS, 'amount' => '500', 'reason' => 'test'],
+        ]);
+        $this->assertSame('25500.00', $form->get('data.net_salary'));
+
+        // Bug scenario: change the SAME row's type in place, bonus -> deduction.
+        $form->set('data.adjustments.0.type', PayrollAdjustment::TYPE_DEDUCTION);
+        $this->assertSame('24500.00', $form->get('data.net_salary'));
+
+        // deduction -> allowance
+        $form->set('data.adjustments.0.type', PayrollAdjustment::TYPE_ALLOWANCE);
+        $this->assertSame('25500.00', $form->get('data.net_salary'));
+
+        // amount 500 -> 1000, still an allowance
+        $form->set('data.adjustments.0.amount', '1000');
+        $this->assertSame('26000.00', $form->get('data.net_salary'));
+
+        // Add a second row (structural change, mirrors the Repeater's own
+        // "add" action manipulating its array) then fill its nested fields
+        // individually, as typing into a freshly added row would.
+        $form->set('data.adjustments', [
+            ['type' => PayrollAdjustment::TYPE_ALLOWANCE, 'amount' => '1000', 'reason' => 'test'],
+            ['type' => null, 'amount' => null, 'reason' => null],
+        ]);
+        $form->set('data.adjustments.1.type', PayrollAdjustment::TYPE_DEDUCTION);
+        $form->set('data.adjustments.1.amount', '300');
+        $this->assertSame('25700.00', $form->get('data.net_salary'));
+
+        // Remove the first row (structural change on the Repeater's own array).
+        $form->set('data.adjustments', [
+            ['type' => PayrollAdjustment::TYPE_DEDUCTION, 'amount' => '300', 'reason' => 'test'],
+        ]);
+        $this->assertSame('24700.00', $form->get('data.net_salary'));
+    }
+
     public function test_legacy_salary_routes_cannot_create_a_second_cash_posting_path(): void
     {
         $this->actingAs($this->payrollUser)->get(route('dashboard.salaries.index'))

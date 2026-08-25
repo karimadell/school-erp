@@ -3,6 +3,7 @@
 namespace Tests\Feature\Finance;
 
 use App\Filament\Resources\TeacherSalaries\Pages\CreateTeacherSalary;
+use App\Filament\Resources\TeacherSalaries\Pages\ListTeacherSalaries;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\EmployeeSalaryRate;
@@ -49,6 +50,34 @@ class EmployeePayrollWorkflowTest extends TestCase
         $this->assertNotNull($teacherPayroll->teacher_id);
         $this->assertNull($staffPayroll->teacher_id);
         $this->assertSame('Анна Секретарь', $staffPayroll->employee_display_name);
+    }
+
+    public function test_index_table_renders_for_teacher_and_non_teacher_payroll_records(): void
+    {
+        // Regression: TeacherSalary::$casts casts salary_month to a date, so
+        // Eloquent's pluck() re-hydrates plucked values through the model's
+        // cast, turning them into Carbon instances. The month filter used to
+        // pluck through the Eloquent builder and then use those Carbon
+        // instances as array keys in mapWithKeys(), which PHP rejects
+        // (TypeError: "Cannot access offset of type Carbon on array"),
+        // crashing the whole index page with a 500 as soon as any record
+        // existed. The filter must pluck via the base query builder so the
+        // raw date strings are used as keys instead.
+        $teacherUser = $this->employee('teacher', 'Иван Учитель');
+        Teacher::create(['user_id' => $teacherUser->id, 'first_name' => 'Иван', 'last_name' => 'Учитель', 'is_active' => true]);
+        $this->service->create($teacherUser, '2026-09-15', '25000', [], $this->payrollUser, 'Учитель');
+
+        $nonTeacher = $this->employee('reception', 'Анна Секретарь');
+        $this->service->create($nonTeacher, '2026-08-01', '25000', [
+            ['type' => 'bonus', 'amount' => '500', 'reason' => 'Премия'],
+            ['type' => 'deduction', 'amount' => '300', 'reason' => 'Аванс'],
+        ], $this->payrollUser, 'Секретарь');
+
+        Livewire::actingAs($this->payrollUser)->test(ListTeacherSalaries::class)
+            ->assertOk()
+            ->assertSee('Иван Учитель')
+            ->assertSee('Анна Секретарь')
+            ->assertSee("25\u{A0}200,00");
     }
 
     public function test_duplicate_employee_month_is_rejected(): void

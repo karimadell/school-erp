@@ -136,7 +136,7 @@ class TeacherSalaryResource extends Resource
                 Tables\Columns\TextColumn::make('status')->label(__('teacher_salary.status'))->badge()->formatStateUsing(fn (string $state) => __('teacher_salary.statuses.'.$state)),
             ])->filters([
                 Tables\Filters\SelectFilter::make('salary_month')->label(__('teacher_salary.filters.month'))
-                    ->options(fn () => TeacherSalary::query()->select('salary_month')->distinct()->orderByDesc('salary_month')->pluck('salary_month', 'salary_month')->mapWithKeys(fn ($month) => [$month => \Carbon\Carbon::parse($month)->format('m.Y')])),
+                    ->options(fn () => TeacherSalary::query()->toBase()->select('salary_month')->distinct()->orderByDesc('salary_month')->pluck('salary_month', 'salary_month')->mapWithKeys(fn ($month) => [$month => \Carbon\Carbon::parse($month)->format('m.Y')])),
                 Tables\Filters\SelectFilter::make('employee_user_id')->label(__('teacher_salary.filters.employee'))->relationship('employee', 'name')->searchable()->preload(),
                 Tables\Filters\SelectFilter::make('position')->label(__('teacher_salary.filters.position'))
                     ->options(fn () => TeacherSalary::query()->whereNotNull('position')->distinct()->orderBy('position')->pluck('position', 'position')),

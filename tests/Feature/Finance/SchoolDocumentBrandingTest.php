@@ -14,6 +14,15 @@ class SchoolDocumentBrandingTest extends TestCase
 
     public function test_zero_byte_logo_is_rejected_without_broken_markup(): void
     {
+        // documentLogoAsset() now falls back to the bundled
+        // public/images/school-logo.png when nothing valid is uploaded
+        // (see App\Models\SchoolSetting::bundledLogoAsset() and
+        // Tests\Feature\Branding\SchoolBrandingConsistencyTest, which
+        // proves that mechanism with a real fixture image). The bundled
+        // file itself currently ships as an empty 0-byte placeholder in
+        // this repository, so with nothing else configured the net
+        // result here is still "no logo" — this test's job is just to
+        // confirm that still degrades to safe markup, not a broken <img>.
         $disk = config('filesystems.uploads.public');
         Storage::fake($disk);
         Storage::disk($disk)->put('branding/empty.png', '');
@@ -24,6 +33,7 @@ class SchoolDocumentBrandingTest extends TestCase
 
         $html = view('components.school-document-header', ['title' => 'Тестовый документ'])->render();
 
+        $this->assertNull(SchoolSetting::current()->resolveBrandingAsset('branding/empty.png'));
         $this->assertNull(SchoolSetting::current()->documentLogoAsset());
         $this->assertStringNotContainsString('<img', $html);
         $this->assertStringContainsString('ЦЕНТР «НАШИ ТРАДИЦИИ»', $html);

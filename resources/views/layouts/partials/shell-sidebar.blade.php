@@ -132,7 +132,7 @@
 
 <aside class="ui2-sidebar ui2-scope">
     <div class="flex h-[60px] shrink-0 items-center gap-2 border-b border-white/10 px-4 text-white">
-        <span class="text-lg" aria-hidden="true">🎓</span>
+        <x-school-logo class="h-8 w-8 shrink-0 rounded object-contain" />
         <span class="ui2-sidebar-hide-when-collapsed truncate text-sm font-semibold">{{ config('app.name') }}</span>
     </div>
 

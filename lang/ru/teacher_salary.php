@@ -20,6 +20,7 @@ return [
     'types' => ['bonus' => 'Премия', 'allowance' => 'Надбавка', 'deduction' => 'Удержание'],
     'methods' => ['cash' => 'Наличные', 'card' => 'Карта', 'bank' => 'Банк', 'transfer' => 'Перевод'],
     'payment_description' => 'Выплата зарплаты: :employee, :month',
+    'received_by' => 'Получил(а)', 'employee_signature' => 'Подпись сотрудника', 'received_date' => 'Дата получения', 'cashier_signature' => 'Кассир / Ответственное лицо',
     'validation' => [
         'adjustment_type' => 'Выбран недопустимый тип корректировки.', 'positive_amount' => 'Сумма должна быть больше нуля.',
         'locked' => 'Утверждённое или оплаченное начисление нельзя изменять.', 'duplicate' => 'Для сотрудника уже есть начисление за этот месяц.',

@@ -12,17 +12,12 @@ class SchoolDocumentBrandingTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_zero_byte_logo_is_rejected_without_broken_markup(): void
+    public function test_zero_byte_logo_falls_back_to_the_bundled_school_logo(): void
     {
-        // documentLogoAsset() now falls back to the bundled
-        // public/images/school-logo.png when nothing valid is uploaded
-        // (see App\Models\SchoolSetting::bundledLogoAsset() and
-        // Tests\Feature\Branding\SchoolBrandingConsistencyTest, which
-        // proves that mechanism with a real fixture image). The bundled
-        // file itself currently ships as an empty 0-byte placeholder in
-        // this repository, so with nothing else configured the net
-        // result here is still "no logo" — this test's job is just to
-        // confirm that still degrades to safe markup, not a broken <img>.
+        // The uploaded (invalid, zero-byte) file is rejected on its own,
+        // but documentLogoAsset() now falls back to the real bundled
+        // public/images/school-logo.png (App\Models\SchoolSetting::
+        // bundledLogoAsset()) rather than leaving the document logo-less.
         $disk = config('filesystems.uploads.public');
         Storage::fake($disk);
         Storage::disk($disk)->put('branding/empty.png', '');
@@ -34,8 +29,10 @@ class SchoolDocumentBrandingTest extends TestCase
         $html = view('components.school-document-header', ['title' => 'Тестовый документ'])->render();
 
         $this->assertNull(SchoolSetting::current()->resolveBrandingAsset('branding/empty.png'));
-        $this->assertNull(SchoolSetting::current()->documentLogoAsset());
-        $this->assertStringNotContainsString('<img', $html);
+        $asset = SchoolSetting::current()->documentLogoAsset();
+        $this->assertNotNull($asset);
+        $this->assertSame('images/school-logo.png', $asset['path']);
+        $this->assertStringContainsString('<img', $html);
         $this->assertStringContainsString('ЦЕНТР «НАШИ ТРАДИЦИИ»', $html);
     }
 

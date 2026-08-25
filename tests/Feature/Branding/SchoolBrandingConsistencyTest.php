@@ -15,6 +15,14 @@ use Tests\TestCase;
  * fallback (printing_logo_path -> logo_path -> bundled asset) lives, and
  * <x-school-logo> is the single Blade component every surface (login,
  * dashboard shell, financial documents) renders it through.
+ *
+ * public/images/school-logo.png is now the real official logo, so
+ * create_school_settings_table's migration-time copy into storage (as
+ * branding/school-logo.png, set as the default printing_logo_path on a
+ * fresh migration) succeeds too. Tests that want to exercise the
+ * *bundled* fallback branch specifically (as opposed to that
+ * migration-seeded default) explicitly clear printing_logo_path/
+ * logo_path first.
  */
 class SchoolBrandingConsistencyTest extends TestCase
 {
@@ -27,17 +35,8 @@ class SchoolBrandingConsistencyTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // public/images/school-logo.png ships as an empty 0-byte
-        // placeholder in this repository (confirmed via `git cat-file -s`
-        // on every commit since the initial upload) — a real logo image
-        // was never actually committed there. Since the bundled fallback
-        // deliberately reads straight off disk via public_path() (so it
-        // never depends on Storage/upload-disk configuration), there is
-        // no virtual-filesystem seam to fake it through in a test. To
-        // exercise the fallback mechanism itself, these tests briefly
-        // swap in a real fixture image and always restore the original
-        // (empty) bytes in tearDown(), so the repository is never left
-        // mutated.
+        // Restored verbatim in tearDown() regardless of what a test does
+        // to it, so this file is never left mutated by a test run.
         $this->bundledLogoPath = public_path('images/school-logo.png');
         $this->bundledLogoBackup = (string) file_get_contents($this->bundledLogoPath);
     }
@@ -48,27 +47,25 @@ class SchoolBrandingConsistencyTest extends TestCase
         parent::tearDown();
     }
 
-    private function useRealBundledFixture(): void
+    private function clearUploadedLogo(): void
     {
-        $jpg = file_get_contents(storage_path('app/public/branding/ka8lgzQDsFdfIVSWqqZ4q4pgkziGLmwHvjBsYhj9.jpg'));
-        file_put_contents($this->bundledLogoPath, $jpg);
+        SchoolSetting::current()->update(['printing_logo_path' => null, 'logo_path' => null]);
     }
 
     public function test_bundled_logo_is_used_when_no_valid_uploaded_logo_exists(): void
     {
-        $this->useRealBundledFixture();
+        $this->clearUploadedLogo();
 
         $asset = SchoolSetting::current()->documentLogoAsset();
 
         $this->assertNotNull($asset);
         $this->assertSame('images/school-logo.png', $asset['path']);
-        $this->assertStringStartsWith('data:image/jpeg;base64,', $asset['data_uri']);
+        $this->assertSame('image/png', $asset['mime_type']);
+        $this->assertStringStartsWith('data:image/png;base64,', $asset['data_uri']);
     }
 
     public function test_uploaded_logo_still_overrides_the_bundled_fallback(): void
     {
-        $this->useRealBundledFixture();
-
         $disk = config('filesystems.uploads.public');
         Storage::fake($disk);
         $png = file_get_contents(storage_path('app/public/branding/RFRJ4ke6qPH0As79aPEBE84u0V70bJbX3wcWGNuI.png'));
@@ -84,31 +81,27 @@ class SchoolBrandingConsistencyTest extends TestCase
 
     public function test_login_page_shows_the_school_logo(): void
     {
-        $this->useRealBundledFixture();
-
         $this->get(route('login'))
             ->assertOk()
-            ->assertSee('data:image/jpeg;base64,', false);
+            ->assertSee('data:image/png;base64,', false);
     }
 
     public function test_unified_dashboard_shell_shows_the_school_logo(): void
     {
-        $this->useRealBundledFixture();
-
         (new RolesAndPermissionsSeeder)->run();
         $user = User::factory()->create(['is_active' => true]);
         $user->assignRole('admin');
 
         $this->actingAs($user)->get(route('dashboard.index'))
             ->assertOk()
-            ->assertSee('data:image/jpeg;base64,', false);
+            ->assertSee('data:image/png;base64,', false);
     }
 
     public function test_school_logo_component_renders_nothing_when_truly_no_asset_resolves(): void
     {
-        // Bundled file left as the real empty placeholder (no
-        // useRealBundledFixture() call) and nothing uploaded: the
-        // component must degrade to no <img>, not a broken one.
+        $this->clearUploadedLogo();
+        file_put_contents($this->bundledLogoPath, '');
+
         $html = (string) $this->view('components.school-logo');
 
         $this->assertStringNotContainsString('<img', $html);

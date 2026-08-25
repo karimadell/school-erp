@@ -274,8 +274,13 @@ class EmployeePayrollWorkflowTest extends TestCase
 
     public function test_legacy_salary_routes_cannot_create_a_second_cash_posting_path(): void
     {
-        $this->actingAs($this->payrollUser)->get(route('dashboard.salaries.index'))
-            ->assertRedirect(route('filament.admin.resources.teacher-salaries.index'));
+        // dashboard.salaries.index is now a read-only dashboard-native
+        // mirror of the Filament resource's list (kept inside the unified
+        // shell) instead of a redirect into Filament — but it still isn't
+        // a second write path: store()/import() stay disabled, and the
+        // index view itself contains no mutation forms (see
+        // PayrollDashboardShellTest).
+        $this->actingAs($this->payrollUser)->get(route('dashboard.salaries.index'))->assertOk();
         $this->actingAs($this->payrollUser)->post(route('dashboard.salaries.store'), [
             'teacher_id' => 1, 'base_salary' => 1000,
         ])->assertGone();

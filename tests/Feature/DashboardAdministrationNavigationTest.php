@@ -189,22 +189,25 @@ class DashboardAdministrationNavigationTest extends TestCase
         $this->assertStringNotContainsString(route('filament.admin.resources.buses.index'), $html);
     }
 
-    /**
-     * Neither TeacherSalaryResource nor Buses\BusResource defines a policy
-     * or a canViewAny() override, so the only real authorization boundary
-     * Filament enforces for them today is admin-panel access itself — any
-     * administrative role, not a narrower permission. This proves the
-     * sidebar's $canAccessAdminPanel gate matches that destination exactly
-     * rather than being either looser or (incorrectly) stricter.
-     */
-    public function test_teacher_salaries_and_buses_are_reachable_by_any_administrative_role(): void
+    public function test_employee_payroll_requires_its_dedicated_view_permission(): void
     {
         $cashier = $this->panelUserWithoutTeacherManagement();
 
         $html = (string) $this->actingAs($cashier)->view('layouts.partials.shell-sidebar');
-        $this->assertStringContainsString(route('filament.admin.resources.teacher-salaries.index'), $html);
+        $this->assertStringNotContainsString(route('dashboard.salaries.index'), $html);
         $this->assertStringContainsString(route('filament.admin.resources.buses.index'), $html);
 
+        $this->actingAs($cashier)->get(route('filament.admin.resources.teacher-salaries.index'))->assertForbidden();
+        $this->actingAs($cashier)->get(route('dashboard.salaries.index'))->assertForbidden();
+        $cashier->givePermissionTo('view payroll');
+        $html = (string) $this->actingAs($cashier)->view('layouts.partials.shell-sidebar');
+        // Payroll now stays inside the unified dashboard shell — no raw
+        // cross-panel href into Filament — unlike Buses, which is still
+        // out of Phase 1 scope.
+        $this->assertStringContainsString(route('dashboard.salaries.index'), $html);
+        $this->assertStringNotContainsString(route('filament.admin.resources.teacher-salaries.index'), $html);
+
+        $this->actingAs($cashier)->get(route('dashboard.salaries.index'))->assertOk();
         $this->actingAs($cashier)->get(route('filament.admin.resources.teacher-salaries.index'))->assertOk();
         $this->actingAs($cashier)->get(route('filament.admin.resources.buses.index'))->assertOk();
     }

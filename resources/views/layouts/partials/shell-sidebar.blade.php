@@ -79,7 +79,7 @@
                 // 'manage teachers' (app/Policies/TeacherAssignmentPolicy.php).
                 ['label' => 'Назначения', 'icon' => 'link_2', 'href' => (Route::has('filament.admin.resources.teacher-assignments.index') && (auth()->user()?->can('manage teachers') ?? false)) ? route('filament.admin.resources.teacher-assignments.index') : null],
                 // Квалификации: only exists embedded in the Teacher edit page — no standalone page to link.
-                ['label' => __('teacher_salary.navigation'), 'icon' => 'wallet', 'href' => (Route::has('filament.admin.resources.teacher-salaries.index') && (auth()->user()?->can('view payroll') ?? false)) ? route('filament.admin.resources.teacher-salaries.index') : null],
+                ['label' => __('teacher_salary.navigation'), 'icon' => 'wallet', 'route' => auth()->user()?->can('view payroll') ? 'dashboard.salaries.index' : null, 'active' => 'dashboard.salaries.*'],
                 // Сотрудники: no non-teaching-staff concept exists yet — hidden.
             ],
         ],

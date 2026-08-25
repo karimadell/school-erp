@@ -90,6 +90,18 @@ Route::middleware(['auth', 'administrative'])->group(function () {
 
     Route::post('salaries/import', [SalaryController::class, 'import'])
         ->name('dashboard.salaries.import');
+
+    // Thin bridges into EmployeePayrollService so approve/pay can be
+    // triggered from the dashboard-native payroll list without leaving
+    // the unified shell — see SalaryController's class docblock.
+    Route::post('salaries/{teacherSalary}/approve', [SalaryController::class, 'approve'])
+        ->name('dashboard.salaries.approve');
+
+    Route::get('salaries/{teacherSalary}/pay', [SalaryController::class, 'showPayForm'])
+        ->name('dashboard.salaries.pay.create');
+
+    Route::post('salaries/{teacherSalary}/pay', [SalaryController::class, 'pay'])
+        ->name('dashboard.salaries.pay.store');
 });
 
 // Name alias for the dashboard.index route defined below (same URI, same

@@ -6,8 +6,10 @@
     Displays only persisted values (base_salary/bonus/allowances/deductions/
     net_salary are all written by TeacherSalary::calculateNet() /
     EmployeePayrollService) — this view never computes payroll totals
-    itself. Create/approve/pay/edit all link out to the canonical Filament
-    resource, which remains the sole write and cash-posting path.
+    itself. Approve/pay post to SalaryController, which calls
+    EmployeePayrollService directly (no logic of its own) so the user
+    stays in the unified shell; create/edit still link out to Filament,
+    which remains the sole place those two forms exist.
 --}}
 
 @section('content')
@@ -78,20 +80,24 @@
                                             @endif
                                         @endcan
 
-                                        {{-- Approve/pay are Filament table row actions with no
-                                             dedicated per-record route, so these open the
-                                             canonical resource list where the real action runs. --}}
+                                        {{-- Both post to SalaryController, which calls
+                                             EmployeePayrollService directly — same call the
+                                             Filament table action makes, just triggered from
+                                             here instead, so the shell never swaps out. --}}
                                         @can('approve payroll')
                                             @if($salary->status === \App\Models\TeacherSalary::STATUS_DRAFT)
-                                                <a href="{{ \App\Filament\Resources\TeacherSalaries\TeacherSalaryResource::getUrl('index') }}"
-                                                   class="btn btn-sm btn-outline-primary">
-                                                    {{ __('teacher_salary.approve') }}
-                                                </a>
+                                                <form method="POST" action="{{ route('dashboard.salaries.approve', $salary) }}" class="d-inline">
+                                                    @csrf
+                                                    <button type="submit" class="btn btn-sm btn-outline-primary"
+                                                            onclick="return confirm('{{ __('teacher_salary.approve') }}?')">
+                                                        {{ __('teacher_salary.approve') }}
+                                                    </button>
+                                                </form>
                                             @endif
                                         @endcan
                                         @can('pay payroll')
                                             @if($salary->status === \App\Models\TeacherSalary::STATUS_APPROVED)
-                                                <a href="{{ \App\Filament\Resources\TeacherSalaries\TeacherSalaryResource::getUrl('index') }}"
+                                                <a href="{{ route('dashboard.salaries.pay.create', $salary) }}"
                                                    class="btn btn-sm btn-outline-success">
                                                     {{ __('teacher_salary.pay') }}
                                                 </a>

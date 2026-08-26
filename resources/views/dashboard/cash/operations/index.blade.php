@@ -26,26 +26,27 @@
     @if(session('success'))
         <div class="alert alert-success shadow-sm border-0">{{ session('success') }}</div>
     @endif
+    @if(session('error'))
+        <div class="alert alert-warning shadow-sm border-0">{{ session('error') }}</div>
+    @endif
 
     <div class="row g-3 mb-4">
-        @foreach($groups as $group)
+        @foreach($roles as $role)
             <div class="col-md-6 col-xl-3">
                 <div class="card border-0 shadow-sm h-100">
                     <div class="card-body">
-                        <div class="text-muted small text-uppercase mb-2">{{ $group['label'] }}</div>
-                        @forelse($group['accounts'] as $row)
-                            <div class="mb-3 pb-3 {{ ! $loop->last ? 'border-bottom' : '' }}">
-                                <div class="fw-semibold">{{ $row['account']->name }}</div>
-                                <div class="fs-4 fw-bold">{{ number_format((float) $row['account']->balance, 2) }}</div>
-                                <div class="small text-muted">{{ __('cash_operations.current_balance') }}</div>
-                                <div class="d-flex justify-content-between small mt-2">
-                                    <span class="text-success">{{ __('cash_operations.today_in') }}: {{ number_format((float) $row['today_in'], 2) }}</span>
-                                    <span class="text-danger">{{ __('cash_operations.today_out') }}: {{ number_format((float) $row['today_out'], 2) }}</span>
-                                </div>
+                        <div class="text-muted small text-uppercase mb-2">{{ $role['label'] }}</div>
+                        @if($role['account'])
+                            <div class="fw-semibold">{{ $role['account']->name }}</div>
+                            <div class="fs-4 fw-bold">{{ number_format((float) $role['account']->balance, 2) }}</div>
+                            <div class="small text-muted">{{ __('cash_operations.current_balance') }}</div>
+                            <div class="d-flex justify-content-between small mt-2">
+                                <span class="text-success">{{ __('cash_operations.today_in') }}: {{ number_format((float) $role['today_in'], 2) }}</span>
+                                <span class="text-danger">{{ __('cash_operations.today_out') }}: {{ number_format((float) $role['today_out'], 2) }}</span>
                             </div>
-                        @empty
+                        @else
                             <div class="text-muted small">{{ __('cash_operations.no_accounts') }}</div>
-                        @endforelse
+                        @endif
                     </div>
                 </div>
             </div>

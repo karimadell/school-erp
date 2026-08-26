@@ -14,10 +14,18 @@ use Illuminate\View\View;
 
 /**
  * Cash Operations Phase 1 — the accountant-facing dashboard-native home
- * for the four canonical accounts (Операционная касса / Касса владельца /
- * Банковский счёт / InstaPay) plus the two specialised, pre-filled
- * transfer workflows the real business process needs (daily handover to
- * the owner, owner topping the operating drawer back up).
+ * for the four canonical accounts (operating / owner / bank / instapay)
+ * plus the two specialised, pre-filled transfer workflows the real
+ * business process needs (daily handover to the owner, owner topping the
+ * operating drawer back up).
+ *
+ * Canonical accounts are resolved by CashAccount's role (operating/owner/
+ * bank/instapay) — never by display name or "all accounts of this type"
+ * — see the migration that introduced the role column for why a
+ * name-based lookup is unsafe. Ordinary, non-canonical cash-type drawers
+ * (Phase 3 already supports several) are untouched by this controller;
+ * Dashboard\CashSessionController's own type-based listing there is
+ * intentionally left as-is.
  *
  * Every mutation here is a thin call into CashTransferService — this
  * controller contains no balance math, no locking, and no idempotency
@@ -49,36 +57,28 @@ class CashOperationsController extends Controller
 
     public function index(): View
     {
-        $groups = [
-            'operating' => ['label' => 'Операционная касса', 'type' => CashAccount::TYPE_CASH],
-            'owner' => ['label' => 'Касса владельца', 'type' => CashAccount::TYPE_OWNER_CASH],
-            'bank' => ['label' => 'Банковский счёт', 'type' => CashAccount::TYPE_BANK],
-            'instapay' => ['label' => 'InstaPay', 'type' => CashAccount::TYPE_INSTAPAY],
+        $roles = [
+            'operating' => ['label' => 'Операционная касса', 'account' => CashAccount::operating()],
+            'owner' => ['label' => 'Касса владельца', 'account' => CashAccount::owner()],
+            'bank' => ['label' => 'Банковский счёт', 'account' => CashAccount::bank()],
+            'instapay' => ['label' => 'InstaPay', 'account' => CashAccount::instapay()],
         ];
 
         $today = today();
-        foreach ($groups as $key => &$group) {
-            $group['accounts'] = CashAccount::query()
-                ->where('type', $group['type'])
-                ->orderBy('name')
-                ->get()
-                ->map(function (CashAccount $account) use ($today) {
-                    return [
-                        'account' => $account,
-                        'today_in' => (string) CashTransaction::query()
-                            ->where('cash_account_id', $account->id)
-                            ->where('type', CashTransaction::TYPE_IN)
-                            ->whereDate('created_at', $today)
-                            ->sum('amount'),
-                        'today_out' => (string) CashTransaction::query()
-                            ->where('cash_account_id', $account->id)
-                            ->where('type', CashTransaction::TYPE_OUT)
-                            ->whereDate('created_at', $today)
-                            ->sum('amount'),
-                    ];
-                });
+        foreach ($roles as &$role) {
+            $account = $role['account'];
+            $role['today_in'] = $account ? (string) CashTransaction::query()
+                ->where('cash_account_id', $account->id)
+                ->where('type', CashTransaction::TYPE_IN)
+                ->whereDate('created_at', $today)
+                ->sum('amount') : '0.00';
+            $role['today_out'] = $account ? (string) CashTransaction::query()
+                ->where('cash_account_id', $account->id)
+                ->where('type', CashTransaction::TYPE_OUT)
+                ->whereDate('created_at', $today)
+                ->sum('amount') : '0.00';
         }
-        unset($group);
+        unset($role);
 
         $recentTransfers = CashTransfer::query()
             ->with(['fromAccount', 'toAccount', 'creator'])
@@ -88,23 +88,33 @@ class CashOperationsController extends Controller
             ->get();
 
         return view('dashboard.cash.operations.index', [
-            'groups' => $groups,
+            'roles' => $roles,
             'recentTransfers' => $recentTransfers,
         ]);
     }
 
-    public function handoverForm(): View
+    public function handoverForm(): View|RedirectResponse
     {
+        $operating = CashAccount::operating();
+        $owner = CashAccount::owner();
+        if (! $operating || ! $owner) {
+            return $this->missingCanonicalAccount();
+        }
+
         return view('dashboard.cash.operations.handover', [
-            'operatingAccounts' => $this->accountsOfType(CashAccount::TYPE_CASH),
-            'ownerAccounts' => $this->accountsOfType(CashAccount::TYPE_OWNER_CASH),
+            'operating' => $operating,
+            'owner' => $owner,
             'idempotencyKey' => (string) Str::uuid(),
         ]);
     }
 
     public function handover(Request $request): RedirectResponse
     {
-        $data = $this->validateTransferRequest($request);
+        $operating = CashAccount::operating();
+        $owner = CashAccount::owner();
+        abort_unless($operating && $owner, 422, 'Канонические счета ещё не настроены.');
+
+        $data = $this->validateTransferRequest($request, $operating, $owner);
 
         $this->transfers->transfer(
             fromAccountId: $data['from_account_id'],
@@ -122,18 +132,29 @@ class CashOperationsController extends Controller
             ->with('success', 'Выручка передана владельцу.');
     }
 
-    public function ownerReturnForm(): View
+    public function ownerReturnForm(): View|RedirectResponse
     {
+        $operating = CashAccount::operating();
+        $owner = CashAccount::owner();
+        if (! $operating || ! $owner) {
+            return $this->missingCanonicalAccount();
+        }
+
         return view('dashboard.cash.operations.owner-return', [
-            'ownerAccounts' => $this->accountsOfType(CashAccount::TYPE_OWNER_CASH),
-            'operatingAccounts' => $this->accountsOfType(CashAccount::TYPE_CASH),
+            'operating' => $operating,
+            'owner' => $owner,
             'idempotencyKey' => (string) Str::uuid(),
         ]);
     }
 
     public function ownerReturn(Request $request): RedirectResponse
     {
-        $data = $this->validateTransferRequest($request);
+        $operating = CashAccount::operating();
+        $owner = CashAccount::owner();
+        abort_unless($operating && $owner, 422, 'Канонические счета ещё не настроены.');
+
+        // Reversed direction from handover: owner -> operating.
+        $data = $this->validateTransferRequest($request, $owner, $operating);
 
         $this->transfers->transfer(
             fromAccountId: $data['from_account_id'],
@@ -151,28 +172,38 @@ class CashOperationsController extends Controller
             ->with('success', 'Операционная касса пополнена.');
     }
 
-    /** @return array{from_account_id:int, to_account_id:int, amount:string, notes:?string, idempotency_key:?string} */
-    private function validateTransferRequest(Request $request): array
+    /**
+     * Validates the submitted amount/notes/idempotency-key normally, but
+     * the from/to accounts are never taken from user input — they are
+     * always the two canonical accounts this specific workflow moves
+     * money between, exactly matching what the hidden fields on the form
+     * are meant to represent. This closes off any possibility of a
+     * tampered or stale request pointing the transfer at the wrong pair
+     * of accounts.
+     *
+     * @return array{from_account_id:int, to_account_id:int, amount:string, notes:?string, idempotency_key:?string}
+     */
+    private function validateTransferRequest(Request $request, CashAccount $from, CashAccount $to): array
     {
         $data = $request->validate([
-            'from_account_id' => ['required', 'exists:cash_accounts,id', 'different:to_account_id'],
-            'to_account_id' => ['required', 'exists:cash_accounts,id'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'notes' => ['nullable', 'string', 'max:1000'],
             'idempotency_key' => ['nullable', 'uuid'],
         ]);
 
         return [
-            'from_account_id' => (int) $data['from_account_id'],
-            'to_account_id' => (int) $data['to_account_id'],
+            'from_account_id' => $from->id,
+            'to_account_id' => $to->id,
             'amount' => (string) $data['amount'],
             'notes' => $data['notes'] ?? null,
             'idempotency_key' => $data['idempotency_key'] ?? null,
         ];
     }
 
-    private function accountsOfType(string $type)
+    private function missingCanonicalAccount(): RedirectResponse
     {
-        return CashAccount::query()->where('type', $type)->where('is_active', true)->orderBy('name')->get();
+        return redirect()
+            ->route('dashboard.cash.operations.index')
+            ->with('error', 'Канонические счета ещё не настроены. Обратитесь к администратору.');
     }
 }

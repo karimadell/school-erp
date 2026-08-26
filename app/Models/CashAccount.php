@@ -29,6 +29,27 @@ class CashAccount extends Model
 
     /*
     |--------------------------------------------------------------------------
+    | Canonical roles
+    |--------------------------------------------------------------------------
+    | The semantic identity for "which account plays this part in the Cash
+    | Operations workflow" — never a display name (see the migration that
+    | introduced this column for why: a name-based lookup created a
+    | duplicate operating account on UAT). Nullable and unique: at most one
+    | account may ever hold a given role, while any number of ordinary
+    | (role=null) accounts of the same type — extra cash drawers, Phase 3
+    | already supports several — coexist freely.
+    */
+
+    const ROLE_OPERATING = 'operating';
+
+    const ROLE_OWNER = 'owner';
+
+    const ROLE_BANK = 'bank';
+
+    const ROLE_INSTAPAY = 'instapay';
+
+    /*
+    |--------------------------------------------------------------------------
     | Fillable
     |--------------------------------------------------------------------------
     */
@@ -36,6 +57,7 @@ class CashAccount extends Model
     protected $fillable = [
         'name',
         'type',
+        'role',
         'parent_id',
         'balance',
         'is_active',
@@ -79,6 +101,43 @@ class CashAccount extends Model
     public function isCashDrawer(): bool
     {
         return $this->type === self::TYPE_CASH;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Canonical role resolvers
+    |--------------------------------------------------------------------------
+    | The one central place Cash Operations (and anything else that needs
+    | "the" operating/owner/bank/instapay account) should look these up —
+    | never a scattered where('name', ...). Returns null when that role
+    | hasn't been assigned yet (e.g. on a database ambiguous enough that
+    | the backfill migration deliberately left it unresolved); callers must
+    | handle that rather than assume a row always exists.
+    */
+
+    public static function forRole(string $role): ?self
+    {
+        return static::query()->where('role', $role)->first();
+    }
+
+    public static function operating(): ?self
+    {
+        return static::forRole(self::ROLE_OPERATING);
+    }
+
+    public static function owner(): ?self
+    {
+        return static::forRole(self::ROLE_OWNER);
+    }
+
+    public static function bank(): ?self
+    {
+        return static::forRole(self::ROLE_BANK);
+    }
+
+    public static function instapay(): ?self
+    {
+        return static::forRole(self::ROLE_INSTAPAY);
     }
 
     // الحساب الرئيسي (Parent)

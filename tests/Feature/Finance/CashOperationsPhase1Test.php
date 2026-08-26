@@ -40,24 +40,27 @@ class CashOperationsPhase1Test extends TestCase
         $this->sessions = app(CashSessionService::class);
     }
 
+    // Resolved by canonical role, never by display name — see
+    // CashAccount::operating()/etc. and the migration that introduced
+    // the role column.
     private function operatingAccount(): CashAccount
     {
-        return CashAccount::where('type', CashAccount::TYPE_CASH)->where('name', 'Операционная касса')->firstOrFail();
+        return CashAccount::operating() ?? $this->fail('No canonical operating account resolved.');
     }
 
     private function ownerAccount(): CashAccount
     {
-        return CashAccount::where('type', CashAccount::TYPE_OWNER_CASH)->firstOrFail();
+        return CashAccount::owner() ?? $this->fail('No canonical owner account resolved.');
     }
 
     private function bankAccount(): CashAccount
     {
-        return CashAccount::where('type', CashAccount::TYPE_BANK)->firstOrFail();
+        return CashAccount::bank() ?? $this->fail('No canonical bank account resolved.');
     }
 
     private function instapayAccount(): CashAccount
     {
-        return CashAccount::where('type', CashAccount::TYPE_INSTAPAY)->firstOrFail();
+        return CashAccount::instapay() ?? $this->fail('No canonical instapay account resolved.');
     }
 
     /*

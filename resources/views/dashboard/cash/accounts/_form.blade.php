@@ -30,11 +30,17 @@
                 id="accountType"
                 required>
 
-            <option value="main" {{ old('type', $account->type ?? '') == 'main' ? 'selected' : '' }}>
-                {{ __('cash_accounts.type_main') }}
+            <option value="cash" {{ old('type', $account->type ?? '') == 'cash' ? 'selected' : '' }}>
+                {{ __('cash_accounts.type_cash') }}
             </option>
-            <option value="sub" {{ old('type', $account->type ?? '') == 'sub' ? 'selected' : '' }}>
-                {{ __('cash_accounts.type_sub') }}
+            <option value="bank" {{ old('type', $account->type ?? '') == 'bank' ? 'selected' : '' }}>
+                {{ __('cash_accounts.type_bank') }}
+            </option>
+            <option value="owner_cash" {{ old('type', $account->type ?? '') == 'owner_cash' ? 'selected' : '' }}>
+                {{ __('cash_accounts.type_owner_cash') }}
+            </option>
+            <option value="instapay" {{ old('type', $account->type ?? '') == 'instapay' ? 'selected' : '' }}>
+                {{ __('cash_accounts.type_instapay') }}
             </option>
 
         </select>

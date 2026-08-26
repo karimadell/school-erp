@@ -32,7 +32,12 @@ class CashAccountController extends Controller
     // صفحة إنشاء خزنة
     public function create()
     {
-        $mainAccounts = CashAccount::where('type','main')->get();
+        // Cash Operations: parent_id is a generic hierarchy feature,
+        // orthogonal to the physical type (cash/bank/owner_cash/instapay)
+        // and to canonical role — any top-level account can be a parent.
+        // The previous type==='main' filter always returned nothing, since
+        // no account in the system has ever used that value (see store()).
+        $mainAccounts = CashAccount::whereNull('parent_id')->get();
 
         return view('dashboard.cash.accounts.create',compact('mainAccounts'));
     }
@@ -42,7 +47,13 @@ class CashAccountController extends Controller
     {
         $data = $request->validate([
             'name' => 'required|string|max:255',
-            'type' => 'required|in:main,sub',
+            // Cash Operations: this used to validate against 'main'/'sub',
+            // a vocabulary nothing else in the system produces or reads —
+            // every real account uses one of these four physical types
+            // (CashAccount::TYPE_*). role (operating/owner/bank/instapay)
+            // is a separate, system-managed concept deliberately not
+            // exposed on this form — see CashAccount's role docblock.
+            'type' => 'required|in:cash,bank,owner_cash,instapay',
             'parent_id' => 'nullable|exists:cash_accounts,id',
             'balance' => 'nullable|numeric'
         ], [
@@ -68,7 +79,7 @@ class CashAccountController extends Controller
     {
         $account = CashAccount::findOrFail($id);
 
-        $mainAccounts = CashAccount::where('type', 'main')
+        $mainAccounts = CashAccount::whereNull('parent_id')
             ->whereNotIn('id', array_merge([$account->id], $account->descendantIds()))
             ->get();
 
@@ -82,7 +93,7 @@ class CashAccountController extends Controller
 
         $data = $request->validate([
             'name' => 'required|string|max:255',
-            'type' => 'required|in:main,sub',
+            'type' => 'required|in:cash,bank,owner_cash,instapay',
             'parent_id' => [
                 'sometimes',
                 'nullable',

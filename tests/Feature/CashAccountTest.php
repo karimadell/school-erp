@@ -72,7 +72,11 @@ class CashAccountTest extends TestCase
         $response = $this->actingAs($user)
             ->put(route('dashboard.cash.accounts.update', $account), [
                 'name' => 'New Name',
-                'type' => 'main',
+                // Cash Operations: the form's type vocabulary is now the
+                // real physical types (cash/bank/owner_cash/instapay) —
+                // 'main'/'sub' was never a value anything else in the
+                // system produced or accepted.
+                'type' => 'cash',
             ]);
 
         $response->assertSessionHasNoErrors();
@@ -88,7 +92,7 @@ class CashAccountTest extends TestCase
         $response = $this->actingAs($user)
             ->put(route('dashboard.cash.accounts.update', $child), [
                 'name' => 'Child',
-                'type' => 'sub',
+                'type' => 'cash',
                 'parent_id' => $parent->id,
             ]);
 
@@ -149,7 +153,7 @@ class CashAccountTest extends TestCase
         $response = $this->actingAs($user)
             ->post(route('dashboard.cash.accounts.store'), [
                 'name' => 'New Safe',
-                'type' => 'main',
+                'type' => 'cash',
             ]);
 
         $response->assertSessionHasNoErrors();

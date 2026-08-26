@@ -21,27 +21,16 @@
             @csrf
             <input type="hidden" name="idempotency_key" value="{{ $idempotencyKey }}">
 
+            {{-- The canonical owner/operating accounts are resolved
+                 server-side by role, not chosen here — see
+                 CashOperationsController. --}}
             <div class="mb-3">
-                <label class="form-label">{{ __('cash_operations.from_account') }} — {{ __('cash_operations.title') }}</label>
-                <select name="from_account_id" class="form-select" required onchange="cashOpsUpdateAvailable(this)">
-                    <option value="">—</option>
-                    @foreach($ownerAccounts as $account)
-                        <option value="{{ $account->id }}" data-balance="{{ $account->balance }}" @selected(old('from_account_id') == $account->id)>
-                            {{ $account->name }} ({{ number_format((float) $account->balance, 2) }})
-                        </option>
-                    @endforeach
-                </select>
-                <div class="form-text">{{ __('cash_operations.available_now') }}: <span id="cash-ops-available">—</span></div>
+                <div class="text-muted small">{{ __('cash_operations.from_account') }}</div>
+                <div class="fw-semibold">{{ $owner->name }} ({{ number_format((float) $owner->balance, 2) }})</div>
             </div>
-
             <div class="mb-3">
-                <label class="form-label">{{ __('cash_operations.to_account') }} — {{ __('cash_operations.title') }}</label>
-                <select name="to_account_id" class="form-select" required>
-                    <option value="">—</option>
-                    @foreach($operatingAccounts as $account)
-                        <option value="{{ $account->id }}" @selected(old('to_account_id') == $account->id)>{{ $account->name }}</option>
-                    @endforeach
-                </select>
+                <div class="text-muted small">{{ __('cash_operations.to_account') }}</div>
+                <div class="fw-semibold">{{ $operating->name }}</div>
             </div>
 
             <div class="mb-3">
@@ -63,12 +52,4 @@
         </div>
     </form>
 </div>
-
-<script>
-function cashOpsUpdateAvailable(select) {
-    var option = select && select.options[select.selectedIndex];
-    var balance = option ? parseFloat(option.getAttribute('data-balance') || '0') : 0;
-    document.getElementById('cash-ops-available').textContent = option ? balance.toFixed(2) : '—';
-}
-</script>
 @endsection

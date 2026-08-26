@@ -186,6 +186,9 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             'is_active' => true,
         ]);
         $reportUser = $this->user('admin');
+        // Cash Operations Phase 1: the destination leg of a transfer now
+        // also requires an open shift when it's a cash-drawer account.
+        $this->openCashSession($destination, $reportUser);
         $this->actingAs($reportUser)->post(route('dashboard.cash.transfer.store'), [
             'from_account_id' => $this->cash->id,
             'to_account_id' => $destination->id,

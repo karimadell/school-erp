@@ -45,6 +45,19 @@ class Expense extends Model
             // ignored by the balance hook, so expenses never reduced the cash
             // account. Post a valid outgoing, expense-category transaction so
             // the linked balance is decremented exactly once.
+            //
+            // Cash Operations Phase 1: attribute the movement to the
+            // currently open shift on this drawer, if any, so cash expenses
+            // correctly count against that session's expected closing cash
+            // (CashSession::cashOut()) — the same "- Cash Expenses" term the
+            // reconciliation formula already expects. Best-effort only: no
+            // open shift is required to record an expense (unchanged
+            // behaviour), it just won't be attributed to any session.
+            $account = $expense->cashAccount;
+            $cashSessionId = $account && $account->isCashDrawer()
+                ? app(\App\Services\Finance\CashSessionService::class)->activeFor($account)?->id
+                : null;
+
             CashTransaction::create([
 
                 'type' => CashTransaction::TYPE_OUT,
@@ -54,6 +67,10 @@ class Expense extends Model
                 'amount' => $expense->amount,
 
                 'cash_account_id' => $expense->cash_account_id,
+
+                'cash_session_id' => $cashSessionId,
+
+                'created_by' => auth()->id(),
 
                 'description' => 'Расход: ' . $expense->title
 

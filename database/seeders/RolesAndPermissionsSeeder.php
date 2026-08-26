@@ -71,6 +71,13 @@ class RolesAndPermissionsSeeder extends Seeder
             'view student balances',
             'manage cash',
             'view cash reports',
+            // Cash Operations Phase 1: narrower than 'manage cash' (which
+            // also covers cash-account/report administration) — lets the
+            // accountant post internal transfers (daily handover to the
+            // owner, owner topping the operating drawer back up, generic
+            // account-to-account transfer) without granting that broader
+            // administration surface.
+            'transfer cash',
             // Phase 3 — cash-drawer sessions. Separated by risk: view (read
             // history/detail), open (start a shift), close (reconcile), and a
             // dedicated higher-risk permission to accept a non-zero variance.
@@ -155,6 +162,10 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage student service subscriptions',
             'void invoices',
             'refund payments',
+            // Cash Operations Phase 1: the accountant is the primary actor
+            // for daily handover / owner-return / internal transfers, per
+            // the real business workflow this feature models.
+            'transfer cash',
             // Phase 3: an accountant runs the drawer day to day — open, close
             // and reconcile — but accepting a variance is a separately-gated,
             // higher-risk action reserved for admin/school-admin/principal.

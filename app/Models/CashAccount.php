@@ -17,6 +17,16 @@ class CashAccount extends Model
     const TYPE_CASH = 'cash';
     const TYPE_BANK = 'bank';
 
+    // Cash Operations Phase 1. Both are new, deliberately distinct type
+    // values (no schema change — see the Phase 1 seeding migration) so
+    // isCashDrawer() below keeps working unchanged:
+    //   - owner_cash IS physical cash, but is a holding account the
+    //     owner keeps outside the accountant's shift — it is
+    //     intentionally NOT a session-tracked drawer.
+    //   - instapay is an electronic channel, never physical cash.
+    const TYPE_OWNER_CASH = 'owner_cash';
+    const TYPE_INSTAPAY = 'instapay';
+
     /*
     |--------------------------------------------------------------------------
     | Fillable

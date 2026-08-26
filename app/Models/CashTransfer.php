@@ -9,6 +9,16 @@ class CashTransfer extends Model
 {
     use HasFactory;
 
+    // Cash Operations Phase 1 classification (see the migration adding
+    // transfer_type for the full rationale). 'internal' is the default,
+    // pre-existing generic transfer; the other two back the dedicated
+    // daily-handover / owner-return workflows.
+    const TYPE_INTERNAL = 'internal';
+
+    const TYPE_HANDOVER = 'handover';
+
+    const TYPE_OWNER_RETURN = 'owner_return';
+
     protected $fillable = [
         'receipt_number',
         'from_account_id',
@@ -16,7 +26,10 @@ class CashTransfer extends Model
         'amount',
         'notes',
         'transfer_date',
-        'created_by'
+        'created_by',
+        'transfer_type',
+        'idempotency_key',
+        'idempotency_hash',
     ];
 
     public function fromAccount()

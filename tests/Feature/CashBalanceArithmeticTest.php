@@ -222,6 +222,8 @@ class CashBalanceArithmeticTest extends TestCase
         $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 1000);
         $to = $this->makeCashAccount(balance: 200);
+        $this->openCashSession($from, $user);
+        $this->openCashSession($to, $user);
 
         $response = $this->actingAs($user)->post(route('dashboard.cash.transfer.store'), [
             'from_account_id' => $from->id,
@@ -261,6 +263,8 @@ class CashBalanceArithmeticTest extends TestCase
         $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 1000);
         $to = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($from, $user);
+        $this->openCashSession($to, $user);
 
         $this->actingAs($user)->post(route('dashboard.cash.transfer.store'), [
             'from_account_id' => $from->id,

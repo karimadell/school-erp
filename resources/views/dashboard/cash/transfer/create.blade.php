@@ -17,6 +17,7 @@
 
             <form method="POST" action="{{ route('dashboard.cash.transfer.store') }}">
                 @csrf
+                <input type="hidden" name="idempotency_key" value="{{ $idempotencyKey }}">
 
                 <div class="row">
 

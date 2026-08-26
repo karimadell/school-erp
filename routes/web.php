@@ -8,6 +8,7 @@ use App\Http\Controllers\Dashboard\FinanceTariffController;
 use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
 use App\Http\Controllers\Dashboard\FinanceOperationsController;
+use App\Http\Controllers\Dashboard\CashOperationsController;
 use App\Http\Controllers\Dashboard\CashSessionController;
 use App\Http\Controllers\Dashboard\PaymentPlanController;
 use App\Http\Controllers\Dashboard\StudentSubscriptionController;
@@ -542,6 +543,21 @@ Route::middleware(['auth', 'administrative'])
                     ->name('sessions.show');
                 Route::post('sessions/{cashSession}/close', [CashSessionController::class, 'close'])
                     ->name('sessions.close');
+
+                // Cash Operations Phase 1 — daily handover / owner-return
+                // workflow. Both actions delegate to CashTransferService;
+                // generic transfers and shift open/close stay on their
+                // existing pages above rather than being duplicated here.
+                Route::get('operations', [CashOperationsController::class, 'index'])
+                    ->name('operations.index');
+                Route::get('operations/handover', [CashOperationsController::class, 'handoverForm'])
+                    ->name('operations.handover.create');
+                Route::post('operations/handover', [CashOperationsController::class, 'handover'])
+                    ->name('operations.handover.store');
+                Route::get('operations/owner-return', [CashOperationsController::class, 'ownerReturnForm'])
+                    ->name('operations.owner-return.create');
+                Route::post('operations/owner-return', [CashOperationsController::class, 'ownerReturn'])
+                    ->name('operations.owner-return.store');
             });
 
         Route::get('transport', [TransportController::class, 'index'])

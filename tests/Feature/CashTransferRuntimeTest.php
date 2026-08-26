@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\CashAccount;
 use App\Models\CashTransfer;
 use App\Models\User;
+use App\Services\Finance\CashSessionService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -56,6 +57,16 @@ class CashTransferRuntimeTest extends TestCase
         return $user;
     }
 
+    /**
+     * Cash Operations Phase 1: any cash-drawer leg of a transfer now
+     * requires an open shift, exactly like InvoicePaymentService and
+     * EmployeePayrollService already require for other cash movements.
+     */
+    protected function openCashSession(CashAccount $account, User $actor): void
+    {
+        app(CashSessionService::class)->open($account, $actor);
+    }
+
     public function test_the_transfer_form_route_returns_200(): void
     {
         $user = $this->cashManager();
@@ -79,6 +90,8 @@ class CashTransferRuntimeTest extends TestCase
         $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($from, $user);
+        $this->openCashSession($to, $user);
 
         // Deliberately no 'notes' key at all in the payload — this is the
         // exact condition that used to throw "Undefined array key notes".
@@ -98,6 +111,8 @@ class CashTransferRuntimeTest extends TestCase
         $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($from, $user);
+        $this->openCashSession($to, $user);
 
         $this->actingAs($user)->post(route('dashboard.cash.transfer.store'), [
             'from_account_id' => $from->id,
@@ -120,6 +135,8 @@ class CashTransferRuntimeTest extends TestCase
         $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($from, $user);
+        $this->openCashSession($to, $user);
 
         $storeResponse = $this->actingAs($user)->post(route('dashboard.cash.transfer.store'), [
             'from_account_id' => $from->id,
@@ -168,6 +185,8 @@ class CashTransferRuntimeTest extends TestCase
         $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($from, $user);
+        $this->openCashSession($to, $user);
 
         // Exactly the fields the rendered form actually provides:
         // from_account_id, to_account_id, amount, transfer_date, purpose,

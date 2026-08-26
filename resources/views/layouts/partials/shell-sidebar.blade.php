@@ -93,6 +93,8 @@
                 ['label' => __('finance_uat.service_prices'), 'icon' => 'payments', 'route' => auth()->user()?->can('manage fee prices') ? 'dashboard.finance.tariffs.index' : null, 'active' => 'dashboard.finance.tariffs.*'],
                 // Платежи: no standalone page — payments happen as an action from within Счета.
                 ['label' => 'Касса', 'icon' => 'landmark', 'route' => 'dashboard.cash.ledger', 'active' => 'dashboard.cash.ledger'],
+                // Cash Operations Phase 1 — daily handover / owner-return.
+                ['label' => 'Операции с кассой', 'icon' => 'briefcase', 'route' => auth()->user()?->hasAnyPermission(['manage cash', 'transfer cash', 'view cash reports']) ? 'dashboard.cash.operations.index' : null, 'active' => 'dashboard.cash.operations.*'],
                 ['label' => 'Кассовые смены', 'icon' => 'briefcase', 'route' => auth()->user()?->can('view cash sessions') ? 'dashboard.cash.sessions.index' : null, 'active' => 'dashboard.cash.sessions.*'],
                 ['label' => 'Кассовые счета', 'icon' => 'briefcase', 'route' => 'dashboard.cash.accounts', 'active' => 'dashboard.cash.accounts'],
                 ['label' => __('finance_uat.expenses'), 'icon' => 'trending_down', 'href' => (Route::has('filament.admin.resources.expenses.index') && (auth()->user()?->can('manage expenses') ?? false)) ? route('filament.admin.resources.expenses.index') : null],

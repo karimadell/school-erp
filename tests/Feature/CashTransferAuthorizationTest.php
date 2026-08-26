@@ -6,6 +6,7 @@ use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\CashTransfer;
 use App\Models\User;
+use App\Services\Finance\CashSessionService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Spatie\Permission\Models\Permission;
@@ -56,6 +57,16 @@ class CashTransferAuthorizationTest extends TestCase
         return CashAccount::create(['name' => 'Account ' . uniqid(), 'type' => CashAccount::TYPE_CASH, 'balance' => $balance]);
     }
 
+    /**
+     * Cash Operations Phase 1: any cash-drawer leg of a transfer now
+     * requires an open shift, exactly like InvoicePaymentService and
+     * EmployeePayrollService already require for other cash movements.
+     */
+    protected function openCashSession(CashAccount $account, User $actor): void
+    {
+        app(CashSessionService::class)->open($account, $actor);
+    }
+
     public function test_a_guest_is_redirected_to_login_on_every_transfer_route(): void
     {
         $this->get(route('dashboard.cash.transfer.form'))->assertRedirect(route('login'));
@@ -91,6 +102,8 @@ class CashTransferAuthorizationTest extends TestCase
         $user = $this->cashManager();
         $from = $this->makeCashAccount(balance: 500);
         $to = $this->makeCashAccount(balance: 0);
+        $this->openCashSession($from, $user);
+        $this->openCashSession($to, $user);
 
         $response = $this->actingAs($user)->post(route('dashboard.cash.transfer.store'), [
             'from_account_id' => $from->id,

@@ -34,7 +34,7 @@ class InvoicePaymentService
         if (! Str::isUuid($idempotencyKey)) {
             throw ValidationException::withMessages(['idempotency_key' => 'Укажите корректный ключ повторного запроса.']);
         }
-        if (! in_array($paymentMethod, ['cash', 'bank', 'card', 'transfer'], true)) {
+        if (! in_array($paymentMethod, ['cash', 'bank', 'card', 'transfer', 'instapay'], true)) {
             throw ValidationException::withMessages(['payment_method' => 'Выбран недопустимый способ оплаты.']);
         }
         $hash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
@@ -103,6 +103,16 @@ class InvoicePaymentService
             }
             if (! $account->is_active) {
                 throw ValidationException::withMessages(['cash_account_id' => 'Выбранная касса неактивна.']);
+            }
+            // Cash Operations Phase 4 — the owner's holding account is never
+            // a valid destination for an ordinary student payment, no matter
+            // which caller reaches this method or what it passed as
+            // $cashAccountId. Canonical cash/bank/instapay resolution (so a
+            // tampered id can't redirect money) happens one layer up, at the
+            // student-facing controllers/services that first see untrusted
+            // input — see CashAccount::canonicalRoleForMethod().
+            if ($account->role === CashAccount::ROLE_OWNER) {
+                throw ValidationException::withMessages(['cash_account_id' => 'Счёт владельца нельзя использовать для оплаты учеником.']);
             }
 
             // Phase 3 — strict cash-session rule: physical cash cannot enter a

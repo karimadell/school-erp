@@ -3,6 +3,7 @@
 namespace App\Services\Finance;
 
 use App\Exceptions\DuplicateOpenInvoiceException;
+use App\Models\CashAccount;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\Student;
@@ -59,7 +60,7 @@ class ChargeAndCollectService
             if (bccomp($collect, '0.00', 2) > 0) {
                 $payment = $this->payments->record(
                     invoiceId: $invoice->id,
-                    cashAccountId: (int) $data['cash_account_id'],
+                    cashAccountId: CashAccount::resolvePaymentAccountId((string) $data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null),
                     amount: $collect,
                     paymentMethod: (string) $data['payment_method'],
                     idempotencyKey: (string) $data['idempotency_key'],

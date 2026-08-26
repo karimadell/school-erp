@@ -4,16 +4,16 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreInvoiceRequest;
+use App\Models\AcademicYear;
 use App\Models\CashAccount;
-use App\Models\CashTransaction;
+use App\Models\Enrollment;
 use App\Models\Fee;
+use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
-use App\Models\InvoicePayment;
 use App\Models\InvoiceItem;
+use App\Models\InvoicePayment;
 use App\Models\Student;
-use App\Models\AcademicYear;
-use App\Models\Enrollment;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Support\FinanceShareRecipient;
@@ -51,24 +51,68 @@ class InvoiceController extends Controller
             $feesQuery->where('is_active', 1);
         }
 
+        $academicYears = AcademicYear::query()->where('is_active', true)->orderByDesc('start_date')->get();
+        $fees = $feesQuery->orderBy('category')->orderBy('name_ru')->get();
+
         return view('dashboard.invoices.create', [
             'students' => Student::with('grade')->orderBy('name')->get(),
-            'academicYears' => AcademicYear::query()->where('is_active', true)->orderByDesc('start_date')->get(),
-            'cashAccounts' => CashAccount::orderBy('name')->get(),
+            'academicYears' => $academicYears,
+            'cashAccounts' => CashAccount::excludingOwner()->orderBy('name')->get(),
             'grades' => Grade::ordered()->get(),
-            'fees' => $feesQuery
-                ->orderBy('category')
-                ->orderBy('name_ru')
-                ->get(),
+            'fees' => $fees,
+            'priceRows' => $this->currentPriceRows($fees, $academicYears),
         ]);
+    }
+
+    /**
+     * The live total the create-invoice screen's JS previews before
+     * submit must reflect the exact same rows InvoiceCalculationService
+     * would actually pick — stale/inactive/wrong-year FeePrice rows (e.g.
+     * last year's tuition price still sitting on the same Fee) were being
+     * sent to the browser unfiltered and unordered, so the preview total
+     * could diverge from the server's authoritative total. An employee
+     * paying "the full amount" as the (wrong) preview showed it then had
+     * their submission rejected by the server's own overpayment guard —
+     * this is the exact "invoice did not save" UAT symptom. Filtering by
+     * the same FeePrice::active()/current() scopes already used
+     * elsewhere in this codebase, restricted to the academic years this
+     * screen actually offers, and sorted to match
+     * InvoiceCalculationService::resolvePrice()'s own tie-break
+     * (start_date desc, id desc) closes that gap without duplicating its
+     * more elaborate grade/enrollment-mode fallback matching.
+     *
+     * @param  \Illuminate\Support\Collection<int, Fee>  $fees
+     * @param  \Illuminate\Support\Collection<int, AcademicYear>  $academicYears
+     * @return array<int, array<string, mixed>>
+     */
+    private function currentPriceRows($fees, $academicYears): array
+    {
+        $prices = FeePrice::query()
+            ->whereIn('fee_id', $fees->pluck('id'))
+            ->whereIn('academic_year_id', $academicYears->pluck('id'))
+            ->active()
+            ->current()
+            ->orderByDesc('start_date')
+            ->orderByDesc('id')
+            ->get();
+
+        return $prices->map(fn (FeePrice $price) => [
+            'fee_id' => $price->fee_id,
+            'amount' => (float) $price->amount,
+            'grade_group' => $price->grade_group,
+            'payment_period' => $price->payment_period,
+            'size' => $price->size,
+            'item' => $price->item,
+            'option_type' => $price->option_type,
+            'option_value' => $price->option_value,
+        ])->all();
     }
 
     public function store(
         StoreInvoiceRequest $request,
         InvoiceCalculationService $calculator,
         InvoicePaymentService $payments,
-    ): RedirectResponse
-    {
+    ): RedirectResponse {
         $data = $request->validated();
         $actorId = $request->user()->id;
         $invoice = DB::transaction(function () use ($data, $calculator, $payments, $actorId, $request) {
@@ -152,7 +196,7 @@ class InvoiceController extends Controller
             if (bccomp($calculation['paid_amount'], '0.00', 2) > 0) {
                 $payments->record(
                     invoiceId: $invoice->id,
-                    cashAccountId: (int) $data['cash_account_id'],
+                    cashAccountId: CashAccount::resolvePaymentAccountId($data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null),
                     paymentMethod: $data['payment_method'],
                     amount: $calculation['paid_amount'],
                     idempotencyKey: (string) Str::uuid(),
@@ -258,7 +302,7 @@ class InvoiceController extends Controller
 
         $pdf = Pdf::loadView('dashboard.invoices.pdf', compact('invoice'));
 
-        return $pdf->download('invoice-' . $invoice->id . '.pdf');
+        return $pdf->download('invoice-'.$invoice->id.'.pdf');
     }
 
     public function pay(Request $request, Invoice $invoice, InvoicePaymentService $payments): RedirectResponse

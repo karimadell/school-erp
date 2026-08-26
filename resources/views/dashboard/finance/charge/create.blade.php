@@ -117,6 +117,7 @@
                             <option value="cash">Наличные</option>
                             <option value="card">Банковская карта</option>
                             <option value="bank">Банковский перевод</option>
+                            <option value="instapay">InstaPay</option>
                         </select>
                         @error('payment_method')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                     </div>
@@ -128,6 +129,7 @@
                                 <option value="{{ $account->id }}" @selected(old('cash_account_id')==$account->id)>{{ $account->name }}</option>
                             @endforeach
                         </select>
+                        <div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div>
                         @error('cash_account_id')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
                     </div>
                 </div>
@@ -174,6 +176,17 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('collect-full').addEventListener('click', () => {
         collectAmount.value = (previewCents / 100).toFixed(2);
     });
+
+    const paymentMethod = document.getElementById('payment_method');
+    const cashAccountField = document.getElementById('cash_account_id');
+    const cashAccountHint = document.getElementById('cash-account-auto-hint');
+    const syncCashAccount = () => {
+        const canonical = ['cash', 'bank', 'instapay'].includes(paymentMethod.value);
+        cashAccountField.disabled = canonical;
+        cashAccountHint.classList.toggle('d-none', !canonical);
+    };
+    paymentMethod.addEventListener('change', syncCashAccount);
+    syncCashAccount();
 
     const currentVariant = () => {
         const fee = fees[feeSelect.value];

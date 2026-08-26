@@ -12,17 +12,17 @@ use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
+use App\Models\PaymentRefund;
 use App\Models\SchoolSetting;
 use App\Models\ServiceCoverage;
 use App\Models\Student;
-use App\Models\PaymentRefund;
 use App\Services\Finance\ChargeAndCollectService;
 use App\Services\Finance\InvoiceCancellationService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InvoiceRefundService;
-use App\Support\FinanceShareRecipient;
 use App\Services\Finance\ServiceCoverageService;
 use App\Services\Finance\StudentFinanceSummaryService;
+use App\Support\FinanceShareRecipient;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -81,7 +81,7 @@ class FinanceOperationsController extends Controller
 
     public function student(Student $student, ServiceCoverageService $coverageService): View
     {
-        $student->load(['currentEnrollment.academicYear','currentEnrollment.stage','currentEnrollment.grade','currentEnrollment.schoolClass','invoices.academicYear','invoices.items.fee','invoices.installments.payments','invoices.payments.cashAccount','invoices.payments.creator','enrollments.serviceSubscriptions.fee','enrollments.serviceSubscriptions.invoiceItems']);
+        $student->load(['currentEnrollment.academicYear', 'currentEnrollment.stage', 'currentEnrollment.grade', 'currentEnrollment.schoolClass', 'invoices.academicYear', 'invoices.items.fee', 'invoices.installments.payments', 'invoices.payments.cashAccount', 'invoices.payments.creator', 'enrollments.serviceSubscriptions.fee', 'enrollments.serviceSubscriptions.invoiceItems']);
         $summary = $this->summaries->summarize($student);
         $subscriptions = $student->enrollments->flatMap->serviceSubscriptions->sortByDesc('created_at')->values();
         $coverages = ServiceCoverage::with(['fee', 'feePrice', 'invoiceItem.invoice'])
@@ -100,8 +100,8 @@ class FinanceOperationsController extends Controller
                 }
             })->values();
         $history = collect()
-            ->concat($summary['invoices']->map(fn ($invoice) => ['at'=>$invoice->created_at,'label'=>'Создан счёт','text'=>$invoice->display_number]))
-            ->concat($summary['payments']->map(fn ($payment) => ['at'=>$payment->paid_at ?? $payment->created_at,'label'=>'Принят платёж','text'=>$payment->payment_number]))
+            ->concat($summary['invoices']->map(fn ($invoice) => ['at' => $invoice->created_at, 'label' => 'Создан счёт', 'text' => $invoice->display_number]))
+            ->concat($summary['payments']->map(fn ($payment) => ['at' => $payment->paid_at ?? $payment->created_at, 'label' => 'Принят платёж', 'text' => $payment->payment_number]))
             ->concat($summary['adjustments']->map(fn ($adjustment) => ['at' => $adjustment->approved_at, 'label' => $adjustment->kind === 'debit' ? 'Доначисление' : 'Кредит', 'text' => $adjustment->total_difference.' EGP']))
             ->concat($summary['promises']->map(fn ($promise) => ['at' => $promise->created_at, 'label' => 'Обещание оплаты', 'text' => $promise->promised_amount.' EGP · '.$promise->status]))
             ->sortByDesc('at')->values();
@@ -124,10 +124,11 @@ class FinanceOperationsController extends Controller
     public function createPayment(Invoice $invoice): View
     {
         abort_if($invoice->status === Invoice::STATUS_PAID || bccomp((string) $invoice->remaining_amount, '0.00', 2) <= 0, 422, 'Счёт уже полностью оплачен.');
-        $invoice->load(['student', 'installments' => fn ($query) => $query->where('remaining_amount','>','0')->orderBy('sequence')]);
+        $invoice->load(['student', 'installments' => fn ($query) => $query->where('remaining_amount', '>', '0')->orderBy('sequence')]);
+
         return view('dashboard.finance.payments.create', [
             'invoice' => $invoice,
-            'cashAccounts' => CashAccount::where('is_active', true)->orderBy('name')->get(),
+            'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'idempotencyKey' => (string) Str::uuid(),
         ]);
     }
@@ -137,7 +138,7 @@ class FinanceOperationsController extends Controller
         $existing = InvoicePayment::where('idempotency_key', $request->string('idempotency_key'))->exists();
         $payment = $service->record(
             invoiceId: $invoice->id,
-            cashAccountId: $request->integer('cash_account_id'),
+            cashAccountId: CashAccount::resolvePaymentAccountId((string) $request->input('payment_method'), $request->integer('cash_account_id')),
             amount: (string) $request->input('amount'),
             paymentMethod: (string) $request->input('payment_method'),
             idempotencyKey: (string) $request->input('idempotency_key'),
@@ -159,6 +160,7 @@ class FinanceOperationsController extends Controller
     public function receiptPdf(InvoicePayment $invoicePayment)
     {
         $data = $this->receiptData($invoicePayment);
+
         return Pdf::loadView('dashboard.finance.payments.receipt-pdf', $data)
             ->setPaper('a4')->download(($invoicePayment->payment_number ?: 'payment').'.pdf');
     }
@@ -172,7 +174,7 @@ class FinanceOperationsController extends Controller
             'student' => $student,
             'year' => $year,
             'fees' => Fee::active()->with('prices')->orderBy('category')->orderBy('name_ru')->get(),
-            'cashAccounts' => CashAccount::where('is_active', true)->orderBy('name')->get(),
+            'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'idempotencyKey' => (string) Str::uuid(),
         ]);
     }
@@ -262,18 +264,18 @@ class FinanceOperationsController extends Controller
 
     private function receiptData(InvoicePayment $payment): array
     {
-        $payment->load(['invoice.student.representatives','invoice.academicYear','invoice.payments','invoice.items','installment','cashAccount','creator']);
+        $payment->load(['invoice.student.representatives', 'invoice.academicYear', 'invoice.payments', 'invoice.items', 'installment', 'cashAccount', 'creator']);
         $ordered = $payment->invoice->payments->sortBy(fn ($item) => sprintf('%s-%010d', ($item->paid_at ?? $item->created_at)?->format('YmdHis.u'), $item->id));
         $through = $ordered->takeUntil(fn ($item) => $item->id === $payment->id)->push($payment)->unique('id');
         $paidThrough = $this->money($through->sum('amount'));
         $previouslyPaid = bcsub($paidThrough, (string) $payment->amount, 2);
 
         return [
-            'payment'=>$payment, 'invoice'=>$payment->invoice, 'settings'=>SchoolSetting::current(),
-            'previouslyPaid'=>$previouslyPaid,
-            'remainingAfter'=>bcsub((string) $payment->invoice->total_amount, $paidThrough, 2),
-            'methodLabels'=>['cash'=>'Наличные','card'=>'Банковская карта','bank'=>'Банковский перевод'],
-            'shareRecipient'=>FinanceShareRecipient::forStudent($payment->invoice->student),
+            'payment' => $payment, 'invoice' => $payment->invoice, 'settings' => SchoolSetting::current(),
+            'previouslyPaid' => $previouslyPaid,
+            'remainingAfter' => bcsub((string) $payment->invoice->total_amount, $paidThrough, 2),
+            'methodLabels' => ['cash' => 'Наличные', 'card' => 'Банковская карта', 'bank' => 'Банковский перевод'],
+            'shareRecipient' => FinanceShareRecipient::forStudent($payment->invoice->student),
         ];
     }
 

@@ -68,9 +68,9 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'services.*.transport_stop' => ['nullable', 'string', 'max:150'],
             'services.*.meal_plan_id' => ['nullable', 'integer', 'exists:meal_plans,id'],
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
-            'payment_method' => ['nullable', Rule::in(['cash', 'card', 'bank', 'transfer'])],
+            'payment_method' => ['nullable', Rule::in(['cash', 'card', 'bank', 'transfer', 'instapay'])],
             'payment_note' => ['nullable', 'string', 'max:1000'],
-            'payment_type' => ['required', Rule::in(['one_time','plan'])],
+            'payment_type' => ['required', Rule::in(['one_time', 'plan'])],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
             'invoice_number' => ['prohibited'],
             'currency' => ['prohibited'],
@@ -152,15 +152,21 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 return preg_match('/^\d+(?:\.\d{1,2})?$/', $value) ? bcadd($sum, $value, 2) : $sum;
             }, '0.00');
             if (bccomp($paid, '0.00', 2) > 0) {
-                if (! $this->filled('cash_account_id')) {
-                    $validator->errors()->add('cash_account_id', 'Для оплаты выберите кассу.');
-                }
                 if (! $this->filled('payment_method')) {
                     $validator->errors()->add('payment_method', 'Для оплаты выберите способ оплаты.');
                 }
-                $cashAccount = CashAccount::find($this->integer('cash_account_id'));
-                if ($cashAccount && ! $cashAccount->is_active) {
-                    $validator->errors()->add('cash_account_id', 'Выбранная касса неактивна.');
+                // cash/bank/instapay resolve to their canonical account
+                // server-side (CashAccount::resolvePaymentAccountId) and
+                // never consult cash_account_id — only methods without a
+                // canonical mapping (card/transfer today) still need it.
+                if (CashAccount::canonicalRoleForMethod((string) $this->input('payment_method')) === null) {
+                    if (! $this->filled('cash_account_id')) {
+                        $validator->errors()->add('cash_account_id', 'Для оплаты выберите кассу.');
+                    }
+                    $cashAccount = CashAccount::find($this->integer('cash_account_id'));
+                    if ($cashAccount && ! $cashAccount->is_active) {
+                        $validator->errors()->add('cash_account_id', 'Выбранная касса неактивна.');
+                    }
                 }
             }
         }];

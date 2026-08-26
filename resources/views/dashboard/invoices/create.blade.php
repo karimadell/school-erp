@@ -16,22 +16,11 @@
     $uniformFee = $fees->firstWhere('category', 'uniform');
     $extraFees = $fees->where('category', 'extra_classes');
 
-    $priceRows = [];
-
-    foreach ($fees as $fee) {
-        foreach ($fee->prices as $price) {
-            $priceRows[] = [
-                'fee_id' => $fee->id,
-                'amount' => (float) $price->amount,
-                'grade_group' => $price->grade_group ?? null,
-                'payment_period' => $price->payment_period ?? null,
-                'size' => $price->size ?? null,
-                'item' => $price->item ?? null,
-                'option_type' => $price->option_type ?? null,
-                'option_value' => $price->option_value ?? null,
-            ];
-        }
-    }
+    // $priceRows itself now comes from the controller
+    // (InvoiceController::currentPriceRows), already filtered to
+    // active/current-dated prices for the academic years this screen
+    // offers — see that method for why an unfiltered $fee->prices list
+    // used to let this preview disagree with the server's real total.
 @endphp
 
 <div class="container-fluid py-4">

@@ -47,7 +47,15 @@ abstract class FinanceOperationsTestCase extends TestCase
         $this->enrollment = Enrollment::create(['student_id'=>$this->student->id,'academic_year_id'=>$this->year->id,'enrollment_mode_id'=>$mode->id,'stage_id'=>$stage->id,'grade_id'=>$grade->id,'class_id'=>$class->id,'academic_year'=>$this->year->name,'enrollment_date'=>'2026-08-01','enrolled_at'=>'2026-08-01','status'=>'active','is_active'=>true]);
         $this->fee = Fee::create(['name_ru'=>'Обучение','category'=>'tuition','amount'=>'1.00','is_active'=>true]);
         FeePrice::create(['fee_id'=>$this->fee->id,'academic_year_id'=>$this->year->id,'grade_id'=>$grade->id,'payment_period'=>'yearly','amount'=>'1200.00','currency'=>'EGP','start_date'=>'2026-08-01','end_date'=>'2027-06-30','is_active'=>true]);
-        $this->cash = CashAccount::create(['name'=>'Основная касса','type'=>'cash','balance'=>'0.00','is_active'=>true]);
+        // Cash Operations Phase 4: cash payments made through the HTTP layer
+        // (storePayment/chargeStore/etc.) always resolve to the canonical
+        // operating account server-side now, regardless of any
+        // cash_account_id a request submits — see
+        // CashAccount::resolvePaymentAccountId(). The shared fixture must
+        // open its session on that same canonical account, not an
+        // arbitrary named one, or every cash collection in this suite
+        // would fail with "no open session" against the wrong drawer.
+        $this->cash = CashAccount::operating();
         // Phase 3: a cash collection now requires an open shift, so the shared
         // fixture opens one on the primary drawer. Tests that need the
         // no-open-session path close it first (see closeCashSession()).

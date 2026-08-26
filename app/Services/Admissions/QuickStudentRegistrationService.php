@@ -3,6 +3,7 @@
 namespace App\Services\Admissions;
 
 use App\Models\AcademicYear;
+use App\Models\CashAccount;
 use App\Models\Enrollment;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
@@ -267,7 +268,7 @@ class QuickStudentRegistrationService
                 }
                 $this->payments->record(
                     invoiceId: $invoice->id,
-                    cashAccountId: (int) $data['cash_account_id'],
+                    cashAccountId: CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null),
                     amount: $paidNow,
                     paymentMethod: $data['payment_method'],
                     idempotencyKey: (string) Str::uuid(),

@@ -83,6 +83,15 @@
 	    @else
 	        <button type="button" disabled title="{{ __('finance_uat.phone_missing') }}">{{ __('finance_uat.phone_missing') }}</button>
 	    @endif
+    <a href="{{ route('dashboard.invoices.show', $invoice) }}">Просмотр счёта</a>
+    @if($invoice->student)
+        <a href="{{ route('dashboard.students.show', $invoice->student) }}">Профиль ученика</a>
+    @endif
+    @if(bccomp((string) $invoice->remaining_amount, '0.00', 2) > 0)
+        <a class="primary" href="{{ route('dashboard.invoices.payments.create', $invoice) }}">Следующий платёж</a>
+    @elseif($invoice->student)
+        <a class="primary" href="{{ route('dashboard.students.finance', $invoice->student) }}">Новый платёж</a>
+    @endif
 </div>
 
 <div class="receipt">

@@ -15,8 +15,8 @@ use App\Models\PaymentPlan;
 use App\Models\Stage;
 use App\Services\Admissions\QuickStudentRegistrationService;
 use App\Services\Finance\InvoiceCalculationService;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -48,7 +48,7 @@ class QuickStudentRegistrationController extends Controller
             'defaultEnrollmentModeId' => $modes->count() === 1 ? $modes->first()->id : null,
             'fees' => $fees,
             'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
-            'cashAccounts' => CashAccount::where('is_active', true)->orderBy('name')->get(),
+            'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'transportRoutes' => DB::table('transport_routes')->orderBy('name')->get(),
             'uniformProducts' => DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get(),
             'paymentPlans' => PaymentPlan::active()->with('installments')->orderBy('sort_order')->get(),

@@ -17,10 +17,15 @@ class QuickStudentRegistrationPaymentUxTest extends QuickRegistrationUxTestCase
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1.00']],
         ]))->assertSessionHasErrors(['cash_account_id', 'payment_method']);
 
-        $inactive = CashAccount::create(['name' => 'Закрытая касса', 'type' => 'cash', 'is_active' => false]);
+        // cash always resolves to the canonical operating account
+        // (CashAccount::resolvePaymentAccountId) regardless of any
+        // cash_account_id submitted, so the only way left to exercise an
+        // inactive-account rejection is to deactivate that canonical
+        // account itself.
+        CashAccount::operating()->update(['is_active' => false]);
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1.00']],
-            'cash_account_id' => $inactive->id, 'payment_method' => 'cash',
+            'payment_method' => 'cash',
         ]))->assertSessionHasErrors('cash_account_id');
         $this->assertSame('Выбранная касса неактивна.', session('errors')->first('cash_account_id'));
     }

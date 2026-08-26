@@ -140,6 +140,59 @@ class CashAccount extends Model
         return static::forRole(self::ROLE_INSTAPAY);
     }
 
+    /**
+     * The owner's holding account must never appear as a destination a
+     * cashier can pick for an ordinary student payment (Cash Operations
+     * Phase 4). Any account selector rendered for student-facing payment
+     * forms should build its options through this scope.
+     */
+    public function scopeExcludingOwner($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('role')->orWhere('role', '!=', self::ROLE_OWNER);
+        });
+    }
+
+    /**
+     * Cash Operations Phase 4 — payment_method → canonical account role.
+     * Every student-facing entry point that accepts a payment_method
+     * (Quick Registration, charge & collect, the finance workspace, the
+     * classic invoice screen) must resolve the account through this before
+     * calling InvoicePaymentService::record() — never forward the
+     * cash_account_id a browser submitted for cash/bank/instapay, or a
+     * tampered value could redirect real money. card/transfer have no
+     * canonical mapping yet, so null here means "use the submitted,
+     * validated account id" as before.
+     */
+    public static function canonicalRoleForMethod(string $paymentMethod): ?string
+    {
+        return match ($paymentMethod) {
+            'cash' => self::ROLE_OPERATING,
+            'bank' => self::ROLE_BANK,
+            'instapay' => self::ROLE_INSTAPAY,
+            default => null,
+        };
+    }
+
+    /**
+     * Resolves the account id InvoicePaymentService::record() should
+     * actually be given for $paymentMethod: the canonical account's id when
+     * one is mapped (ignoring $submittedAccountId entirely), otherwise the
+     * submitted id unchanged. Returns 0 (never a real row) when a method
+     * has a canonical mapping but that account hasn't been configured yet,
+     * so a misconfigured school fails closed instead of silently trusting
+     * whatever the browser sent.
+     */
+    public static function resolvePaymentAccountId(string $paymentMethod, ?int $submittedAccountId): int
+    {
+        $role = self::canonicalRoleForMethod($paymentMethod);
+        if ($role === null) {
+            return $submittedAccountId ?? 0;
+        }
+
+        return self::forRole($role)?->id ?? 0;
+    }
+
     // الحساب الرئيسي (Parent)
     public function parent()
     {

@@ -24,9 +24,20 @@
         <p><strong>Способ оплаты:</strong> {{ match($invoice->payment_method) { 'cash' => 'Наличные', 'card' => 'Карта', 'bank' => 'Банк', 'transfer' => 'Перевод', default => 'Без оплаты' } }}</p>
         <p><strong>Касса:</strong> {{ $invoice->cashAccount?->name ?? 'Без оплаты' }}</p>
     </div></div>
-    <a href="{{ route('dashboard.students.complete-registration.edit', $invoice->student) }}" class="btn btn-primary">Завершить регистрацию</a>
-    @if($invoice->payments->isNotEmpty())
-        <a href="{{ route('dashboard.payments.receipt', $invoice->payments->sortByDesc('id')->first()) }}" class="btn btn-success">Открыть квитанцию</a>
-    @endif
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{{ route('dashboard.students.complete-registration.edit', $invoice->student) }}" class="btn btn-primary">Завершить регистрацию</a>
+        @if($invoice->payments->isNotEmpty())
+            <a href="{{ route('dashboard.payments.receipt', $invoice->payments->sortByDesc('id')->first()) }}" class="btn btn-success">Открыть квитанцию</a>
+        @endif
+        <a href="{{ route('dashboard.invoices.print', $invoice) }}" class="btn btn-outline-secondary" target="_blank">Печать счёта</a>
+        <a href="{{ route('dashboard.invoices.pdf', $invoice) }}" class="btn btn-outline-danger">PDF</a>
+        <a href="{{ route('dashboard.invoices.show', $invoice) }}" class="btn btn-outline-secondary">Просмотр счёта</a>
+        <a href="{{ route('dashboard.students.show', $invoice->student) }}" class="btn btn-outline-primary">Профиль ученика</a>
+        @if(bccomp((string) $invoice->remaining_amount, '0.00', 2) > 0)
+            <a href="{{ route('dashboard.invoices.payments.create', $invoice) }}" class="btn btn-outline-success">Следующий платёж</a>
+        @else
+            <a href="{{ route('dashboard.students.finance', $invoice->student) }}" class="btn btn-outline-success">Добавить услугу / новый платёж</a>
+        @endif
+    </div>
 </div>
 @endsection

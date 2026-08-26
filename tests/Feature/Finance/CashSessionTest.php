@@ -141,7 +141,11 @@ class CashSessionTest extends FinanceOperationsTestCase
 
     public function test_charge_and_collect_cash_requires_open_session(): void
     {
-        $drawer = $this->freshDrawer(); // no session
+        // cash always resolves to the canonical operating account
+        // (CashAccount::resolvePaymentAccountId) regardless of any
+        // cash_account_id submitted here, so the only way left to exercise
+        // "no open session" is to close the one the shared fixture opened.
+        $this->closeCashSession();
 
         $this->actingAs($this->accountant)
             ->post(route('dashboard.students.charge.store', $this->student), [
@@ -154,7 +158,6 @@ class CashSessionTest extends FinanceOperationsTestCase
                 'idempotency_key' => (string) Str::uuid(),
                 'collect_amount' => '1200.00',
                 'payment_method' => 'cash',
-                'cash_account_id' => $drawer->id,
             ])
             ->assertSessionHasErrors('payment_method');
 

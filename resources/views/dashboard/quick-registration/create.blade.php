@@ -16,6 +16,23 @@
     $periodLabels = ['once' => 'Разово', 'daily' => 'Ежедневно', 'monthly' => 'Ежемесячно', 'quarterly' => 'Ежеквартально', 'term' => 'За семестр', 'yearly' => 'За год', 'package' => 'Пакет'];
 @endphp
 <div class="container-fluid py-4">
+    <ul class="nav nav-pills mb-4" role="tablist">
+        <li class="nav-item"><button type="button" class="nav-link active" data-mode-tab="new" aria-selected="true">Новый ученик</button></li>
+        <li class="nav-item"><button type="button" class="nav-link" data-mode-tab="existing" aria-selected="false">Существующий ученик</button></li>
+    </ul>
+
+    <section class="card shadow-sm mb-4 d-none" id="existing-student-panel">
+        <div class="card-header fw-bold">Найти существующего ученика</div>
+        <div class="card-body">
+            <p class="text-muted">Откройте карточку ученика — учебный год, ступень, класс, форма обучения, активные подписки и неоплаченные счета загрузятся автоматически. Оттуда можно принять оплату по существующему счёту, продлить транспорт/питание или начислить новую услугу без повторного ввода данных.</p>
+            <form method="GET" action="{{ route('dashboard.finance.workspace') }}" class="row g-2">
+                <div class="col-md-8"><input type="text" name="q" class="form-control" placeholder="Имя, телефон или ID ученика"></div>
+                <div class="col-md-4"><button class="btn btn-primary w-100">Найти ученика</button></div>
+            </form>
+        </div>
+    </section>
+
+    <div id="new-student-panel">
     <h2 class="mb-1">Быстрая регистрация нового ученика</h2>
     <p class="text-muted">Минимальное оформление и первоначальный счёт. Валюта расчётов: EGP.</p>
 
@@ -94,14 +111,15 @@
 
         @include('dashboard.quick-registration.payment-plan-fields')
         <section class="card shadow-sm mb-4"><div class="card-header fw-bold">5. Оплата</div><div class="card-body row g-3">
-            <div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" class="form-select"><option value="">Без оплаты</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" @selected((string) old('cash_account_id') === (string) $account->id)>{{ $account->name }}</option>@endforeach</select></div>
-            <div class="col-md-4"><label class="form-label">Способ оплаты</label><select name="payment_method" class="form-select"><option value="">Без оплаты</option><option value="cash" @selected(old('payment_method') === 'cash')>Наличные</option><option value="card" @selected(old('payment_method') === 'card')>Банковская карта</option><option value="bank" @selected(old('payment_method') === 'bank')>Банковский перевод</option></select></div>
+            <div class="col-md-4"><label class="form-label">Способ оплаты</label><select name="payment_method" id="payment-method" class="form-select"><option value="">Без оплаты</option><option value="cash" @selected(old('payment_method') === 'cash')>Наличные</option><option value="card" @selected(old('payment_method') === 'card')>Банковская карта</option><option value="bank" @selected(old('payment_method') === 'bank')>Банковский перевод</option><option value="instapay" @selected(old('payment_method') === 'instapay')>InstaPay</option></select></div>
+            <div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" id="cash-account" class="form-select"><option value="">Без оплаты</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" @selected((string) old('cash_account_id') === (string) $account->id)>{{ $account->name }}</option>@endforeach</select><div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div></div>
             <div class="col-md-4"><label class="form-label">Примечание к оплате</label><input name="payment_note" value="{{ old('payment_note') }}" class="form-control"></div>
         </div></section>
 
         <div id="service-selection-error" class="text-danger mb-2 d-none">Выберите хотя бы одну финансовую услугу.</div>
         <button class="btn btn-primary btn-lg" @disabled(!$configurationReady)>Создать ученика и счёт</button>
     </form>
+    </div>
 </div>
 
 <script>
@@ -194,6 +212,27 @@ function updateSummary() {
 rows.forEach(row => { row.querySelectorAll('input, select').forEach(input => { input.addEventListener('change', () => updateRow(row)); input.addEventListener('input', () => updateRow(row)); }); updateRow(row); });
 grade.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow));
 [academicYear, schoolClass, enrollmentMode, registrationDate].forEach(input => input.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow)));
+const paymentMethod = document.getElementById('payment-method');
+const cashAccount = document.getElementById('cash-account');
+const cashAccountHint = document.getElementById('cash-account-auto-hint');
+function syncCashAccountField() {
+    const canonical = ['cash', 'bank', 'instapay'].includes(paymentMethod.value);
+    cashAccount.disabled = canonical;
+    cashAccountHint.classList.toggle('d-none', !canonical);
+}
+paymentMethod.addEventListener('change', syncCashAccountField);
+syncCashAccountField();
+
+const modeTabs = [...document.querySelectorAll('[data-mode-tab]')];
+const newPanel = document.getElementById('new-student-panel');
+const existingPanel = document.getElementById('existing-student-panel');
+modeTabs.forEach(tab => tab.addEventListener('click', () => {
+    const existing = tab.dataset.modeTab === 'existing';
+    modeTabs.forEach(other => { other.classList.toggle('active', other === tab); other.setAttribute('aria-selected', other === tab ? 'true' : 'false'); });
+    newPanel.classList.toggle('d-none', existing);
+    existingPanel.classList.toggle('d-none', !existing);
+}));
+
 document.getElementById('quick-registration-form').addEventListener('submit', event => {
     const noneSelected = !rows.some(row => row.querySelector('.service-toggle').checked);
     const overpaid = rows.some(row => row.querySelector('.paid-now')?.classList.contains('is-invalid'));

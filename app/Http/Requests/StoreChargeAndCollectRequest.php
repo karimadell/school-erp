@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\CashAccount;
 use App\Models\FeePrice;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -64,7 +65,7 @@ class StoreChargeAndCollectRequest extends FormRequest
             'items.*.option_value' => ['nullable', 'string', 'max:255'],
 
             'collect_amount' => ['nullable', 'decimal:0,2', 'min:0'],
-            'payment_method' => ['nullable', 'in:cash,bank,card,transfer'],
+            'payment_method' => ['nullable', 'in:cash,bank,card,transfer,instapay'],
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
             'idempotency_key' => ['required', 'uuid'],
 
@@ -88,12 +89,17 @@ class StoreChargeAndCollectRequest extends FormRequest
                 return;
             }
 
-            // Collecting money requires a method and a cash account.
+            // Collecting money requires a method and, for methods with no
+            // canonical account mapping (card/transfer), a cash account —
+            // cash/bank/instapay resolve their own canonical account
+            // server-side and never consult this field.
             if (bccomp((string) ($this->input('collect_amount') ?? '0'), '0', 2) > 0) {
                 if (! $this->filled('payment_method')) {
                     $validator->errors()->add('payment_method', 'Выберите способ оплаты.');
                 }
-                if (! $this->filled('cash_account_id')) {
+                $resolvesCanonically = $this->filled('payment_method')
+                    && CashAccount::canonicalRoleForMethod((string) $this->input('payment_method')) !== null;
+                if (! $resolvesCanonically && ! $this->filled('cash_account_id')) {
                     $validator->errors()->add('cash_account_id', 'Выберите кассу.');
                 }
             }

@@ -82,6 +82,7 @@ class QuickRegistrationAvailabilityGatingTest extends QuickRegistrationUxTestCas
         [$year] = $this->structure();
         $uniform = $this->fee('Школьная форма', Fee::CATEGORY_UNIFORM);
         $this->price($uniform, $year, ['item' => 'Комплект', 'size' => '6-10', 'payment_period' => 'once']);
+        DB::table('uniform_products')->insert(['name_ru' => 'Комплект', 'category' => 'set', 'size' => '6-10', 'price' => '2000.00', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
 
         $html = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))
             ->assertOk()->getContent();
@@ -129,11 +130,27 @@ class QuickRegistrationAvailabilityGatingTest extends QuickRegistrationUxTestCas
         [$year] = $this->structure();
         $transport = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
         $this->price($transport, $year, ['option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly']);
+        DB::table('transport_routes')->insert(['name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now()]);
 
         $html = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))
             ->assertOk()->getContent();
 
         $this->assertFalse($this->isServiceCheckboxDisabled($html, $transport));
+    }
+
+    public function test_transport_is_disabled_when_pricing_exists_but_no_route_does(): void
+    {
+        // Phase 4A.3: transport_route_id is required on submit whenever
+        // Transport is selected — pricing alone is not enough to enable it.
+        [$year] = $this->structure();
+        $transport = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
+        $this->price($transport, $year, ['option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly']);
+
+        $html = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))
+            ->assertOk()->getContent();
+
+        $this->assertTrue($this->isServiceCheckboxDisabled($html, $transport));
+        $this->assertStringContainsString('PRICING READY / ROUTE METADATA MISSING', $html);
     }
 
     public function test_installment_mode_is_disabled_when_no_active_payment_plan_exists(): void

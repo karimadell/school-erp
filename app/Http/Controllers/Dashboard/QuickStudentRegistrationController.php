@@ -75,6 +75,23 @@ class QuickStudentRegistrationController extends Controller
             ->filter(fn ($product) => $sellableUniformCombinations->contains($product->name_ru.'|'.$product->size))
             ->values();
 
+        // Phase 4A.3: mirrors the uniform filtering above — a MealPlan must
+        // not be offered unless a resolved Food tariff's option_value is
+        // its exact numeric id. This excludes both legacy textual
+        // option_value rows (e.g. "Напиток") and MealPlans with no
+        // matching tariff at all, matching what FinanceConfigurationReadinessService
+        // now requires for Food readiness — the dropdown and readiness can
+        // never disagree.
+        $sellableMealPlanIds = $fees->where('category', Fee::CATEGORY_FOOD)
+            ->flatMap(fn (Fee $fee) => $fee->prices)
+            ->pluck('option_value')
+            ->filter(fn ($value) => is_numeric($value))
+            ->map(fn ($value) => (int) $value)
+            ->unique();
+        $mealPlans = MealPlan::active()->orderBy('name_ru')->get()
+            ->filter(fn (MealPlan $plan) => $sellableMealPlanIds->contains($plan->id))
+            ->values();
+
         return view('dashboard.quick-registration.create', [
             'academicYears' => $academicYears,
             'defaultAcademicYearId' => $academicYears->count() === 1 ? $academicYears->first()->id : null,
@@ -88,7 +105,7 @@ class QuickStudentRegistrationController extends Controller
             'fees' => $fees,
             'serviceReadiness' => $serviceReadiness,
             'installmentsReadiness' => $readiness->installments(),
-            'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
+            'mealPlans' => $mealPlans,
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'transportRoutes' => DB::table('transport_routes')->orderBy('name')->get(),
             'uniformProducts' => $uniformProducts,

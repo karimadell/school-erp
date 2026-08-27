@@ -17,6 +17,7 @@ use App\Services\Finance\FinanceConfigurationReadinessService;
 use App\Services\Finance\InvoiceCalculationService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
@@ -326,6 +327,7 @@ class CanonicalPricingSelectionTest extends TestCase
             'start_date' => '2026-09-01', 'end_date' => $this->year->end_date, 'is_active' => true,
             'option_type' => 'zone', 'option_value' => 'Зона 1',
         ]);
+        DB::table('transport_routes')->insert(['name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now()]);
         $food = $this->fee('Питание', Fee::CATEGORY_FOOD);
         $mealPlan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => MealPlan::TYPE_LUNCH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '300.00', 'is_active' => true]);
         FeePrice::create([
@@ -339,6 +341,7 @@ class CanonicalPricingSelectionTest extends TestCase
             'start_date' => '2026-09-01', 'end_date' => $this->year->end_date, 'is_active' => true,
             'item' => 'Футболка', 'size' => 'M',
         ]);
+        DB::table('uniform_products')->insert(['name_ru' => 'Футболка', 'category' => 'shirt', 'size' => 'M', 'price' => 200, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
 
         $service = app(FinanceConfigurationReadinessService::class);
         $this->assertTrue($service->forFee($transport, $this->year)['ready']);

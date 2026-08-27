@@ -43,10 +43,16 @@ class FinanceReadinessAudit extends Command
 
     protected $description = 'Read-only master-data readiness audit for Quick Registration (Phase 4A) — no writes of any kind.';
 
+    // Phase 4A.3: Externat (tuition_external) is never counted as ordinary
+    // Tuition coverage — it is priced and reported entirely separately,
+    // even though both need the same grade/payment-period tariff shape.
     private const TUITION_CATEGORIES = [
         Fee::CATEGORY_TUITION,
         Fee::CATEGORY_TUITION_REGULAR,
         Fee::CATEGORY_TUITION_FAMILY,
+    ];
+
+    private const TUITION_EXTERNAL_CATEGORIES = [
         Fee::CATEGORY_TUITION_EXTERNAL,
     ];
 
@@ -397,14 +403,30 @@ class FinanceReadinessAudit extends Command
     // =====================================================================
     // F
     // =====================================================================
+    /**
+     * Phase 4A.3: tuition_external (Externat) is priced and reported
+     * entirely separately from ordinary tuition — mixing the two into one
+     * matrix previously made an Externat-only tariff look like ordinary
+     * Tuition coverage (and vice versa), even though Quick Registration
+     * treats them as different services with different price points.
+     */
     private function sectionF(Collection $fees, Collection $classified, Collection $grades): void
     {
         $this->header('F. Tuition coverage matrix (grade × payment period × sellable tariff)');
-        $tuitionFees = $fees->whereIn('category', self::TUITION_CATEGORIES);
+        $this->tuitionCoverageMatrix($fees, $classified, $grades, self::TUITION_CATEGORIES, 'ordinary tuition');
+
+        $this->header('F2. Externat (tuition_external) coverage matrix — reported separately, never merged into ordinary Tuition');
+        $this->tuitionCoverageMatrix($fees, $classified, $grades, self::TUITION_EXTERNAL_CATEGORIES, 'Externat');
+    }
+
+    /** @param  array<int, string>  $categories */
+    private function tuitionCoverageMatrix(Collection $fees, Collection $classified, Collection $grades, array $categories, string $label): void
+    {
+        $tuitionFees = $fees->whereIn('category', $categories);
         $sellable = $classified->whereIn('fee.id', $tuitionFees->pluck('id'))->where('status', 'SELLABLE');
 
         if ($sellable->isEmpty()) {
-            $this->components->error('No sellable tuition tariff exists for any grade in the target academic year.');
+            $this->components->error("No sellable {$label} tariff exists for any grade in the target academic year.");
 
             return;
         }
@@ -519,6 +541,10 @@ class FinanceReadinessAudit extends Command
         if ($unsellable->isNotEmpty()) {
             $this->warn($unsellable->count().' uniform product/size combination(s) exist in the catalog but cannot currently be sold.');
         }
+
+        if ($fees->where('category', Fee::CATEGORY_UNIFORM)->where('is_active', true)->isNotEmpty() && $products->isEmpty()) {
+            $this->components->error('Uniform fee(s) exist but the uniform_products catalog is completely empty — Uniform would be gated off in Quick Registration.');
+        }
     }
 
     // =====================================================================
@@ -605,22 +631,25 @@ class FinanceReadinessAudit extends Command
     {
         $this->header('M. Final readiness matrix');
 
-        $sellableGrades = $grades->filter(function (Grade $grade) use ($classified) {
-            $gradeGroup = self::GRADE_GROUP_LABELS[$grade->level] ?? null;
-            $sellableTuition = $classified->where('status', 'SELLABLE')
-                ->whereIn('fee.category', self::TUITION_CATEGORIES);
+        $sellableGradesFor = function (array $categories) use ($classified, $grades): Collection {
+            return $grades->filter(function (Grade $grade) use ($classified, $categories) {
+                $gradeGroup = self::GRADE_GROUP_LABELS[$grade->level] ?? null;
+                $sellableTuition = $classified->where('status', 'SELLABLE')->whereIn('fee.category', $categories);
 
-            return $sellableTuition->contains(fn (array $row) => $row['price']->grade_id === $grade->id
-                || (blank($row['price']->grade_id) && $row['price']->grade_group === $gradeGroup)
-                || (blank($row['price']->grade_id) && blank($row['price']->grade_group)));
-        });
+                return $sellableTuition->contains(fn (array $row) => $row['price']->grade_id === $grade->id
+                    || (blank($row['price']->grade_id) && $row['price']->grade_group === $gradeGroup)
+                    || (blank($row['price']->grade_id) && blank($row['price']->grade_group)));
+            });
+        };
+        $sellableGrades = $sellableGradesFor(self::TUITION_CATEGORIES);
+        $sellableExternatGrades = $sellableGradesFor(self::TUITION_EXTERNAL_CATEGORIES);
 
         $rows = [
             ['Academic year', $year ? 'READY' : 'MISSING', $year ? null : 'No 2026/2027 academic year found', $year ? null : 'Create the academic year'],
             ['School structure', $grades->isNotEmpty() ? 'READY' : 'MISSING', $grades->isEmpty() ? 'No active grades' : null, $grades->isEmpty() ? 'Create stages/grades/classes' : null],
             ['Registration', $readiness['registration']['ready'] ? 'READY' : 'MISSING', $readiness['registration']['reason'], $readiness['registration']['ready'] ? null : 'Create registration Fee + FeePrice'],
-            ['Tuition', $sellableGrades->count() === $grades->count() && $grades->isNotEmpty() ? 'READY' : ($sellableGrades->isNotEmpty() ? 'PARTIAL' : 'MISSING'), $sellableGrades->count().' of '.$grades->count().' active grades sellable', $sellableGrades->count() < $grades->count() ? 'Add tuition FeePrice for the remaining grades' : null],
-            ['Externat', $readiness['tuition']['ready'] ? 'depends on externat-specific data — see section D' : 'NOT REQUIRED FOR BASE TEST', null, null],
+            ['Tuition', $sellableGrades->count() === $grades->count() && $grades->isNotEmpty() ? 'READY' : ($sellableGrades->isNotEmpty() ? 'PARTIAL' : 'MISSING'), $sellableGrades->count().' of '.$grades->count().' active grades sellable (ordinary tuition only — see F)', $sellableGrades->count() < $grades->count() ? 'Add tuition FeePrice for the remaining grades' : null],
+            ['Externat', $readiness['tuition_external']['ready'] ? ($sellableExternatGrades->count() === $grades->count() ? 'READY' : 'PARTIAL') : 'NOT REQUIRED FOR BASE TEST', $readiness['tuition_external']['ready'] ? $sellableExternatGrades->count().' of '.$grades->count().' active grades sellable — see F2' : $readiness['tuition_external']['reason'], null],
             ['Transport', $readiness['transport']['ready'] ? 'READY' : 'PARTIAL/MISSING — see G', $readiness['transport']['reason'], $readiness['transport']['ready'] ? null : 'Add a transport FeePrice with option_type=zone'],
             ['Food', $readiness['food']['ready'] ? 'READY' : 'PARTIAL/MISSING — see H', $readiness['food']['reason'], $readiness['food']['ready'] ? null : 'Add a food FeePrice with option_type=meal_plan'],
             ['Uniform', $readiness['uniform']['ready'] ? 'READY' : 'PARTIAL/MISSING — see I', $readiness['uniform']['reason'], $readiness['uniform']['ready'] ? null : 'Add a uniform FeePrice with item+size'],

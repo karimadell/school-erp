@@ -11,6 +11,7 @@ use App\Models\PaymentPlan;
 use App\Models\PaymentPlanInstallment;
 use App\Services\Finance\FinanceConfigurationReadinessService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -48,17 +49,44 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         ], $overrides));
     }
 
+    /** Phase 4A.3: Transport readiness additionally requires a usable route (transport_route_id is required on submit). */
+    private function route(): void
+    {
+        DB::table('transport_routes')->insert(['name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now()]);
+    }
+
+    /** Phase 4A.3: Uniform readiness additionally requires a matching ACTIVE uniform_products row. */
+    private function uniformProduct(string $item, string $size): void
+    {
+        DB::table('uniform_products')->insert(['name_ru' => $item, 'category' => 'other', 'size' => $size, 'price' => 100, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+    }
+
     // ----- Transport -----------------------------------------------------
 
     public function test_transport_is_ready_when_a_zone_tariff_exists(): void
     {
         $fee = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
         $this->price($fee, ['option_type' => 'zone', 'option_value' => 'Зона 1']);
+        $this->route();
 
         $result = $this->readiness->forFee($fee, $this->year);
 
         $this->assertTrue($result['ready']);
         $this->assertNull($result['reason']);
+    }
+
+    public function test_transport_is_not_ready_when_pricing_exists_but_no_route_does(): void
+    {
+        // Phase 4A.3: transport_route_id is required by
+        // StoreQuickStudentRegistrationRequest whenever Transport is
+        // selected — pricing readiness alone cannot be submitted.
+        $fee = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
+        $this->price($fee, ['option_type' => 'zone', 'option_value' => 'Зона 1']);
+
+        $result = $this->readiness->forFee($fee, $this->year);
+
+        $this->assertFalse($result['ready']);
+        $this->assertStringContainsString('PRICING READY / ROUTE METADATA MISSING', $result['reason']);
     }
 
     public function test_transport_is_not_ready_without_any_tariff(): void
@@ -103,12 +131,52 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         $this->assertStringContainsString('плана питания', $result['reason']);
     }
 
+    public function test_food_is_not_ready_with_a_valid_tariff_and_zero_meal_plans(): void
+    {
+        $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => '1']);
+
+        $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
+    }
+
+    public function test_food_is_not_ready_with_a_legacy_textual_meal_plan_option_value(): void
+    {
+        // The real UAT symptom: option_value holds a meal name instead of a
+        // numeric MealPlan id — InvoiceCalculationService::resolvableCandidates()
+        // is catalog-agnostic and still resolves it by pure pricing rules,
+        // but it must never make Food readiness report ready.
+        $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
+        MealPlan::create(['name_ru' => 'Напиток', 'meal_type' => 'breakfast', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => 'Напиток']);
+
+        $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
+    }
+
+    public function test_food_is_ready_with_an_active_meal_plan_and_matching_numeric_tariff(): void
+    {
+        $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
+        $plan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => 'lunch', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id]);
+
+        $this->assertTrue($this->readiness->forFee($fee, $this->year)['ready']);
+    }
+
+    public function test_food_is_not_ready_when_the_matching_meal_plan_is_inactive(): void
+    {
+        $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
+        $plan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => 'lunch', 'period' => 'daily', 'price' => '70.00', 'is_active' => false]);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id]);
+
+        $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
+    }
+
     // ----- Uniform ---------------------------------------------------------
 
     public function test_uniform_is_ready_when_an_item_and_size_tariff_exists(): void
     {
         $fee = $this->fee('Школьная форма', Fee::CATEGORY_UNIFORM);
         $this->price($fee, ['item' => 'Комплект', 'size' => '6-10']);
+        $this->uniformProduct('Комплект', '6-10');
 
         $this->assertTrue($this->readiness->forFee($fee, $this->year)['ready']);
     }
@@ -120,6 +188,35 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         $result = $this->readiness->forFee($fee, $this->year);
         $this->assertFalse($result['ready']);
         $this->assertStringContainsString('школьную форму', $result['reason']);
+    }
+
+    public function test_uniform_is_not_ready_when_a_tariff_exists_but_no_matching_active_product_does(): void
+    {
+        // Phase 4A.3: a FeePrice with item+size is not enough — Quick
+        // Registration's product dropdown needs a matching ACTIVE
+        // uniform_products row to actually offer it.
+        $fee = $this->fee('Школьная форма', Fee::CATEGORY_UNIFORM);
+        $this->price($fee, ['item' => 'Комплект', 'size' => '6-10']);
+
+        $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
+    }
+
+    public function test_uniform_is_not_ready_when_the_matching_product_is_inactive(): void
+    {
+        $fee = $this->fee('Школьная форма', Fee::CATEGORY_UNIFORM);
+        $this->price($fee, ['item' => 'Комплект', 'size' => '6-10']);
+        DB::table('uniform_products')->insert(['name_ru' => 'Комплект', 'category' => 'other', 'size' => '6-10', 'price' => 100, 'is_active' => false, 'created_at' => now(), 'updated_at' => now()]);
+
+        $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
+    }
+
+    public function test_uniform_is_not_ready_when_the_product_size_does_not_match(): void
+    {
+        $fee = $this->fee('Школьная форма', Fee::CATEGORY_UNIFORM);
+        $this->price($fee, ['item' => 'Комплект', 'size' => '6-10']);
+        $this->uniformProduct('Комплект', '11-14');
+
+        $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
     }
 
     // ----- Tuition / Registration -------------------------------------------
@@ -190,6 +287,7 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         // itself would resolve for this same selection.
         $fee = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
         $this->price($fee, ['option_type' => 'zone', 'option_value' => 'Зона 1', 'start_date' => '2027-05-01', 'end_date' => '2027-06-30']);
+        $this->route();
 
         $this->assertTrue($this->readiness->forFee($fee, $this->year)['ready']);
     }
@@ -234,11 +332,11 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
 
     // ----- Rollup ------------------------------------------------------------
 
-    public function test_for_academic_year_reports_all_six_categories(): void
+    public function test_for_academic_year_reports_all_seven_categories(): void
     {
         $result = $this->readiness->forAcademicYear($this->year);
 
-        $this->assertSame(['tuition', 'registration', 'transport', 'food', 'uniform', 'installments'], array_keys($result));
+        $this->assertSame(['tuition', 'tuition_external', 'registration', 'transport', 'food', 'uniform', 'installments'], array_keys($result));
         foreach ($result as $category => $status) {
             $this->assertArrayHasKey('ready', $status, "category {$category} missing 'ready'");
             $this->assertArrayHasKey('reason', $status, "category {$category} missing 'reason'");
@@ -246,10 +344,25 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         }
     }
 
+    public function test_tuition_external_never_counts_toward_ordinary_tuition_readiness(): void
+    {
+        // Phase 4A.3: an Externat-only tariff must not make "tuition"
+        // report ready, and an ordinary-tuition-only tariff must not make
+        // "tuition_external" report ready.
+        $externat = $this->fee('Экстернат', Fee::CATEGORY_TUITION_EXTERNAL);
+        $this->price($externat, ['grade_group' => '1–4 классы', 'payment_period' => 'yearly']);
+
+        $result = $this->readiness->forAcademicYear($this->year);
+
+        $this->assertTrue($result['tuition_external']['ready']);
+        $this->assertFalse($result['tuition']['ready']);
+    }
+
     public function test_for_academic_year_reports_ready_once_a_category_has_a_configured_fee(): void
     {
         $fee = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
         $this->price($fee, ['option_type' => 'zone', 'option_value' => 'Зона 1']);
+        $this->route();
 
         $result = $this->readiness->forAcademicYear($this->year);
 
@@ -263,6 +376,7 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
     {
         $ready = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
         $this->price($ready, ['option_type' => 'zone', 'option_value' => 'Зона 1']);
+        $this->route();
         $notReady = $this->fee('Питание', Fee::CATEGORY_FOOD);
 
         $batch = $this->readiness->forFees(collect([$ready, $notReady]), $this->year);

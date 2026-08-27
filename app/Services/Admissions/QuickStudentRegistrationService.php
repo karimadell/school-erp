@@ -262,6 +262,7 @@ class QuickStudentRegistrationService
                 'route_id' => $selection['transport_route_id'],
                 'route' => $selection['transport_route_name'],
                 'stop' => $selection['transport_stop'] ?? null,
+                'payment_period' => $selection['payment_period'] ?? null,
             ],
             Fee::CATEGORY_FOOD => [
                 'meal_plan_id' => $selection['meal_plan_id'],

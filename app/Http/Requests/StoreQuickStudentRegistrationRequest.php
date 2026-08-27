@@ -138,8 +138,19 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 if ($category === Fee::CATEGORY_UNIFORM && blank($item['uniform_product_id'] ?? null)) {
                     $validator->errors()->add("services.{$index}.uniform_product_id", 'Для школьной формы выберите изделие и размер.');
                 }
-                if ($category === Fee::CATEGORY_TRANSPORT && (blank($item['transport_area'] ?? null) || blank($item['transport_route_id'] ?? null))) {
-                    $validator->errors()->add("services.{$index}.transport_area", 'Для транспорта укажите район и маршрут.');
+                if ($category === Fee::CATEGORY_TRANSPORT) {
+                    if (blank($item['transport_area'] ?? null) || blank($item['transport_route_id'] ?? null)) {
+                        $validator->errors()->add("services.{$index}.transport_area", 'Для транспорта укажите район и маршрут.');
+                    }
+                    // Mirrors InvoiceCalculationService::resolvePrice()'s own
+                    // conditional requirement exactly (Bug 2): payment_period
+                    // is only mandatory when this fee actually has at least
+                    // one dimensioned-by-period tariff — never a blanket
+                    // requirement, and never re-deriving a different rule.
+                    $fee = $fees->get((int) ($item['fee_id'] ?? 0));
+                    if ($fee && blank($item['payment_period'] ?? null) && FeePrice::where('fee_id', $fee->id)->whereNotNull('payment_period')->exists()) {
+                        $validator->errors()->add("services.{$index}.payment_period", 'Для транспорта выберите период оплаты.');
+                    }
                 }
                 if ($category === Fee::CATEGORY_FOOD && blank($item['meal_plan_id'] ?? null)) {
                     $validator->errors()->add("services.{$index}.meal_plan_id", 'Для питания выберите план питания.');

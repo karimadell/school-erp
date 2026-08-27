@@ -100,8 +100,18 @@
                                     <div class="col-md-3"><label class="form-label">Период оплаты</label><select name="services[{{ $index }}][payment_period]" class="form-select price-option"><option value="">Стандартный</option>@foreach($fee->prices->pluck('payment_period')->filter()->unique() as $option)<option value="{{ $option }}" @selected(($oldService['payment_period'] ?? null) === $option)>{{ $periodLabels[$option] ?? $option }}</option>@endforeach</select></div>
                                     <div class="col-md-3 form-check mt-5"><input type="checkbox" value="1" name="services[{{ $index }}][first_last_month]" class="form-check-input price-option" id="first-last-{{ $fee->id }}" @checked(!empty($oldService['first_last_month']))><label for="first-last-{{ $fee->id }}">Первый и последний месяц</label></div>
                                 @elseif($groupKey === 'transport')
-                                    <div class="col-md-3"><label class="form-label">Район / зона *</label><select name="services[{{ $index }}][transport_area]" class="form-select price-option"><option value="">Выберите зону</option>@foreach($fee->prices->where('option_type', 'zone')->pluck('option_value')->filter()->unique() as $zone)<option value="{{ $zone }}" @selected(($oldService['transport_area'] ?? null) === $zone)>{{ $zone }}</option>@endforeach</select></div>
+                                    @php
+                                        // Derived live from this fee's actual sellable FeePrice rows — never
+                                        // hardcoded — so the period dropdown can only ever offer combinations
+                                        // that InvoiceCalculationService would actually resolve for that zone.
+                                        $transportPeriodsByZone = $fee->prices->where('option_type', 'zone')
+                                            ->groupBy('option_value')
+                                            ->map(fn ($prices) => $prices->pluck('payment_period')->filter()->unique()->values());
+                                        $transportPeriodRequired = $transportPeriodsByZone->flatten()->isNotEmpty();
+                                    @endphp
+                                    <div class="col-md-3"><label class="form-label">Район / зона *</label><select name="services[{{ $index }}][transport_area]" class="form-select price-option transport-zone" data-periods-by-zone="{{ $transportPeriodsByZone->toJson() }}"><option value="">Выберите зону</option>@foreach($fee->prices->where('option_type', 'zone')->pluck('option_value')->filter()->unique() as $zone)<option value="{{ $zone }}" @selected(($oldService['transport_area'] ?? null) === $zone)>{{ $zone }}</option>@endforeach</select></div>
                                     <div class="col-md-3"><label class="form-label">Маршрут *</label><select name="services[{{ $index }}][transport_route_id]" class="form-select"><option value="">Выберите маршрут</option>@foreach($transportRoutes as $route)<option value="{{ $route->id }}" @selected((string) ($oldService['transport_route_id'] ?? '') === (string) $route->id)>{{ $route->name }}</option>@endforeach</select></div>
+                                    <div class="col-md-3"><label class="form-label">Период оплаты{{ $transportPeriodRequired ? ' *' : '' }}</label><select name="services[{{ $index }}][payment_period]" class="form-select price-option transport-period" data-old-value="{{ $oldService['payment_period'] ?? '' }}"><option value="">Выберите зону</option></select></div>
                                     <div class="col-md-3"><label class="form-label">Остановка</label><input name="services[{{ $index }}][transport_stop]" value="{{ $oldService['transport_stop'] ?? '' }}" class="form-control"></div>
                                 @elseif($groupKey === 'food')
                                     <div class="col-md-4"><label class="form-label">План питания *</label><select name="services[{{ $index }}][meal_plan_id]" class="form-select price-option"><option value="">Выберите план питания</option>@foreach($mealPlans as $plan)<option value="{{ $plan->id }}" @selected((string) ($oldService['meal_plan_id'] ?? '') === (string) $plan->id)>{{ $plan->name_ru }}</option>@endforeach</select></div>
@@ -136,6 +146,7 @@
         </div></section>
 
         <div id="service-selection-error" class="text-danger mb-2 d-none">Выберите хотя бы одну финансовую услугу.</div>
+        <div id="submit-blocked-error" class="text-danger mb-2 d-none"></div>
         <button class="btn btn-primary btn-lg" @disabled(!$configurationReady)>Создать ученика и счёт</button>
     </form>
     </div>
@@ -144,6 +155,7 @@
 <script>
 const cents = value => Math.round((Number(value || 0) + Number.EPSILON) * 100);
 const money = value => `${(cents(value) / 100).toFixed(2)} EGP`;
+const periodLabels = @json($periodLabels);
 const stage = document.getElementById('stage');
 const grade = document.getElementById('grade');
 const schoolClass = document.getElementById('school-class');
@@ -165,7 +177,30 @@ const filterAcademics = () => {
 stage.addEventListener('change', filterAcademics); grade.addEventListener('change', filterAcademics); filterAcademics();
 
 const rows = [...document.querySelectorAll('.service-row')];
+
+// Bug 2: Transport's payment-period options are derived live from this
+// fee's own sellable FeePrice rows (data-periods-by-zone, rendered
+// server-side) — never hardcoded — and re-filtered to just the selected
+// zone every time. Called unconditionally at the top of updateRow() so the
+// dropdown is always correct before pricing is requested, regardless of
+// which field just changed.
+function syncTransportPeriods(row) {
+    const zoneSelect = row.querySelector('.transport-zone');
+    const periodSelect = row.querySelector('.transport-period');
+    if (!zoneSelect || !periodSelect) return;
+    const periodsByZone = JSON.parse(zoneSelect.dataset.periodsByZone || '{}');
+    const periods = periodsByZone[zoneSelect.value] || [];
+    // Preserve an old()-repopulated value (after a validation error) on the
+    // very first sync only; afterwards the select's own live value wins.
+    const desired = periodSelect.value || periodSelect.dataset.oldValue || '';
+    periodSelect.dataset.oldValue = '';
+    periodSelect.innerHTML = (zoneSelect.value ? '<option value="">Выберите период оплаты</option>' : '<option value="">Выберите зону</option>')
+        + periods.map(p => `<option value="${p}">${periodLabels[p] || p}</option>`).join('');
+    if (periods.includes(desired)) periodSelect.value = desired;
+}
+
 async function updateRow(row) {
+    syncTransportPeriods(row);
     const selected = row.querySelector('.service-toggle').checked;
     const fields = row.querySelector('.service-fields');
     fields.classList.toggle('d-none', !selected);
@@ -241,7 +276,18 @@ function updateSummary() {
     if (!tbody.children.length) tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Услуги не выбраны.</td></tr>';
     [['summary-total', total], ['summary-paid', paid], ['summary-remaining', remaining], ['grand-total', total], ['grand-paid', paid], ['grand-remaining', remaining]].forEach(([id, value]) => document.getElementById(id).textContent = money(value / 100));
 }
-rows.forEach(row => { row.querySelectorAll('input, select').forEach(input => { input.addEventListener('change', () => updateRow(row)); input.addEventListener('input', () => updateRow(row)); }); updateRow(row); });
+rows.forEach(row => { row.querySelectorAll('input, select').forEach(input => { input.addEventListener('change', () => updateRow(row)); input.addEventListener('input', () => updateRow(row)); }); });
+// Bug 1: some browsers (confirmed: Safari) restore a checkbox's checked
+// state — e.g. from bfcache navigation, or native form-autofill — AFTER
+// this script's top-level code has already run, and never dispatch a
+// 'change' event when doing so. Reading `.checked` synchronously at parse
+// time can therefore see a not-yet-restored, unchecked snapshot even for a
+// row the browser is about to show as checked, leaving its price stuck on
+// the static "0.00 EGP" placeholder until the user manually toggles it.
+// 'pageshow' fires after that restoration completes on every navigation —
+// including a plain first load — so re-reading `.checked` there is the
+// robust point to resolve pricing for whatever is actually checked.
+window.addEventListener('pageshow', () => rows.forEach(updateRow));
 grade.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow));
 [academicYear, schoolClass, enrollmentMode, registrationDate].forEach(input => input.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow)));
 const paymentMethod = document.getElementById('payment-method');
@@ -265,12 +311,37 @@ modeTabs.forEach(tab => tab.addEventListener('click', () => {
     existingPanel.classList.toggle('d-none', !existing);
 }));
 
+// Bug 3: blocking submission with only event.preventDefault() — as this
+// used to do for the "unresolved price" and "overpaid" cases — produces
+// exactly the silent "nothing happens" click the employee saw: no request,
+// no navigation, no visible message. Every blocked-submit path below must
+// now show a specific Russian message and bring the offending row into view.
+const submitBlockedError = document.getElementById('submit-blocked-error');
 document.getElementById('quick-registration-form').addEventListener('submit', event => {
     const noneSelected = !rows.some(row => row.querySelector('.service-toggle').checked);
-    const overpaid = rows.some(row => row.querySelector('.paid-now')?.classList.contains('is-invalid'));
-    const unavailable = rows.some(row => row.querySelector('.service-toggle').checked && row.dataset.pricingAvailable !== 'true');
     document.getElementById('service-selection-error').classList.toggle('d-none', !noneSelected);
-    if (noneSelected || overpaid || unavailable) event.preventDefault();
+
+    rows.forEach(row => row.classList.remove('border-danger'));
+    const overpaidRow = rows.find(row => row.querySelector('.service-toggle').checked && row.querySelector('.paid-now')?.classList.contains('is-invalid'));
+    const unavailableRow = rows.find(row => row.querySelector('.service-toggle').checked && row.dataset.pricingAvailable !== 'true');
+    const blockedRow = overpaidRow || unavailableRow;
+
+    if (!noneSelected && !blockedRow) {
+        submitBlockedError.classList.add('d-none');
+        return;
+    }
+
+    event.preventDefault();
+    if (blockedRow) {
+        blockedRow.classList.add('border-danger');
+        submitBlockedError.textContent = overpaidRow
+            ? 'Оплаченная сумма превышает стоимость услуги — исправьте выделенную строку ниже.'
+            : 'Для одной из выбранных услуг не удалось рассчитать стоимость — заполните все обязательные поля в выделенной строке ниже.';
+        submitBlockedError.classList.remove('d-none');
+        blockedRow.scrollIntoView({behavior: 'smooth', block: 'center'});
+    } else {
+        submitBlockedError.classList.add('d-none');
+    }
 });
 </script>
 @endsection

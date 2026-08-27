@@ -86,14 +86,17 @@ class QuickStudentRegistrationTest extends TestCase
 
         $student = Student::sole();
         $invoice = Invoice::sole();
-        $response->assertRedirect(route('dashboard.quick-registration.summary', $invoice));
+        // Single-page flow: Quick Registration never sends the employee to a
+        // separate summary/receipt page — it redirects back to itself and
+        // renders an inline success panel there instead.
+        $response->assertRedirect(route('dashboard.quick-registration.create'));
         $this->assertSame(Student::STATUS_PRE_REGISTERED, $student->status);
         $this->assertSame('Иванов Иван Иван Иванович', $student->full_name);
         $this->assertTrue($student->has_incomplete_profile);
         $this->assertSame('2026-08-02', Enrollment::sole()->enrollment_date->toDateString());
         $this->assertSame('1000.00', $invoice->total_amount);
-        $this->get(route('dashboard.quick-registration.summary', $invoice))->assertOk()
-            ->assertSee('Данные ученика заполнены не полностью.')->assertSee('Завершить регистрацию');
+        $this->get(route('dashboard.quick-registration.create'))->assertOk()
+            ->assertSee('Регистрация и оплата подтверждены')->assertSee($invoice->invoice_number);
     }
 
     public function test_registration_fee_can_only_appear_once_per_year(): void

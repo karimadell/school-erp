@@ -283,7 +283,7 @@ class QuickRegistrationTransportPeriodAndSubmitRegressionTest extends QuickRegis
         $html = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))->assertOk()->getContent();
 
         $formStart = strpos($html, '<form method="POST" action="'.route('dashboard.quick-registration.store'));
-        $buttonPos = strpos($html, 'Создать ученика, счёт и подтвердить оплату');
+        $buttonPos = strpos($html, 'Подтвердить оплату и завершить регистрацию');
         $formEnd = strpos($html, '</form>', $formStart);
         $this->assertNotFalse($formStart);
         $this->assertNotFalse($buttonPos);

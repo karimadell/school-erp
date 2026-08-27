@@ -28,6 +28,9 @@
     $unavailableReason = fn ($fee) => $serviceReadiness[$fee->id]['reason'] ?? null;
 @endphp
 <div class="container-fluid py-4">
+@if($registrationSuccess)
+    @include('dashboard.quick-registration._success-panel', ['registrationSuccess' => $registrationSuccess])
+@else
     <ul class="nav nav-pills mb-4" role="tablist">
         <li class="nav-item"><button type="button" class="nav-link active" data-mode-tab="new" aria-selected="true">Новый ученик</button></li>
         <li class="nav-item"><button type="button" class="nav-link" data-mode-tab="existing" aria-selected="false">Существующий ученик</button></li>
@@ -147,11 +150,13 @@
 
         <div id="service-selection-error" class="text-danger mb-2 d-none">Выберите хотя бы одну финансовую услугу.</div>
         <div id="submit-blocked-error" class="text-danger mb-2 d-none"></div>
-        <button class="btn btn-primary btn-lg" @disabled(!$configurationReady)>Создать ученика, счёт и подтвердить оплату</button>
+        <button class="btn btn-primary btn-lg" @disabled(!$configurationReady)>Подтвердить оплату и завершить регистрацию</button>
     </form>
     </div>
+@endif
 </div>
 
+@unless($registrationSuccess)
 <script>
 const cents = value => Math.round((Number(value || 0) + Number.EPSILON) * 100);
 const money = value => `${(cents(value) / 100).toFixed(2)} EGP`;
@@ -375,4 +380,5 @@ document.getElementById('quick-registration-form').addEventListener('submit', ev
     }
 });
 </script>
+@endunless
 @endsection

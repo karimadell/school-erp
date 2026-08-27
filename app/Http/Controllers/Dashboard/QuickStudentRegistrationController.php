@@ -13,6 +13,7 @@ use App\Models\Invoice;
 use App\Models\MealPlan;
 use App\Models\PaymentPlan;
 use App\Models\Stage;
+use App\Models\Student;
 use App\Services\Admissions\QuickStudentRegistrationService;
 use App\Services\Finance\FinanceConfigurationReadinessService;
 use App\Services\Finance\InvoiceCalculationService;
@@ -110,6 +111,7 @@ class QuickStudentRegistrationController extends Controller
             'transportRoutes' => DB::table('transport_routes')->orderBy('name')->get(),
             'uniformProducts' => $uniformProducts,
             'paymentPlans' => PaymentPlan::active()->with('installments')->orderBy('sort_order')->get(),
+            'registrationSuccess' => $this->registrationSuccessFromSession(),
         ]);
     }
 
@@ -119,8 +121,33 @@ class QuickStudentRegistrationController extends Controller
     ): RedirectResponse {
         $result = $service->register($request->validated(), $request->user());
 
-        return redirect()->route('dashboard.quick-registration.summary', $result['invoice'])
-            ->with('success', 'Ученик предварительно зарегистрирован, счёт создан в EGP.');
+        // Karim: Quick Registration must stay a single-page flow — issuing
+        // the invoice already confirms the payment, so there is no separate
+        // summary/receipt page to send the employee to. Redirect back to
+        // this same screen; create() below swaps the form for an inline
+        // success panel built from the just-created invoice.
+        return redirect()->route('dashboard.quick-registration.create')
+            ->with('registration_success_invoice_id', $result['invoice']->id);
+    }
+
+    /** @return ?array{invoice: Invoice, student: \App\Models\Student, payment: ?\App\Models\InvoicePayment} */
+    private function registrationSuccessFromSession(): ?array
+    {
+        $invoiceId = session('registration_success_invoice_id');
+        if (! $invoiceId) {
+            return null;
+        }
+
+        $invoice = Invoice::with(['student', 'payments', 'cashAccount'])->find($invoiceId);
+        if (! $invoice || $invoice->student?->status !== Student::STATUS_PRE_REGISTERED) {
+            return null;
+        }
+
+        return [
+            'invoice' => $invoice,
+            'student' => $invoice->student,
+            'payment' => $invoice->payments->sortByDesc('id')->first(),
+        ];
     }
 
     public function price(Request $request, InvoiceCalculationService $calculator): JsonResponse

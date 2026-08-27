@@ -15,7 +15,7 @@ class QuickStudentRegistrationLiveSummaryTest extends QuickRegistrationUxTestCas
             ->assertSee('Общая стоимость')->assertSee('Всего оплачено')->assertSee('Общий остаток')
             ->assertSee('Оплаченная сумма не может превышать стоимость услуги.')
             ->assertSee('Выберите хотя бы одну финансовую услугу.')
-            ->assertSee('Создать ученика, счёт и подтвердить оплату')->assertSee('EGP')
+            ->assertSee('Подтвердить оплату и завершить регистрацию')->assertSee('EGP')
             ->assertDontSee('name_en')->assertDontSee('name_ar')->assertDontSee('student_name_en');
     }
 }

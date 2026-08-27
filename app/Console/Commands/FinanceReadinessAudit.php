@@ -13,6 +13,7 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Services\Finance\CashSessionService;
 use App\Services\Finance\FinanceConfigurationReadinessService;
+use App\Services\Finance\InvoiceCalculationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -24,10 +25,12 @@ use Illuminate\Support\Facades\DB;
  * migration, no seeding, no cash session opened or closed. Safe to run
  * against UAT (or any environment) repeatedly.
  *
- * It deliberately does not reimplement pricing rules: FeePrice::sellable()
- * and FinanceConfigurationReadinessService are called directly, exactly as
- * the application itself would, so this report can never diverge from what
- * Quick Registration actually does.
+ * It deliberately does not reimplement pricing rules: FinanceConfigurationReadinessService
+ * and InvoiceCalculationService::resolvableCandidates() (the canonical Phase
+ * 4A.2 pricing-selection rule — academic_year_id is the ownership boundary,
+ * not the calendar date) are called directly, exactly as the application
+ * itself would, so this report can never diverge from what Quick
+ * Registration actually does.
  *
  * Usage:
  *   php artisan finance:readiness-audit
@@ -57,6 +60,11 @@ class FinanceReadinessAudit extends Command
 
     private Carbon $today;
 
+    public function __construct(private InvoiceCalculationService $calculator)
+    {
+        parent::__construct();
+    }
+
     public function handle(): int
     {
         $this->today = Carbon::today();
@@ -71,6 +79,18 @@ class FinanceReadinessAudit extends Command
             return self::FAILURE;
         }
 
+        // Phase 4A.2 canonical pricing-selection rule: academic_year_id is
+        // the primary ownership boundary for a tariff, not the calendar
+        // date — a sole same-year, same-dimension tariff is sellable even
+        // before its own start_date (a parent may prepay for the year
+        // before classes start); several same-year candidates (early bird,
+        // staged increases, promotions) are disambiguated by date, and a
+        // date matching none of them is a real gap, not a guess. This audit
+        // reports exactly what InvoiceCalculationService::resolvableCandidates()
+        // — the single canonical implementation — decides, never a
+        // reimplementation of the rule.
+        $this->line('Pricing-selection policy: academic_year_id is the ownership boundary; the date range only disambiguates when more than one same-year candidate exists.');
+
         // ----- B. School structure -----------------------------------------
         [$stages, $grades, $classes] = $this->sectionB($year);
 
@@ -82,9 +102,13 @@ class FinanceReadinessAudit extends Command
         $prices = FeePrice::query()
             ->whereIn('fee_id', $fees->where('is_active', true)->pluck('id'))
             ->orderBy('fee_id')->orderByDesc('start_date')->get();
+        $resolvableIds = $this->calculator->resolvableCandidates(
+            $prices->where('academic_year_id', $year->id)->where('is_active', true)->where('currency', 'EGP'),
+            $this->today->toDateString(),
+        )->pluck('id');
         $classified = $prices->map(fn (FeePrice $price) => array_merge(
             ['price' => $price, 'fee' => $fees->firstWhere('id', $price->fee_id)],
-            $this->classify($price, $fees->firstWhere('id', $price->fee_id), $year),
+            $this->classify($price, $fees->firstWhere('id', $price->fee_id), $year, $resolvableIds),
         ));
         $this->sectionD($classified);
 
@@ -124,17 +148,32 @@ class FinanceReadinessAudit extends Command
     // =====================================================================
     // A
     // =====================================================================
+    /**
+     * "2026/2027" and "2026 / 2027" must be treated as the same requested
+     * year — separator whitespace is not a meaningful distinction in an
+     * academic year name — but this is exact equality after normalization,
+     * never a substring/LIKE match, so a typo or partial year can never
+     * silently select the wrong row (Phase 4A.1, item 3).
+     */
+    private function normalizeYearName(string $name): string
+    {
+        return preg_replace('/\s+/', '', $name);
+    }
+
     private function sectionA(): ?AcademicYear
     {
         $this->header('A. Academic year');
 
-        $query = AcademicYear::query();
         if ($needle = $this->option('year')) {
-            $query->where('name', 'like', '%'.$needle.'%');
+            $normalizedNeedle = $this->normalizeYearName($needle);
+            $candidates = AcademicYear::all()
+                ->filter(fn (AcademicYear $y) => $this->normalizeYearName($y->name) === $normalizedNeedle)
+                ->sortByDesc('start_date')->values();
         } else {
-            $query->where(fn ($q) => $q->where('name', 'like', '%2026%')->where('name', 'like', '%2027%'));
+            $candidates = AcademicYear::query()
+                ->where(fn ($q) => $q->where('name', 'like', '%2026%')->where('name', 'like', '%2027%'))
+                ->orderByDesc('start_date')->get();
         }
-        $candidates = $query->orderByDesc('start_date')->get();
 
         if ($candidates->isEmpty()) {
             $this->warn('No academic year found matching the target. Listing all academic years instead:');
@@ -221,29 +260,35 @@ class FinanceReadinessAudit extends Command
     // D
     // =====================================================================
     /**
-     * Canonical classification — mirrors InvoiceCalculationService::resolvePrice()
-     * and FinanceConfigurationReadinessService exactly, not a new interpretation.
+     * Canonical classification — the SELLABLE/not determination comes
+     * directly from InvoiceCalculationService::resolvableCandidates()
+     * (Phase 4A.2's single canonical pricing-selection rule), never a
+     * reimplementation, so this audit can never disagree with what the
+     * resolver would actually do.
      *
-     * @return array{status: string, note: ?string}
+     * Reports two independent facts, so a row is never misread as "missing
+     * configuration" when it is really just correctly configured but
+     * currently shadowed by a same-year sibling's date window:
+     *   - configured_for_year: correctly attached to this academic year,
+     *     active, EGP, and dimensionally valid — entirely date-independent.
+     *   - sellable_today: additionally the row resolvableCandidates() would
+     *     actually pick right now.
+     *
+     * @return array{status: string, note: ?string, configured_for_year: bool, sellable_today: bool}
      */
-    private function classify(FeePrice $price, ?Fee $fee, AcademicYear $year): array
+    private function classify(FeePrice $price, ?Fee $fee, AcademicYear $year, Collection $resolvableIds): array
     {
         if (! $price->is_active) {
-            return ['status' => 'INACTIVE', 'note' => null];
+            return ['status' => 'INACTIVE', 'note' => null, 'configured_for_year' => false, 'sellable_today' => false];
         }
         if ($price->academic_year_id !== $year->id) {
-            return ['status' => 'WRONG YEAR', 'note' => null];
+            return ['status' => 'WRONG YEAR', 'note' => null, 'configured_for_year' => false, 'sellable_today' => false];
         }
-        if ($price->start_date && $price->start_date->gt($this->today)) {
-            return ['status' => 'FUTURE', 'note' => 'starts '.$price->start_date->toDateString()];
-        }
-        if ($price->end_date && $price->end_date->lt($this->today)) {
-            return ['status' => 'STALE', 'note' => 'ended '.$price->end_date->toDateString()];
-        }
+
+        $dimensionIssue = null;
         if ($price->currency !== 'EGP') {
-            return ['status' => 'INVALID DIMENSION', 'note' => 'currency='.$price->currency.' (must be EGP)'];
-        }
-        if ($fee) {
+            $dimensionIssue = 'currency='.$price->currency.' (must be EGP)';
+        } elseif ($fee) {
             $dimensionIssue = match ($fee->category) {
                 Fee::CATEGORY_TRANSPORT => $price->option_type !== 'zone'
                     ? "option_type='{$price->option_type}' (must be 'zone')" : (blank($price->option_value) ? 'option_value is blank' : null),
@@ -254,12 +299,25 @@ class FinanceReadinessAudit extends Command
                 Fee::CATEGORY_UNIFORM => blank($price->item) || blank($price->size) ? 'item and/or size is blank' : null,
                 default => null,
             };
-            if ($dimensionIssue) {
-                return ['status' => 'INVALID DIMENSION', 'note' => $dimensionIssue];
-            }
+        }
+        if ($dimensionIssue) {
+            return ['status' => 'INVALID DIMENSION', 'note' => $dimensionIssue, 'configured_for_year' => false, 'sellable_today' => false];
         }
 
-        return ['status' => 'SELLABLE', 'note' => null];
+        // Configuration is sound (right year, active, EGP, valid dimension)
+        // from here on — everything below is purely about which row
+        // resolvableCandidates() actually selected.
+        if ($resolvableIds->contains($price->id)) {
+            return ['status' => 'SELLABLE', 'note' => null, 'configured_for_year' => true, 'sellable_today' => true];
+        }
+        if ($price->start_date && $price->start_date->gt($this->today)) {
+            return ['status' => 'FUTURE', 'note' => 'starts '.$price->start_date->toDateString().' — a same-year sibling tariff for the identical dimension exists, so the date range disambiguates between them rather than exempting this one (see the Phase 4A.2 canonical rule).', 'configured_for_year' => true, 'sellable_today' => false];
+        }
+        if ($price->end_date && $price->end_date->lt($this->today)) {
+            return ['status' => 'STALE', 'note' => 'ended '.$price->end_date->toDateString(), 'configured_for_year' => true, 'sellable_today' => false];
+        }
+
+        return ['status' => 'SHADOWED', 'note' => 'a higher-precedence same-year, same-dimension tariff was selected instead', 'configured_for_year' => true, 'sellable_today' => false];
     }
 
     private function sectionD(Collection $classified): void
@@ -271,7 +329,7 @@ class FinanceReadinessAudit extends Command
             return;
         }
         $this->table(
-            ['id', 'fee', 'category', 'year_id', 'grade', 'grade_group', 'period', 'opt_type', 'opt_value', 'item', 'size', 'amount', 'ccy', 'start', 'end', 'active', 'STATUS', 'note'],
+            ['id', 'fee', 'category', 'year_id', 'grade', 'grade_group', 'period', 'opt_type', 'opt_value', 'item', 'size', 'amount', 'ccy', 'start', 'end', 'active', 'STATUS', 'note', 'CONFIGURED_FOR_ACADEMIC_YEAR', 'SELLABLE_TODAY'],
             $classified->map(fn (array $row) => [
                 $row['price']->id, $row['fee']?->name_ru, $row['fee']?->category, $row['price']->academic_year_id,
                 $row['price']->grade_id, $row['price']->grade_group, $row['price']->payment_period,
@@ -279,6 +337,7 @@ class FinanceReadinessAudit extends Command
                 $row['price']->getRawOriginal('amount'), $row['price']->currency,
                 $row['price']->start_date?->toDateString(), $row['price']->end_date?->toDateString(),
                 $row['price']->is_active ? 'yes' : 'no', $row['status'], $row['note'],
+                $row['configured_for_year'] ? 'yes' : 'no', $row['sellable_today'] ? 'yes' : 'no',
             ]),
         );
         $counts = $classified->countBy('status');

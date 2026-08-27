@@ -13,8 +13,15 @@ use Illuminate\Support\Collection;
  * given academic year — the one reusable place that decision is made, so
  * Quick Registration's UI gating (and any future readiness surface: an
  * admin dashboard, a report) can never drift from each other or from
- * InvoiceCalculationService's own resolution rules. Reads FeePrice::sellable()
- * directly (the exact scope the resolver composes), never a parallel query.
+ * InvoiceCalculationService's own resolution rules.
+ *
+ * Phase 4A.2: academic_year_id is the primary ownership boundary for a
+ * tariff, not the calendar date — so readiness is computed via
+ * InvoiceCalculationService::resolvableCandidates(), the exact same
+ * "would the resolver actually use this row" rule the resolver itself
+ * applies (a sole same-year candidate is ready even before its own
+ * start_date; several same-year candidates are disambiguated by date).
+ * This never re-derives that rule as a parallel query.
  *
  * This is deliberately data, not policy: it reports the truth for every
  * category, including tuition/registration. Whether a caller *acts* on a
@@ -24,6 +31,11 @@ use Illuminate\Support\Collection;
  */
 class FinanceConfigurationReadinessService
 {
+    public function __construct(
+        private InvoiceCalculationService $calculator,
+    ) {
+    }
+
     private const TUITION_CATEGORIES = [
         Fee::CATEGORY_TUITION,
         Fee::CATEGORY_TUITION_REGULAR,
@@ -43,24 +55,26 @@ class FinanceConfigurationReadinessService
             return collect();
         }
 
+        $today = now()->toDateString();
         $pricesByFee = FeePrice::query()
             ->whereIn('fee_id', $fees->pluck('id'))
-            ->sellable()
+            ->active()->where('currency', 'EGP')
             ->where('academic_year_id', $year->id)
             ->get()
             ->groupBy('fee_id');
 
         return $fees->mapWithKeys(fn (Fee $fee) => [
-            $fee->id => $this->assess($fee, $pricesByFee->get($fee->id, collect())),
+            $fee->id => $this->assess($fee, $this->calculator->resolvableCandidates($pricesByFee->get($fee->id, collect()), $today)),
         ]);
     }
 
     /** @return array{ready: bool, reason: ?string} */
     public function forFee(Fee $fee, AcademicYear $year): array
     {
-        $prices = FeePrice::query()->where('fee_id', $fee->id)->sellable()->where('academic_year_id', $year->id)->get();
+        $prices = FeePrice::query()->where('fee_id', $fee->id)->active()->where('currency', 'EGP')->where('academic_year_id', $year->id)->get();
+        $resolvable = $this->calculator->resolvableCandidates($prices, now()->toDateString());
 
-        return $this->assess($fee, $prices);
+        return $this->assess($fee, $resolvable);
     }
 
     /**

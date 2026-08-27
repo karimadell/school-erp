@@ -8,6 +8,7 @@ use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\SchoolClass;
 use App\Models\Student;
 use App\Services\Finance\MassBillingPreviewService;
 use Illuminate\Support\Collection;
@@ -79,18 +80,65 @@ class MassBillingPreviewTest extends MassBillingTestCase
         $this->assertSame(0, $result['eligible_count']);
     }
 
-    public function test_missing_tariff_for_the_issue_date_is_skipped(): void
+    public function test_a_genuinely_unconfigured_grade_is_skipped_as_no_tariff(): void
     {
-        $student = $this->enrolledStudent($this->classA, suffix: 'A1');
-        // Tariff exists only from 2026-08-01; an earlier issue date has no
-        // covering version, so the student is skipped (not silently priced).
-        $batch = $this->makeBatch(classIds: [$this->classA->id], issueDate: '2026-05-01');
+        // $this->tuition has a tariff for $this->grade only — a student in
+        // a grade with zero tuition tariffs must still be skipped, proving
+        // the sole-candidate prepayment exemption never widens to "any
+        // tariff for this fee, regardless of grade".
+        $otherGrade = Grade::forceCreate(['name' => '2 КЛАСС', 'stage_id' => $this->stage->id, 'level' => 2]);
+        $otherClass = SchoolClass::create(['grade_id' => $otherGrade->id, 'code' => '2-А', 'name_ru' => '2-А', 'name_ar' => '2-A', 'is_active' => true]);
+        $student = $this->enrolledStudent($otherClass, grade: $otherGrade, suffix: 'A1');
+        $batch = $this->makeBatch(classIds: [$otherClass->id], issueDate: '2026-09-01');
 
         $result = $this->preview($batch);
 
         $this->assertFalse($this->row($result, $student)['eligible']);
         $this->assertSame(MassBillingPreviewService::SKIP_NO_TARIFF, $this->row($result, $student)['skip_reason']);
         $this->assertDatabaseCount('invoices', 0);
+    }
+
+    public function test_a_sole_same_year_tariff_is_usable_even_before_its_own_start_date(): void
+    {
+        // Phase 4A.2 canonical rule: academic_year_id is the primary
+        // ownership boundary for a tariff, not the calendar date — a batch
+        // may bill for the academic year before its sole tariff's own
+        // start_date (2026-08-01), exactly like a parent prepaying would.
+        $student = $this->enrolledStudent($this->classA, suffix: 'A1');
+        $batch = $this->makeBatch(classIds: [$this->classA->id], issueDate: '2026-05-01');
+
+        $result = $this->preview($batch);
+
+        $this->assertTrue($this->row($result, $student)['eligible']);
+    }
+
+    public function test_two_same_year_tariffs_are_disambiguated_by_the_issue_date(): void
+    {
+        FeePrice::create(['fee_id' => $this->tuition->id, 'academic_year_id' => $this->year->id, 'grade_id' => $this->grade->id,
+            'amount' => '1100.00', 'currency' => 'EGP', 'start_date' => '2026-05-01', 'end_date' => '2026-07-31',
+            'change_reason' => 'Льготный тариф при ранней оплате.', 'is_active' => true]);
+        $student = $this->enrolledStudent($this->classA, suffix: 'A1');
+        $batch = $this->makeBatch(classIds: [$this->classA->id], issueDate: '2026-06-15');
+
+        $result = $this->preview($batch);
+
+        $this->assertTrue($this->row($result, $student)['eligible']);
+    }
+
+    public function test_an_ambiguous_pre_window_date_with_multiple_same_year_tariffs_is_skipped(): void
+    {
+        // Two same-year, same-grade tariffs (early bird + regular) with the
+        // issue date before either window — must fail clearly, not guess.
+        FeePrice::create(['fee_id' => $this->tuition->id, 'academic_year_id' => $this->year->id, 'grade_id' => $this->grade->id,
+            'amount' => '1100.00', 'currency' => 'EGP', 'start_date' => '2026-05-01', 'end_date' => '2026-07-31',
+            'change_reason' => 'Льготный тариф при ранней оплате.', 'is_active' => true]);
+        $student = $this->enrolledStudent($this->classA, suffix: 'A1');
+        $batch = $this->makeBatch(classIds: [$this->classA->id], issueDate: '2026-04-01');
+
+        $result = $this->preview($batch);
+
+        $this->assertFalse($this->row($result, $student)['eligible']);
+        $this->assertSame(MassBillingPreviewService::SKIP_NO_TARIFF, $this->row($result, $student)['skip_reason']);
     }
 
     public function test_registration_fee_duplicate_is_skipped(): void

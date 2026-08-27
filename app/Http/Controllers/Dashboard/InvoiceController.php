@@ -13,6 +13,7 @@ use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\MealPlan;
 use App\Models\Student;
+use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Support\FinanceShareRecipient;
@@ -41,7 +42,7 @@ class InvoiceController extends Controller
         return view('dashboard.invoices.index', compact('invoices'));
     }
 
-    public function create(): View
+    public function create(InvoiceCalculationService $calculator): View
     {
         $feesQuery = Fee::with('prices');
 
@@ -59,7 +60,7 @@ class InvoiceController extends Controller
             'grades' => Grade::ordered()->get(),
             'fees' => $fees,
             'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
-            'priceRows' => $this->currentPriceRows($fees, $academicYears),
+            'priceRows' => $this->currentPriceRows($fees, $academicYears, $calculator),
         ]);
     }
 
@@ -72,27 +73,30 @@ class InvoiceController extends Controller
      * could diverge from the server's authoritative total. An employee
      * paying "the full amount" as the (wrong) preview showed it then had
      * their submission rejected by the server's own overpayment guard —
-     * this is the exact "invoice did not save" UAT symptom. Filtering by
-     * the same FeePrice::sellable() scope InvoiceCalculationService's own
-     * resolver query now composes (active, EGP, date-current), restricted
-     * to the academic years this screen actually offers, and sorted to
-     * match InvoiceCalculationService::resolvePrice()'s own tie-break
-     * (start_date desc, id desc) closes that gap without duplicating its
-     * more elaborate grade/enrollment-mode fallback matching.
+     * this is the exact "invoice did not save" UAT symptom.
+     *
+     * Phase 4A.2: filtered through InvoiceCalculationService::
+     * resolvableCandidates() — the exact same "would the resolver actually
+     * use this row" rule (academic_year_id is the ownership boundary; a
+     * sole same-year candidate is offered even before its own start_date;
+     * several same-year candidates are narrowed by date) — never a
+     * separate UI-only date scope.
      *
      * @param  \Illuminate\Support\Collection<int, Fee>  $fees
      * @param  \Illuminate\Support\Collection<int, AcademicYear>  $academicYears
      * @return array<int, array<string, mixed>>
      */
-    private function currentPriceRows($fees, $academicYears): array
+    private function currentPriceRows($fees, $academicYears, InvoiceCalculationService $calculator): array
     {
-        $prices = FeePrice::query()
+        $today = now()->toDateString();
+        $rows = FeePrice::query()
             ->whereIn('fee_id', $fees->pluck('id'))
             ->whereIn('academic_year_id', $academicYears->pluck('id'))
-            ->sellable()
+            ->active()->where('currency', 'EGP')
             ->orderByDesc('start_date')
             ->orderByDesc('id')
             ->get();
+        $prices = $calculator->resolvableCandidates($rows, $today);
 
         return $prices->map(fn (FeePrice $price) => [
             'fee_id' => $price->fee_id,

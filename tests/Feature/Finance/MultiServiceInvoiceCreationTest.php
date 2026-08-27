@@ -180,9 +180,28 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
         $this->assertSelectedTariffIsRejected($fee, $price);
     }
 
-    public function test_not_yet_valid_selected_tariff_is_rejected(): void
+    public function test_a_sole_not_yet_started_selected_tariff_is_usable_via_prepayment(): void
     {
+        // Phase 4A.2 canonical rule: a sole same-fee/same-year/same-dimension
+        // candidate is usable even before its own start_date — including
+        // when explicitly selected by fee_price_id, not just via implicit
+        // dimension search.
         [$fee, $price] = $this->service('Кружок', Fee::CATEGORY_OTHER, '300.00', ['start_date' => '2026-10-01']);
+
+        $this->actingAs($this->accountant)
+            ->post(route('dashboard.students.invoices.store', $this->student), $this->payload([$fee], [$price]))
+            ->assertRedirect();
+
+        $this->assertSame('300.00', Invoice::with('items')->sole()->total_amount);
+    }
+
+    public function test_an_explicitly_selected_tariff_is_rejected_when_a_same_year_sibling_makes_it_ambiguous(): void
+    {
+        [$fee, $price] = $this->service('Кружок', Fee::CATEGORY_OTHER, '300.00', ['start_date' => '2026-10-01', 'end_date' => '2026-12-31']);
+        // A second same-fee/same-dimension tariff for a later period makes
+        // the pre-window choice ambiguous — must fail rather than guess.
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'amount' => '350.00', 'currency' => 'EGP',
+            'start_date' => '2027-01-01', 'end_date' => '2027-06-30', 'is_active' => true]);
 
         $this->assertSelectedTariffIsRejected($fee, $price);
     }

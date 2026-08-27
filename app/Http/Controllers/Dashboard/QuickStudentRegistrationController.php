@@ -30,22 +30,29 @@ class QuickStudentRegistrationController extends Controller
         $this->middleware('permission:manage invoices');
     }
 
-    public function create(FinanceConfigurationReadinessService $readiness): View
+    public function create(FinanceConfigurationReadinessService $readiness, InvoiceCalculationService $calculator): View
     {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
         $modes = EnrollmentMode::active()->ordered()->get();
-        // Scoped to the same FeePrice::sellable() rules InvoiceCalculationService
-        // resolves by, and to the academic years this screen actually offers —
-        // a stale prior-year or inactive/expired price must never appear as if
-        // it were an available tariff (grade_group/payment_period dropdowns
+        // Scoped to the academic years this screen actually offers — a
+        // stale prior-year or wrong-year price must never appear as if it
+        // were an available tariff (grade_group/payment_period dropdowns
         // still read $fee->prices directly for their option lists; readiness
         // below is the single source for whether a service is selectable).
+        // Phase 4A.2: filtered through InvoiceCalculationService::
+        // resolvableCandidates() — academic_year_id is the ownership
+        // boundary, not the calendar date; a sole same-year candidate is
+        // offered even before its own start_date, several same-year
+        // candidates are narrowed by date — the exact same rule the
+        // resolver itself applies, never a separate UI-only date scope.
         $academicYearIds = $academicYears->pluck('id');
+        $today = now()->toDateString();
         $fees = Fee::with(['prices' => fn ($query) => $query
-                ->sellable()
+                ->active()->where('currency', 'EGP')
                 ->whereIn('academic_year_id', $academicYearIds)
                 ->orderByDesc('start_date')])
             ->active()->orderBy('category')->orderBy('name_ru')->get();
+        $fees->each(fn (Fee $fee) => $fee->setRelation('prices', $calculator->resolvableCandidates($fee->prices, $today)));
 
         // Phase 3: readiness is computed once here, against the screen's
         // primary active academic year, and handed to the view as data —

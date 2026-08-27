@@ -15,6 +15,17 @@ class InvoiceCalculationService
     public const CURRENCY = 'EGP';
 
     /**
+     * The tariff-variant dimension fields (Phase 4A.2 canonical pricing
+     * rule): two FeePrice rows sharing every one of these, plus fee_id and
+     * academic_year_id, are "the same tariff, different date window" — e.g.
+     * an early-bird price and its regular successor. Rows differing in any
+     * of these are genuinely different tariffs (a different grade, zone,
+     * meal plan, or uniform item/size) and must never disambiguate against
+     * each other by date.
+     */
+    private const DIMENSION_FIELDS = ['grade_id', 'grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'];
+
+    /**
      * @param  array<int, array<string, mixed>>  $items
      * @return array<string, mixed>
      */
@@ -138,8 +149,7 @@ class InvoiceCalculationService
                 && $price->is_active
                 && $price->currency === self::CURRENCY
                 && (! $academicYearId || $price->academic_year_id === $academicYearId)
-                && $price->start_date?->toDateString() <= $date
-                && (! $price->end_date || $price->end_date->toDateString() >= $date);
+                && $this->isUsable($price, $date);
 
             foreach (['grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'] as $field) {
                 if ($valid && filled($price->{$field}) && (string) ($selection[$field] ?? '') !== (string) $price->{$field}) {
@@ -179,7 +189,7 @@ class InvoiceCalculationService
 
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
-            ->sellable($date)
+            ->active()->where('currency', self::CURRENCY)
             ->when($academicYearId, fn ($query) => $query->where('academic_year_id', $academicYearId));
 
         $gradeGroup = $selection['grade_group'] ?? $this->gradeGroupFor($selection['grade_id'] ?? null);
@@ -216,10 +226,20 @@ class InvoiceCalculationService
             }
         }
 
-        $price = $query
+        // Phase 4A.2 canonical pricing rule: academic_year_id is the
+        // primary ownership boundary for a tariff, not the calendar date.
+        // Fetch every same-fee/same-year/same-selection candidate first —
+        // if there is exactly one, it is usable even before its own
+        // start_date (a parent may prepay for a year before classes
+        // start). Only when several same-year candidates exist (early
+        // bird / staged increases / promotions) does the date range
+        // disambiguate between them; a date matching none of them fails
+        // loudly rather than guessing (see selectAmongCandidates()).
+        $candidates = $query
             ->when(filled($selection['grade_id'] ?? null), fn ($query) => $query
                 ->orderByRaw('CASE WHEN grade_id = ? THEN 0 WHEN grade_group IS NOT NULL THEN 1 ELSE 2 END', [(int) $selection['grade_id']]))
-            ->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->first();
+            ->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->get();
+        $price = $this->selectAmongCandidates($candidates, $date);
 
         // Transport/food/uniform pricing is structurally dimensional (zone /
         // meal plan / item+size) — a flat Fee.amount/base_price fallback
@@ -243,6 +263,105 @@ class InvoiceCalculationService
             'valid_to' => $price?->end_date?->toDateString(),
             'metadata' => $price ? $this->priceMetadata($price, $date) : ['pricing_date' => $date],
         ];
+    }
+
+    /**
+     * Given every same-fee/same-year/same-selection FeePrice candidate
+     * (already dimensionally filtered by the caller — active, EGP, correct
+     * academic_year_id, matching grade/zone/meal-plan/item-size — but not
+     * yet date-filtered), decides which one (if any) the resolver should
+     * actually use as of $date.
+     *
+     * @param  Collection<int, FeePrice>  $candidates  Ordered by the
+     *         caller's own precedence (most specific / most recent first)
+     *         — preserved through filtering so ties still resolve the same
+     *         way they always did.
+     */
+    private function selectAmongCandidates(Collection $candidates, string $date): ?FeePrice
+    {
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        if ($candidates->count() === 1) {
+            $only = $candidates->first();
+
+            // A sole candidate is usable even before its own start_date
+            // (prepayment) — but staleness (already past its own end_date)
+            // is never silently resurrected; that is not a prepayment case.
+            return ($only->end_date && $only->end_date->toDateString() < $date) ? null : $only;
+        }
+
+        // Several same-year candidates for the identical selection (early
+        // bird / staged increase / promotion) — the date range picks the
+        // one whose window actually contains $date. Nothing matching is a
+        // real gap (a date before every window, or between two), and must
+        // fail rather than guess.
+        return $candidates->first(fn (FeePrice $price) => $price->start_date?->toDateString() <= $date
+            && (! $price->end_date || $price->end_date->toDateString() >= $date));
+    }
+
+    /**
+     * Whether an explicitly chosen FeePrice (the fee_price_id selection
+     * path) is usable as of $date under the same rule selectAmongCandidates()
+     * applies: within its own window, or — when it is the only same-year,
+     * same-dimension tariff for this fee — usable even before its
+     * start_date.
+     */
+    private function isUsable(FeePrice $price, string $date): bool
+    {
+        $withinWindow = $price->start_date?->toDateString() <= $date
+            && (! $price->end_date || $price->end_date->toDateString() >= $date);
+        if ($withinWindow) {
+            return true;
+        }
+
+        $notYetStarted = $price->start_date && $price->start_date->toDateString() > $date;
+
+        return $notYetStarted && ! $this->hasDimensionSibling($price);
+    }
+
+    /** Any other active, EGP, same-fee/same-year tariff sharing every dimension field with $price. */
+    private function hasDimensionSibling(FeePrice $price): bool
+    {
+        $query = FeePrice::query()
+            ->where('fee_id', $price->fee_id)
+            ->where('academic_year_id', $price->academic_year_id)
+            ->where('id', '!=', $price->id)
+            ->active()->where('currency', self::CURRENCY);
+
+        foreach (self::DIMENSION_FIELDS as $field) {
+            $price->{$field} === null ? $query->whereNull($field) : $query->where($field, $price->{$field});
+        }
+
+        return $query->exists();
+    }
+
+    /**
+     * The canonical "which of these rows would the resolver actually use
+     * right now" filter — the single source FinanceConfigurationReadinessService,
+     * price-preview listings, and the UAT readiness audit command all
+     * compose instead of re-deriving this rule themselves.
+     *
+     * @param  Collection<int, FeePrice>  $prices  Active, EGP rows already
+     *         scoped to one academic year (any mix of fees/dimensions —
+     *         grouping below is fee_id + academic_year_id + dimension-safe).
+     * @return Collection<int, FeePrice>
+     */
+    public function resolvableCandidates(Collection $prices, string $date): Collection
+    {
+        return $prices
+            ->groupBy(fn (FeePrice $price) => $this->dimensionSignature($price))
+            ->map(fn (Collection $group) => $this->selectAmongCandidates($group, $date))
+            ->filter()
+            ->values();
+    }
+
+    private function dimensionSignature(FeePrice $price): string
+    {
+        return $price->academic_year_id.'|'.$price->fee_id.'|'.collect(self::DIMENSION_FIELDS)
+            ->map(fn ($field) => (string) ($price->{$field} ?? ''))
+            ->implode('|');
     }
 
     /** @return array<string, mixed> */

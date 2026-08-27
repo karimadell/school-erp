@@ -181,12 +181,25 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
     }
 
-    public function test_a_price_not_yet_valid_does_not_count_as_ready(): void
+    public function test_a_sole_price_not_yet_valid_still_counts_as_ready(): void
+    {
+        // Phase 4A.2 canonical rule: academic_year_id is the primary
+        // ownership boundary for a tariff, not the calendar date — a sole
+        // same-year candidate is ready even before its own start_date
+        // (prepayment), exactly what InvoiceCalculationService's resolver
+        // itself would resolve for this same selection.
+        $fee = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
+        $this->price($fee, ['option_type' => 'zone', 'option_value' => 'Зона 1', 'start_date' => '2027-05-01', 'end_date' => '2027-06-30']);
+
+        $this->assertTrue($this->readiness->forFee($fee, $this->year)['ready']);
+    }
+
+    public function test_an_ambiguous_pre_window_price_among_several_same_year_candidates_does_not_count_as_ready(): void
     {
         $fee = $this->fee('Трансфер', Fee::CATEGORY_TRANSPORT);
-        // A tariff whose validity window hasn't opened yet — still within
-        // the academic year (FeePrice may never end after the year does),
-        // just starting after "today".
+        // Two same-year, same-zone candidates (early period + later period),
+        // with "today" (year start) before either window opens.
+        $this->price($fee, ['option_type' => 'zone', 'option_value' => 'Зона 1', 'start_date' => '2027-01-01', 'end_date' => '2027-03-31']);
         $this->price($fee, ['option_type' => 'zone', 'option_value' => 'Зона 1', 'start_date' => '2027-05-01', 'end_date' => '2027-06-30']);
 
         $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);

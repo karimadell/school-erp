@@ -294,8 +294,7 @@ class FinanceReadinessAudit extends Command
                     ? "option_type='{$price->option_type}' (must be 'zone')" : (blank($price->option_value) ? 'option_value is blank' : null),
                 Fee::CATEGORY_FOOD => $price->option_type !== 'meal_plan'
                     ? "option_type='{$price->option_type}' (must be 'meal_plan')"
-                    : (blank($price->option_value) || ! MealPlan::whereKey($price->option_value)->exists()
-                        ? "option_value='{$price->option_value}' does not resolve to an existing MealPlan" : null),
+                    : $this->foodDimensionIssue($price),
                 Fee::CATEGORY_UNIFORM => blank($price->item) || blank($price->size) ? 'item and/or size is blank' : null,
                 default => null,
             };
@@ -318,6 +317,34 @@ class FinanceReadinessAudit extends Command
         }
 
         return ['status' => 'SHADOWED', 'note' => 'a higher-precedence same-year, same-dimension tariff was selected instead', 'configured_for_year' => true, 'sellable_today' => false];
+    }
+
+    /**
+     * The canonical food dimension requires option_value to be a numeric
+     * MealPlan id. Legacy rows still carry the pre-migration textual meal
+     * name (e.g. "Напиток") in that column — querying meal_plans.id with a
+     * non-numeric string crashes on a strictly-typed bigint column (UAT's
+     * Postgres: SQLSTATE[22P02]). option_value is therefore validated as a
+     * plain non-negative integer string *before* it is ever used in a
+     * WHERE clause; a legacy textual value is reported, never queried.
+     */
+    private function foodDimensionIssue(FeePrice $price): ?string
+    {
+        if (blank($price->option_value)) {
+            return 'option_value is blank';
+        }
+        if (! $this->isNumericMealPlanId($price->option_value)) {
+            return "LEGACY_MEAL_PLAN_VALUE: option_value='{$price->option_value}' is not a numeric MealPlan id (legacy textual meal name — needs Phase 4B migration to a real MealPlan id)";
+        }
+
+        return MealPlan::whereKey((int) $price->option_value)->exists()
+            ? null
+            : "option_value='{$price->option_value}' does not resolve to an existing MealPlan";
+    }
+
+    private function isNumericMealPlanId(mixed $value): bool
+    {
+        return is_numeric($value) && (string) (int) $value === (string) $value;
     }
 
     private function sectionD(Collection $classified): void

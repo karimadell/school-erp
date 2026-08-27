@@ -89,6 +89,29 @@ class QuickRegistrationAvailabilityGatingTest extends QuickRegistrationUxTestCas
         $this->assertFalse($this->isServiceCheckboxDisabled($html, $uniform));
     }
 
+    /**
+     * Phase 3, item 4: the uniform product dropdown itself — not just the
+     * parent checkbox — must only offer item/size combinations that have a
+     * real, sellable tariff. uniform_products has no FK to fee_prices, so
+     * this is the one place that gap is closed.
+     */
+    public function test_only_uniform_products_with_a_sellable_tariff_appear_in_the_dropdown(): void
+    {
+        [$year] = $this->structure();
+        $uniform = $this->fee('Школьная форма', Fee::CATEGORY_UNIFORM);
+        $this->price($uniform, $year, ['item' => 'Комплект', 'size' => '6-10']);
+        DB::table('uniform_products')->insert([
+            ['name_ru' => 'Комплект', 'category' => 'set', 'size' => '6-10', 'price' => '2000.00', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
+            // Same catalog, but no matching tariff for this size — must not be offered.
+            ['name_ru' => 'Комплект', 'category' => 'set', 'size' => '12-16', 'price' => '2500.00', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+
+        $html = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Комплект — 6-10', $html);
+        $this->assertStringNotContainsString('Комплект — 12-16', $html);
+    }
+
     public function test_transport_is_disabled_when_no_zone_tariff_exists(): void
     {
         [$year] = $this->structure();
@@ -198,5 +221,31 @@ class QuickRegistrationAvailabilityGatingTest extends QuickRegistrationUxTestCas
         $message = $response->json('errors.fees.0');
         $this->assertNotNull($message);
         $this->assertStringContainsString('выберите все параметры тарифа', $message);
+    }
+
+    /**
+     * Phase 3, task item 10: "employee cannot submit an unpriced enabled
+     * service." Disabling the checkbox is a UX convenience — the real
+     * guarantee is server-side. A crafted submission that bypasses the
+     * disabled checkbox (e.g. a tampered request) must still be rejected,
+     * and nothing may be created.
+     */
+    public function test_the_server_rejects_a_submission_for_a_service_with_no_configured_tariff_even_if_the_ui_would_have_blocked_it(): void
+    {
+        $structure = $this->structure();
+        $food = $this->fee('Питание', Fee::CATEGORY_FOOD);
+        // Zero FeePrice rows for $food — exactly the state that disables its
+        // checkbox on the create screen (QuickRegistrationAvailabilityGatingTest
+        // above). This submits it anyway, as a tampered request would.
+        $plan = MealPlan::create(['name_ru' => 'Завтрак', 'meal_type' => 'breakfast', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $food, [
+            'services' => [['fee_id' => $food->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $plan->id]],
+        ]));
+
+        $response->assertSessionHasErrors();
+        $this->assertDatabaseCount('students', 0);
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
     }
 }

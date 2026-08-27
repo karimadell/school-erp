@@ -15,26 +15,17 @@
     $configurationReady = $academicYears->isNotEmpty() && $modes->isNotEmpty() && $fees->isNotEmpty();
     $periodLabels = ['once' => 'Разово', 'daily' => 'Ежедневно', 'monthly' => 'Ежемесячно', 'quarterly' => 'Ежеквартально', 'term' => 'За семестр', 'yearly' => 'За год', 'package' => 'Пакет'];
 
-    // Minimum safe availability gating (full readiness dashboard is a later
-    // phase): a service whose category needs a dimensioned tariff is only
-    // selectable when $fee->prices (already scoped to FeePrice::sellable()
-    // for the active academic year — see QuickStudentRegistrationController::create())
-    // actually contains a row using the canonical dimension for that
-    // category. This reads the SAME data the price-preview endpoint
-    // resolves from, so it cannot drift from what submitting would do.
-    $serviceIsAvailable = fn ($fee) => match ($fee->category) {
-        'transport' => $fee->prices->where('option_type', 'zone')->isNotEmpty(),
-        'food' => $fee->prices->where('option_type', 'meal_plan')->isNotEmpty(),
-        'uniform' => $fee->prices->whereNotNull('item')->whereNotNull('size')->isNotEmpty(),
-        default => true,
-    };
-    $unavailableReason = fn ($fee) => match ($fee->category) {
-        'transport' => 'Нет тарифа ни для одной транспортной зоны на выбранный учебный год.',
-        'food' => 'Нет активного плана питания с настроенной ценой.',
-        'uniform' => 'Нет доступных тарифов на школьную форму.',
-        default => null,
-    };
-    $installmentsAvailable = $paymentPlans->isNotEmpty();
+    // Minimum safe availability gating, backed by FinanceConfigurationReadinessService
+    // (Phase 3) — the controller computes readiness once, from the same
+    // FeePrice::sellable() rows InvoiceCalculationService resolves from, and
+    // hands it to this view as data. Only transport/food/uniform are
+    // actively gated here; tuition/registration/other stay selectable
+    // regardless of readiness (their pricing fallback and dimensional
+    // matching are more forgiving by design — see the Phase 3 report).
+    $gatedCategories = ['transport', 'food', 'uniform'];
+    $serviceIsAvailable = fn ($fee) => ! in_array($fee->category, $gatedCategories, true)
+        || ($serviceReadiness[$fee->id]['ready'] ?? false);
+    $unavailableReason = fn ($fee) => $serviceReadiness[$fee->id]['reason'] ?? null;
 @endphp
 <div class="container-fluid py-4">
     <ul class="nav nav-pills mb-4" role="tablist">

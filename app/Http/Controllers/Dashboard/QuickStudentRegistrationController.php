@@ -14,6 +14,7 @@ use App\Models\MealPlan;
 use App\Models\PaymentPlan;
 use App\Models\Stage;
 use App\Services\Admissions\QuickStudentRegistrationService;
+use App\Services\Finance\FinanceConfigurationReadinessService;
 use App\Services\Finance\InvoiceCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -29,21 +30,43 @@ class QuickStudentRegistrationController extends Controller
         $this->middleware('permission:manage invoices');
     }
 
-    public function create(): View
+    public function create(FinanceConfigurationReadinessService $readiness): View
     {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
         $modes = EnrollmentMode::active()->ordered()->get();
         // Scoped to the same FeePrice::sellable() rules InvoiceCalculationService
         // resolves by, and to the academic years this screen actually offers —
         // a stale prior-year or inactive/expired price must never appear as if
-        // it were an available tariff (grade_group/payment_period dropdowns,
-        // and the per-service availability gating below, both read from this).
+        // it were an available tariff (grade_group/payment_period dropdowns
+        // still read $fee->prices directly for their option lists; readiness
+        // below is the single source for whether a service is selectable).
         $academicYearIds = $academicYears->pluck('id');
         $fees = Fee::with(['prices' => fn ($query) => $query
                 ->sellable()
                 ->whereIn('academic_year_id', $academicYearIds)
                 ->orderByDesc('start_date')])
             ->active()->orderBy('category')->orderBy('name_ru')->get();
+
+        // Phase 3: readiness is computed once here, against the screen's
+        // primary active academic year, and handed to the view as data —
+        // the blade no longer re-derives "is this fee sellable" itself.
+        $primaryYear = $academicYears->first();
+        $serviceReadiness = $primaryYear ? $readiness->forFees($fees, $primaryYear) : collect();
+
+        // Phase 3, item 4: the uniform product catalog (a separate,
+        // unmanaged table with no FK to fee_prices — see the Pricing Audit)
+        // must not offer an item/size combination with no sellable tariff.
+        // Filtered in memory against the same sellable() prices already
+        // loaded above, so no second query and no risk of drifting from
+        // what InvoiceCalculationService would actually resolve.
+        $sellableUniformCombinations = $fees->where('category', Fee::CATEGORY_UNIFORM)
+            ->flatMap(fn (Fee $fee) => $fee->prices)
+            ->filter(fn (FeePrice $price) => filled($price->item) && filled($price->size))
+            ->map(fn (FeePrice $price) => $price->item.'|'.$price->size)
+            ->unique();
+        $uniformProducts = DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get()
+            ->filter(fn ($product) => $sellableUniformCombinations->contains($product->name_ru.'|'.$product->size))
+            ->values();
 
         return view('dashboard.quick-registration.create', [
             'academicYears' => $academicYears,
@@ -56,10 +79,12 @@ class QuickStudentRegistrationController extends Controller
             'modes' => $modes,
             'defaultEnrollmentModeId' => $modes->count() === 1 ? $modes->first()->id : null,
             'fees' => $fees,
+            'serviceReadiness' => $serviceReadiness,
+            'installmentsReadiness' => $readiness->installments(),
             'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'transportRoutes' => DB::table('transport_routes')->orderBy('name')->get(),
-            'uniformProducts' => DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get(),
+            'uniformProducts' => $uniformProducts,
             'paymentPlans' => PaymentPlan::active()->with('installments')->orderBy('sort_order')->get(),
         ]);
     }

@@ -221,7 +221,17 @@ class InvoiceCalculationService
                 ->orderByRaw('CASE WHEN grade_id = ? THEN 0 WHEN grade_group IS NOT NULL THEN 1 ELSE 2 END', [(int) $selection['grade_id']]))
             ->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->first();
 
-        if (! $price && $academicYearId && $fee->prices()->exists()) {
+        // Transport/food/uniform pricing is structurally dimensional (zone /
+        // meal plan / item+size) — a flat Fee.amount/base_price fallback
+        // would silently create a phantom, unpriced-in-reality line the
+        // moment the fee has zero FeePrice rows at all (as opposed to some
+        // rows that simply don't match this selection). These categories
+        // must always resolve through a real dimensional tariff or fail
+        // loudly, even when the fee has never had a single price configured.
+        $requiresDimensionalTariff = in_array($fee->category, [
+            Fee::CATEGORY_TRANSPORT, Fee::CATEGORY_FOOD, Fee::CATEGORY_UNIFORM,
+        ], true);
+        if (! $price && $academicYearId && ($fee->prices()->exists() || $requiresDimensionalTariff)) {
             throw ValidationException::withMessages([
                 'fees' => 'На выбранную дату тариф не настроен.',
             ]);

@@ -7,6 +7,7 @@ use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
+use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
@@ -105,6 +106,13 @@ class QuickStudentServiceAllocationTest extends TestCase
             'name_ru' => 'Полный день', 'meal_type' => MealPlan::TYPE_BOTH,
             'period' => MealPlan::PERIOD_MONTHLY, 'price' => '999.00', 'is_active' => true,
         ]);
+        // Food is structurally dimensional (meal_plan-backed) — a real
+        // tariff is required, the flat Fee.amount fallback no longer applies.
+        FeePrice::create([
+            'fee_id' => $meal->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '250.00', 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+            'option_type' => 'meal_plan', 'option_value' => (string) $plan->id,
+        ]);
 
         $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
             'services' => [
@@ -165,6 +173,11 @@ class QuickStudentServiceAllocationTest extends TestCase
     {
         $meal = $this->fee('Питание', Fee::CATEGORY_FOOD, '1200.00');
         $plan = MealPlan::create(['name_ru' => 'Полный день', 'meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '1200.00', 'is_active' => true]);
+        FeePrice::create([
+            'fee_id' => $meal->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '1200.00', 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+            'option_type' => 'meal_plan', 'option_value' => (string) $plan->id,
+        ]);
         $paymentPlan = PaymentPlan::create(['name_ru' => 'План', 'is_active' => true]);
         $paymentPlan->installments()->create(['name_ru' => 'Первый', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '10']);
         $paymentPlan->installments()->create(['name_ru' => 'Второй', 'sequence' => 2, 'offset_days' => 30, 'percentage' => '90']);

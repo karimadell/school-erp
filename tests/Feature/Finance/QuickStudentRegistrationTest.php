@@ -150,6 +150,13 @@ class QuickStudentRegistrationTest extends TestCase
             'name_ru' => 'Футболка', 'category' => 'shirt', 'size' => 'M', 'price' => 999,
             'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
         ]);
+        // Uniform is structurally dimensional (item+size) — a real tariff is
+        // required, the flat Fee.amount fallback no longer applies.
+        \App\Models\FeePrice::create([
+            'fee_id' => $uniform->id, 'academic_year_id' => $this->year->id, 'amount' => '200.00', 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'item' => 'Футболка', 'size' => 'M',
+        ]);
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             $this->service($uniform, '100.00', ['quantity' => 2, 'uniform_product_id' => $productId]),
         ]))->assertSessionHasNoErrors();
@@ -163,6 +170,13 @@ class QuickStudentRegistrationTest extends TestCase
     public function test_transport_metadata_is_preserved_on_item_and_subscription(): void
     {
         $transport = $this->fee('Транспорт', Fee::CATEGORY_TRANSPORT, '500.00');
+        // Transport is structurally dimensional (zone-backed) — a real
+        // tariff is required, the flat Fee.amount fallback no longer applies.
+        \App\Models\FeePrice::create([
+            'fee_id' => $transport->id, 'academic_year_id' => $this->year->id, 'amount' => '500.00', 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'option_type' => 'zone', 'option_value' => 'Мубарак 6',
+        ]);
         $routeId = DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 2', 'created_at' => now(), 'updated_at' => now()]);
         $metadata = ['transport_area' => 'Мубарак 6', 'transport_route_id' => $routeId, 'transport_stop' => 'Школа'];
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([

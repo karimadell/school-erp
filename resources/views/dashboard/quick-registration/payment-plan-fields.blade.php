@@ -3,19 +3,19 @@
         <label class="form-label">Вариант</label>
         <select name="payment_type" id="payment-type" class="form-select">
             <option value="one_time">Единовременная оплата</option>
-            <option value="plan" @selected(old('payment_type')==='plan') @disabled($paymentPlans->isEmpty())>Рассрочка</option>
+            <option value="plan" @selected(old('payment_type')==='plan') @disabled(! $installmentsReadiness['ready'])>Рассрочка</option>
         </select>
     </div>
     <div class="col-md-8">
         <label class="form-label">Предустановленный план</label>
-        <select name="payment_plan_id" id="payment-plan-id" class="form-select" @disabled($paymentPlans->isEmpty())>
+        <select name="payment_plan_id" id="payment-plan-id" class="form-select" @disabled(! $installmentsReadiness['ready'])>
             <option value="">Выберите план</option>
             @foreach($paymentPlans as $plan)
                 <option value="{{ $plan->id }}" @selected(old('payment_plan_id')==$plan->id)>{{ $plan->name_ru }} — этапов: {{ $plan->installments->count() }}</option>
             @endforeach
         </select>
-        @if($paymentPlans->isEmpty())
-            <div class="form-text text-danger">Нет активных планов рассрочки.</div>
+        @if(! $installmentsReadiness['ready'])
+            <div class="form-text text-danger">{{ $installmentsReadiness['reason'] }}</div>
         @endif
     </div>
 </div></section>

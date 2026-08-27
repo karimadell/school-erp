@@ -26,10 +26,12 @@ use Illuminate\Support\Facades\DB;
  *    real production master data.
  *
  * Default mode is dry-run: it computes and prints the full plan, including
- * anything already satisfied (SKIP) and anything it refuses to do because
- * the domain model cannot represent it without inventing an invalid value
- * (BLOCKED). Nothing is written unless --apply is passed, and the entire
- * write is one DB transaction. Re-running (dry-run or --apply) is
+ * anything already satisfied (SKIP) and the 3 legacy Food a-la-carte names
+ * (Суп, Второе блюдо, Напиток) that are explicitly, permanently excluded
+ * from the MealPlan model by a confirmed UAT decision — reported as
+ * SKIPPED, never as a blocker, and never preventing the rest of --apply
+ * from completing. Nothing is written unless --apply is passed, and the
+ * entire write is one DB transaction. Re-running (dry-run or --apply) is
  * idempotent — every entity is matched by a natural key before deciding
  * to create it.
  */
@@ -49,11 +51,15 @@ class UatMasterDataRepair extends Command
     ];
 
     /**
-     * The 3 legacy Food names that are a-la-carte items with no
-     * corresponding MealPlan.meal_type enum value ('breakfast'|'lunch'|'both').
-     * Never mapped, never linked — reported as a blocker instead.
+     * The 3 legacy Food names confirmed (UAT decision, Phase 4B) to be
+     * a-la-carte components — not subscription-shaped MealPlans — and
+     * therefore permanently excluded from MealPlan creation/linking. Never
+     * mapped, never linked, their FeePrice rows never touched. Reported as
+     * SKIPPED — informational, never a blocker to the rest of --apply.
      */
-    private const FOOD_BLOCKED_NAMES = ['Суп', 'Второе блюдо', 'Напиток'];
+    private const FOOD_SKIPPED_LEGACY_NAMES = ['Суп', 'Второе блюдо', 'Напиток'];
+
+    private const FOOD_SKIPPED_LEGACY_STATUS = 'SKIPPED — LEGACY A-LA-CARTE / OUTSIDE CURRENT QUICK REGISTRATION MEALPLAN MODEL';
 
     private const TRANSPORT_ROUTES = [
         'UAT — Зона 1 — Каусер, Мубарак 2, Интерконтиненталь',
@@ -85,7 +91,7 @@ class UatMasterDataRepair extends Command
         $this->printFoodPlan($foodPlan);
         $this->printUniformPlan($uniformPlan);
         $this->printInstallmentPlan($installmentPlan);
-        $this->printBlockers($foodPlan);
+        $this->printSkippedLegacyNotes($foodPlan);
         $this->printRollbackInfo($foodPlan);
 
         if (! $apply) {
@@ -97,10 +103,10 @@ class UatMasterDataRepair extends Command
 
         $this->applyAll($transportPlan, $foodPlan, $uniformPlan, $installmentPlan);
 
-        $blocked = collect($foodPlan)->where('blocked', true);
+        $skippedLegacy = collect($foodPlan)->where('skipped_legacy', true);
         $this->newLine();
-        if ($blocked->isNotEmpty()) {
-            $this->components->warn($blocked->count().' Food name(s) remain BLOCKED and were left untouched: '.$blocked->pluck('name')->implode(', '));
+        if ($skippedLegacy->isNotEmpty()) {
+            $this->line($skippedLegacy->count().' Food name(s) SKIPPED — LEGACY A-LA-CARTE, left exactly as-is (this does not affect the rest of this run): '.$skippedLegacy->pluck('name')->implode(', '));
         }
         $this->components->info('Apply complete. Nothing outside transport_routes / meal_plans / uniform_products / payment_plans / payment_plan_installments / the linked fee_prices.option_value fields was touched.');
 
@@ -156,24 +162,24 @@ class UatMasterDataRepair extends Command
             ->where('option_type', 'meal_plan')
             ->get();
 
-        $names = array_merge(array_keys(self::FOOD_MEAL_TYPE_MAP), self::FOOD_BLOCKED_NAMES);
+        $names = array_merge(array_keys(self::FOOD_MEAL_TYPE_MAP), self::FOOD_SKIPPED_LEGACY_NAMES);
         $plan = [];
 
         foreach ($names as $name) {
             $matches = $rows->filter(fn (FeePrice $p) => $p->option_value === $name)->values();
 
             if ($matches->isEmpty()) {
-                $plan[] = ['name' => $name, 'status' => 'NOT FOUND (no FeePrice row uses this legacy name)', 'blocked' => false, 'fee_price_updates' => []];
+                $plan[] = ['name' => $name, 'status' => 'NOT FOUND (no FeePrice row uses this legacy name)', 'skipped_legacy' => false, 'fee_price_updates' => []];
 
                 continue;
             }
 
-            if (in_array($name, self::FOOD_BLOCKED_NAMES, true)) {
+            if (in_array($name, self::FOOD_SKIPPED_LEGACY_NAMES, true)) {
                 $plan[] = [
                     'name' => $name,
-                    'status' => 'BLOCKED',
-                    'blocked' => true,
-                    'reason' => "no MealPlan.meal_type enum value ('breakfast'|'lunch'|'both') represents an a-la-carte item like '{$name}' — needs a business decision (fold into an existing plan, or a schema change), never an invented enum value",
+                    'status' => self::FOOD_SKIPPED_LEGACY_STATUS,
+                    'skipped_legacy' => true,
+                    'reason' => "confirmed UAT decision: '{$name}' is an a-la-carte item, not a subscription-shaped MealPlan — left exactly as-is (no deletion, no option_value rewrite, no invented enum value); does not block Transport/other Food links/Uniform/Installments",
                     'fee_price_ids' => $matches->pluck('id')->all(),
                     'fee_price_updates' => [],
                 ];
@@ -187,7 +193,7 @@ class UatMasterDataRepair extends Command
             $plan[] = [
                 'name' => $name,
                 'status' => $existingPlan ? 'MEAL PLAN ALREADY EXISTS' : 'CREATE MEAL PLAN',
-                'blocked' => false,
+                'skipped_legacy' => false,
                 'meal_type' => self::FOOD_MEAL_TYPE_MAP[$name]['meal_type'],
                 'period' => self::FOOD_MEAL_TYPE_MAP[$name]['period'],
                 'price' => $matches->first()->getRawOriginal('amount'),
@@ -265,13 +271,13 @@ class UatMasterDataRepair extends Command
         $this->header('B/C. Food — MealPlan creation and fee_prices.option_value linking');
         $rows = [];
         foreach ($plan as $entry) {
-            if (empty($entry['fee_price_updates']) && ! ($entry['blocked'] ?? false)) {
+            if (empty($entry['fee_price_updates']) && ! ($entry['skipped_legacy'] ?? false)) {
                 $rows[] = [$entry['name'], $entry['status'], '—', '—'];
 
                 continue;
             }
-            if ($entry['blocked'] ?? false) {
-                $rows[] = [$entry['name'], 'BLOCKED', '—', 'see section G — fee_price ids: '.implode(',', $entry['fee_price_ids'])];
+            if ($entry['skipped_legacy'] ?? false) {
+                $rows[] = [$entry['name'], self::FOOD_SKIPPED_LEGACY_STATUS, '—', 'see section G — fee_price ids: '.implode(',', $entry['fee_price_ids']).' (untouched)'];
 
                 continue;
             }
@@ -309,17 +315,17 @@ class UatMasterDataRepair extends Command
         }
     }
 
-    private function printBlockers(array $foodPlan): void
+    private function printSkippedLegacyNotes(array $foodPlan): void
     {
-        $this->header('G. Blockers preventing full completion');
-        $blocked = collect($foodPlan)->where('blocked', true);
-        if ($blocked->isEmpty()) {
+        $this->header('G. Skipped legacy rows (informational — confirmed UAT decision, never blocks --apply)');
+        $skipped = collect($foodPlan)->where('skipped_legacy', true);
+        if ($skipped->isEmpty()) {
             $this->line('None.');
 
             return;
         }
-        foreach ($blocked as $entry) {
-            $this->components->error("{$entry['name']}: {$entry['reason']} (fee_price ids: ".implode(',', $entry['fee_price_ids']).')');
+        foreach ($skipped as $entry) {
+            $this->line("- {$entry['name']}: {$entry['reason']} (fee_price ids: ".implode(',', $entry['fee_price_ids']).')');
         }
     }
 
@@ -352,7 +358,7 @@ class UatMasterDataRepair extends Command
             }
 
             foreach ($foodPlan as $entry) {
-                if (($entry['blocked'] ?? false) || empty($entry['fee_price_updates'])) {
+                if (($entry['skipped_legacy'] ?? false) || empty($entry['fee_price_updates'])) {
                     continue;
                 }
                 $plan = MealPlan::firstOrCreate(

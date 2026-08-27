@@ -141,13 +141,13 @@
         @include('dashboard.quick-registration.payment-plan-fields')
         <section class="card shadow-sm mb-4"><div class="card-header fw-bold">5. Оплата</div><div class="card-body row g-3">
             <div class="col-md-4"><label class="form-label">Способ оплаты</label><select name="payment_method" id="payment-method" class="form-select"><option value="">Без оплаты</option><option value="cash" @selected(old('payment_method') === 'cash')>Наличные</option><option value="card" @selected(old('payment_method') === 'card')>Банковская карта</option><option value="bank" @selected(old('payment_method') === 'bank')>Банковский перевод</option><option value="instapay" @selected(old('payment_method') === 'instapay')>InstaPay</option></select></div>
-            <div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" id="cash-account" class="form-select"><option value="">Без оплаты</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" @selected((string) old('cash_account_id') === (string) $account->id)>{{ $account->name }}</option>@endforeach</select><div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div></div>
+            <div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" id="cash-account" class="form-select"><option value="">Без оплаты</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" data-role="{{ $account->role }}" @selected((string) old('cash_account_id') === (string) $account->id)>{{ $account->name }}</option>@endforeach</select><div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div></div>
             <div class="col-md-4"><label class="form-label">Примечание к оплате</label><input name="payment_note" value="{{ old('payment_note') }}" class="form-control"></div>
         </div></section>
 
         <div id="service-selection-error" class="text-danger mb-2 d-none">Выберите хотя бы одну финансовую услугу.</div>
         <div id="submit-blocked-error" class="text-danger mb-2 d-none"></div>
-        <button class="btn btn-primary btn-lg" @disabled(!$configurationReady)>Создать ученика и счёт</button>
+        <button class="btn btn-primary btn-lg" @disabled(!$configurationReady)>Создать ученика, счёт и подтвердить оплату</button>
     </form>
     </div>
 </div>
@@ -293,10 +293,30 @@ grade.addEventListener('change', () => rows.filter(row => row.querySelector('.se
 const paymentMethod = document.getElementById('payment-method');
 const cashAccount = document.getElementById('cash-account');
 const cashAccountHint = document.getElementById('cash-account-auto-hint');
+const methodToRole = {cash: 'operating', bank: 'bank', instapay: 'instapay'};
+// The server never trusts cash_account_id for cash/bank/instapay — it always
+// resolves the canonical account by role (CashAccount::resolvePaymentAccountId).
+// This select must show that same resolved account instead of leaving its
+// stale "Без оплаты" placeholder visible while disabled, which previously
+// made a real cash payment look like no cash account would be charged.
 function syncCashAccountField() {
-    const canonical = ['cash', 'bank', 'instapay'].includes(paymentMethod.value);
-    cashAccount.disabled = canonical;
-    cashAccountHint.classList.toggle('d-none', !canonical);
+    const role = methodToRole[paymentMethod.value];
+    cashAccount.disabled = !!role;
+    if (!role) {
+        cashAccountHint.classList.add('d-none');
+        return;
+    }
+    const matchingOption = [...cashAccount.options].find(option => option.dataset.role === role);
+    cashAccountHint.classList.remove('d-none');
+    if (matchingOption) {
+        cashAccount.value = matchingOption.value;
+        cashAccountHint.textContent = `Касса определяется автоматически: ${matchingOption.textContent}`;
+        cashAccountHint.classList.remove('text-danger');
+    } else {
+        cashAccount.value = '';
+        cashAccountHint.textContent = 'Для этого способа оплаты касса не настроена — обратитесь к администратору.';
+        cashAccountHint.classList.add('text-danger');
+    }
 }
 paymentMethod.addEventListener('change', syncCashAccountField);
 syncCashAccountField();
@@ -326,7 +346,14 @@ document.getElementById('quick-registration-form').addEventListener('submit', ev
     const unavailableRow = rows.find(row => row.querySelector('.service-toggle').checked && row.dataset.pricingAvailable !== 'true');
     const blockedRow = overpaidRow || unavailableRow;
 
-    if (!noneSelected && !blockedRow) {
+    // amount > 0 must never post with the payment account still unresolved —
+    // mirrors the "Касса = Без оплаты" audit finding: block here instead of
+    // letting InvoicePaymentService reject it after the invoice already exists.
+    const totalPaidNow = rows.filter(row => row.querySelector('.service-toggle').checked)
+        .reduce((sum, row) => sum + cents(row.dataset.paid), 0);
+    const unresolvedCashAccount = totalPaidNow > 0 && cashAccount.disabled && cashAccountHint.classList.contains('text-danger');
+
+    if (!noneSelected && !blockedRow && !unresolvedCashAccount) {
         submitBlockedError.classList.add('d-none');
         return;
     }
@@ -339,7 +366,11 @@ document.getElementById('quick-registration-form').addEventListener('submit', ev
             : 'Для одной из выбранных услуг не удалось рассчитать стоимость — заполните все обязательные поля в выделенной строке ниже.';
         submitBlockedError.classList.remove('d-none');
         blockedRow.scrollIntoView({behavior: 'smooth', block: 'center'});
-    } else {
+    } else if (unresolvedCashAccount) {
+        submitBlockedError.textContent = 'Для выбранного способа оплаты не настроена касса — оплату принять нельзя. Обратитесь к администратору.';
+        submitBlockedError.classList.remove('d-none');
+        cashAccountHint.scrollIntoView({behavior: 'smooth', block: 'center'});
+    } else if (!noneSelected) {
         submitBlockedError.classList.add('d-none');
     }
 });

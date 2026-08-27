@@ -21,8 +21,12 @@
         @foreach($invoice->items as $item)<tr><td>{{ $item->description }}</td><td>{{ $item->amount }} EGP</td><td>{{ $item->paid_amount }} EGP</td><td>{{ $item->remaining_amount }} EGP</td></tr>@endforeach
         </tbody></table>
         <p><strong>Итого:</strong> {{ $invoice->total_amount }} EGP · <strong>Оплачено:</strong> {{ $invoice->paid_amount }} EGP · <strong>Остаток:</strong> {{ $invoice->remaining_amount }} EGP</p>
-        <p><strong>Способ оплаты:</strong> {{ match($invoice->payment_method) { 'cash' => 'Наличные', 'card' => 'Карта', 'bank' => 'Банк', 'transfer' => 'Перевод', default => 'Без оплаты' } }}</p>
+        <p><strong>Способ оплаты:</strong> {{ match($invoice->payment_method) { 'cash' => 'Наличные', 'card' => 'Карта', 'bank' => 'Банк', 'transfer' => 'Перевод', 'instapay' => 'InstaPay', default => 'Без оплаты' } }}</p>
         <p><strong>Касса:</strong> {{ $invoice->cashAccount?->name ?? 'Без оплаты' }}</p>
+        @if($invoice->payments->isNotEmpty())
+            @php $lastPayment = $invoice->payments->sortByDesc('id')->first(); @endphp
+            <p><strong>Квитанция №:</strong> {{ $lastPayment->payment_number }} · <strong>Оплачено сейчас:</strong> {{ $lastPayment->amount }} EGP</p>
+        @endif
     </div></div>
     <div class="d-flex flex-wrap gap-2">
         <a href="{{ route('dashboard.students.complete-registration.edit', $invoice->student) }}" class="btn btn-primary">Завершить регистрацию</a>

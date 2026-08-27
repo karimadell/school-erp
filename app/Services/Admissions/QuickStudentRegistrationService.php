@@ -92,8 +92,10 @@ class QuickStudentRegistrationService
                 ])->filter()->implode("\n"),
             ]);
 
-            $normalizedServices = collect($data['services'])->map(function (array $service) use ($grade, $mode) {
+            $feesById = [];
+            $normalizedServices = collect($data['services'])->map(function (array $service) use ($grade, $mode, &$feesById) {
                 $fee = Fee::query()->lockForUpdate()->findOrFail($service['fee_id']);
+                $feesById[$fee->id] = $fee;
                 $product = null;
                 $route = null;
                 $mealPlan = null;
@@ -150,22 +152,6 @@ class QuickStudentRegistrationService
                 '0.00'
             );
 
-            // Fail fast, before anything is persisted, exactly as before:
-            // resolve prices once purely to validate that no single line's
-            // paid_now exceeds what that line will actually cost.
-            $preview = $this->calculator->calculate(
-                items: $items,
-                pricingDate: $data['registration_date'],
-                academicYearId: $year->id,
-            );
-            foreach ($preview['line_items'] as $index => $line) {
-                if (bccomp((string) $normalizedServices[$index]['paid_now'], $line['amount'], 2) > 0) {
-                    throw ValidationException::withMessages([
-                        "services.{$index}.paid_now" => 'Оплата по услуге не может превышать её рассчитанную стоимость.',
-                    ]);
-                }
-            }
-
             // Phase 2: issuance itself — invoice, items, registration-fee
             // duplicate guard, subscription linkage, installments, and audit
             // logging — is delegated to the canonical InvoiceIssuanceService
@@ -210,10 +196,23 @@ class QuickStudentRegistrationService
             // runs inside the same outer transaction as issue(), so a
             // failure here rolls back the invoice too.
             foreach ($invoice->items as $item) {
-                $selection = $normalizedServices->firstWhere('fee_id', $item->fee_id);
-                $fee = Fee::findOrFail($item->fee_id);
+                $index = $normalizedServices->search(fn (array $service) => $service['fee_id'] === $item->fee_id);
+                $selection = $normalizedServices[$index];
+                $fee = $feesById[$item->fee_id];
                 $metadata = $this->metadata($fee, $selection);
                 $linePaid = bcadd((string) $selection['paid_now'], '0', 2);
+
+                // Same check the old, separate preview calculate() pass used
+                // to run before anything was persisted — folded in here
+                // against the invoice's own just-issued line amount instead
+                // of pricing every line twice. Still runs (and can still
+                // throw) before payment is attempted, so a violation rolls
+                // back the whole outer transaction exactly as before.
+                if (bccomp($linePaid, $item->amount, 2) > 0) {
+                    throw ValidationException::withMessages([
+                        "services.{$index}.paid_now" => 'Оплата по услуге не может превышать её рассчитанную стоимость.',
+                    ]);
+                }
                 $lineRemaining = bcsub($item->amount, $linePaid, 2);
 
                 $item->update([

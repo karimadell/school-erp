@@ -6,16 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreInvoiceRequest;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
-use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\InvoicePayment;
 use App\Models\MealPlan;
 use App\Models\Student;
-use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Support\FinanceShareRecipient;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -24,7 +22,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class InvoiceController extends Controller
@@ -111,97 +108,36 @@ class InvoiceController extends Controller
 
     public function store(
         StoreInvoiceRequest $request,
-        InvoiceCalculationService $calculator,
+        InvoiceIssuanceService $issuer,
         InvoicePaymentService $payments,
     ): RedirectResponse {
         $data = $request->validated();
-        $actorId = $request->user()->id;
-        $invoice = DB::transaction(function () use ($data, $calculator, $payments, $actorId, $request) {
-            $student = Student::query()->lockForUpdate()->findOrFail($data['student_id']);
-            $academicYear = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
-            $enrollmentExists = Enrollment::query()
-                ->where('student_id', $student->id)
-                ->where('academic_year_id', $academicYear->id)
-                ->where('is_active', true)
-                ->lockForUpdate()
-                ->exists();
+        $actor = $request->user();
+        $ip = $request->ip();
+        $userAgent = $request->userAgent();
 
-            if (! $academicYear->is_active || ! $enrollmentExists) {
-                throw ValidationException::withMessages([
-                    'student_id' => 'Зачисление ученика или выбранный учебный год изменились. Обновите страницу и повторите попытку.',
-                ]);
-            }
+        // Migrated onto the canonical issuance service (Phase 2): this used
+        // to hand-roll Invoice::create()/InvoiceItem::create() inline, which
+        // meant the classic screen never got a registration-fee duplicate
+        // guard, never generated an installment row at issuance, and never
+        // wrote an audit log. Enrollment/academic-year validation, tariff
+        // resolution, numbering, item snapshots, discount handling, and the
+        // invoice_fee compatibility pivot are all now InvoiceIssuanceService's
+        // responsibility — this controller only composes issuance with the
+        // optional initial payment, exactly like ChargeAndCollectService does.
+        $invoice = DB::transaction(function () use ($data, $issuer, $payments, $actor, $ip, $userAgent) {
+            $student = Student::findOrFail($data['student_id']);
+            $invoice = $issuer->issue($student, $data, $actor, $ip, $userAgent);
 
-            $calculation = $calculator->calculate(
-                items: $data['items'],
-                discountType: $data['discount_type'] ?? null,
-                discountValue: $data['discount_value'] ?? null,
-                initialPaymentAmount: $data['initial_payment_amount'] ?? '0',
-                pricingDate: $data['pricing_date'],
-                academicYearId: $academicYear->id,
-            );
-
-            $invoiceData = [
-                'student_id' => $student->id,
-                'academic_year_id' => $data['academic_year_id'],
-                'customer_name' => $student->full_name,
-                'currency' => InvoiceCalculationService::CURRENCY,
-                'subtotal_amount' => $calculation['subtotal'],
-                'total_amount' => $calculation['total_amount'],
-                'discount_type' => $data['discount_type'] ?? null,
-                'discount_value' => $data['discount_value'] ?? '0.00',
-                'discount_amount' => $calculation['discount_amount'],
-                'paid_amount' => '0.00',
-                'remaining_amount' => $calculation['total_amount'],
-                'status' => Invoice::STATUS_UNPAID,
-                'cash_account_id' => null,
-                'payment_method' => null,
-                'paid_at' => null,
-                'due_date' => $data['due_date'],
-                'created_by' => $actorId,
-            ];
-
-            if (Schema::hasColumn('invoices', 'note')) {
-                $invoiceData['note'] = $data['notes'] ?? null;
-            }
-
-            $invoice = Invoice::create($invoiceData);
-            $invoice->invoice_number = Invoice::numberFor($invoice->id, $invoice->created_at->format('Y'));
-            $invoice->save();
-
-            foreach ($calculation['line_items'] as $line) {
-                InvoiceItem::create([
-                    'invoice_id' => $invoice->id,
-                    'fee_id' => $line['fee_id'],
-                    'description' => $line['description'],
-                    'unit_price' => $line['unit_price'],
-                    'quantity' => $line['quantity'],
-                    'amount' => $line['amount'],
-                    'paid_amount' => '0.00',
-                    'remaining_amount' => $line['amount'],
-                    'metadata' => $line['metadata'],
-                    'is_non_refundable' => Fee::findOrFail($line['fee_id'])->is_non_refundable,
-                ]);
-
-                // Transitional compatibility: classic invoice views still
-                // read invoice_fee. Both records come from one calculation.
-                $invoice->fees()->attach($line['fee_id'], [
-                    'amount' => $line['amount'],
-                    'item' => $line['item'],
-                    'size' => $line['size'],
-                    'option_type' => $line['option_type'],
-                    'option_value' => $line['option_value'],
-                ]);
-            }
-
-            if (bccomp($calculation['paid_amount'], '0.00', 2) > 0) {
+            $initialPayment = (string) ($data['initial_payment_amount'] ?? '0');
+            if (bccomp($initialPayment, '0.00', 2) > 0) {
                 $payments->record(
                     invoiceId: $invoice->id,
                     cashAccountId: CashAccount::resolvePaymentAccountId($data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null),
                     paymentMethod: $data['payment_method'],
-                    amount: $calculation['paid_amount'],
+                    amount: $initialPayment,
                     idempotencyKey: (string) Str::uuid(),
-                    actor: $request->user(),
+                    actor: $actor,
                     reference: 'Первоначальная оплата по счёту '.$invoice->display_number,
                 );
             }

@@ -9,19 +9,18 @@ use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\Grade;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\MealPlan;
 use App\Models\MealSubscription;
-use App\Models\PaymentPlan;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
-use App\Services\Finance\InstallmentPlanService;
 use App\Services\AcademicStructureService;
+use App\Services\StudentServiceSubscriptionService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -31,8 +30,9 @@ class QuickStudentRegistrationService
 {
     public function __construct(
         private InvoiceCalculationService $calculator,
+        private InvoiceIssuanceService $issuer,
         private InvoicePaymentService $payments,
-        private InstallmentPlanService $installmentPlans,
+        private StudentServiceSubscriptionService $subscriptions,
         private AcademicStructureService $structure,
     )
     {
@@ -149,70 +149,37 @@ class QuickStudentRegistrationService
                 fn (string $sum, array $service) => bcadd($sum, (string) $service['paid_now'], 2),
                 '0.00'
             );
-            $calculation = $this->calculator->calculate(
+
+            // Fail fast, before anything is persisted, exactly as before:
+            // resolve prices once purely to validate that no single line's
+            // paid_now exceeds what that line will actually cost.
+            $preview = $this->calculator->calculate(
                 items: $items,
-                initialPaymentAmount: '0.00',
                 pricingDate: $data['registration_date'],
                 academicYearId: $year->id,
             );
-
-            $allocatedPaid = '0.00';
-            $allocatedRemaining = '0.00';
-            foreach ($calculation['line_items'] as $index => $line) {
+            foreach ($preview['line_items'] as $index => $line) {
                 if (bccomp((string) $normalizedServices[$index]['paid_now'], $line['amount'], 2) > 0) {
                     throw ValidationException::withMessages([
                         "services.{$index}.paid_now" => 'Оплата по услуге не может превышать её рассчитанную стоимость.',
                     ]);
                 }
             }
-            $calculation = $this->calculator->calculate(
-                items: $items,
-                initialPaymentAmount: $paidNow,
-                pricingDate: $data['registration_date'],
-                academicYearId: $year->id,
-            );
 
-            $invoice = Invoice::create([
-                'student_id' => $student->id,
-                'academic_year_id' => $year->id,
-                'customer_name' => $student->full_name,
-                'currency' => InvoiceCalculationService::CURRENCY,
-                'subtotal_amount' => $calculation['subtotal'],
-                'total_amount' => $calculation['total_amount'],
-                'discount_amount' => '0.00',
-                'paid_amount' => '0.00',
-                'remaining_amount' => $calculation['total_amount'],
-                'status' => Invoice::STATUS_UNPAID,
-                'cash_account_id' => null,
-                'payment_method' => null,
-                'paid_at' => null,
-                'due_date' => $year->end_date,
-                'created_by' => $actor->id,
-            ]);
-            $invoice->invoice_number = Invoice::numberFor($invoice->id, $invoice->created_at->format('Y'));
-            $invoice->save();
-
-            foreach ($calculation['line_items'] as $index => $line) {
-                $selection = $normalizedServices[$index];
-                $fee = Fee::query()->lockForUpdate()->findOrFail($line['fee_id']);
-
-                if ($fee->category === Fee::CATEGORY_REGISTRATION) {
-                    $lockedEnrollment = Enrollment::query()->lockForUpdate()->findOrFail($enrollment->id);
-                    if ($lockedEnrollment->registration_fee_charged_at !== null) {
-                        throw ValidationException::withMessages(['services' => 'Регистрационный взнос уже начислен за этот учебный год.']);
-                    }
-                    $lockedEnrollment->update(['registration_fee_charged_at' => now()]);
-                }
-
-                $metadata = $this->metadata($fee, $selection);
-                $subscription = StudentServiceSubscription::create([
-                    'enrollment_id' => $enrollment->id,
-                    'fee_id' => $fee->id,
+            // Phase 2: issuance itself — invoice, items, registration-fee
+            // duplicate guard, subscription linkage, installments, and audit
+            // logging — is delegated to the canonical InvoiceIssuanceService
+            // instead of being hand-rolled here. Subscription creation stays
+            // an Admissions-domain concern: the resolver below is the only
+            // place that knows about StudentServiceSubscriptionService or
+            // MealSubscription — InvoiceIssuanceService never does.
+            $subscriptionResolver = function (Fee $fee, array $selection, Enrollment $enrollment) use ($data, $actor) {
+                $subscription = $this->subscriptions->subscribe($enrollment, $fee, [
                     'start_date' => $data['registration_date'],
-                    'quantity' => $line['quantity'],
+                    'quantity' => (int) $selection['quantity'],
                     'status' => StudentServiceSubscription::STATUS_ACTIVE,
-                    'metadata' => $metadata,
-                ]);
+                    'metadata' => $this->metadata($fee, $selection),
+                ], $actor);
 
                 if ($fee->category === Fee::CATEGORY_FOOD) {
                     MealSubscription::create([
@@ -222,43 +189,43 @@ class QuickStudentRegistrationService
                     ]);
                 }
 
+                return $subscription->id;
+            };
+
+            $invoice = $this->issuer->issue($student, [
+                'student_id' => $student->id,
+                'academic_year_id' => $year->id,
+                'due_date' => $year->end_date->toDateString(),
+                'pricing_date' => $data['registration_date'],
+                'items' => $items,
+                'payment_type' => $data['payment_type'] ?? 'one_time',
+                'payment_plan_id' => $data['payment_plan_id'] ?? null,
+            ], $actor, subscriptionResolver: $subscriptionResolver);
+
+            // Quick Registration's own per-line concerns — the initial
+            // paid/remaining split per service, the enriched description,
+            // the curated (non-raw) metadata snapshot, and the legacy
+            // registration_fee_charged_at bookkeeping — are layered on top
+            // of the just-issued, canonical InvoiceItem rows. This still
+            // runs inside the same outer transaction as issue(), so a
+            // failure here rolls back the invoice too.
+            foreach ($invoice->items as $item) {
+                $selection = $normalizedServices->firstWhere('fee_id', $item->fee_id);
+                $fee = Fee::findOrFail($item->fee_id);
+                $metadata = $this->metadata($fee, $selection);
                 $linePaid = bcadd((string) $selection['paid_now'], '0', 2);
-                $lineRemaining = bcsub($line['amount'], $linePaid, 2);
-                $allocatedPaid = bcadd($allocatedPaid, $linePaid, 2);
-                $allocatedRemaining = bcadd($allocatedRemaining, $lineRemaining, 2);
-                InvoiceItem::create([
-                    'invoice_id' => $invoice->id,
-                    'fee_id' => $fee->id,
-                    'subscription_id' => $subscription->id,
-                    'description' => $this->description($line['description'], $metadata),
-                    'unit_price' => $line['unit_price'],
-                    'quantity' => $line['quantity'],
-                    'amount' => $line['amount'],
+                $lineRemaining = bcsub($item->amount, $linePaid, 2);
+
+                $item->update([
+                    'description' => $this->description($item->description, $metadata),
                     'paid_amount' => $linePaid,
                     'remaining_amount' => $lineRemaining,
-                    'is_non_refundable' => $fee->is_non_refundable,
                     'metadata' => $metadata,
                 ]);
 
-                $invoice->fees()->attach($fee->id, [
-                    'amount' => $line['amount'],
-                    'item' => $line['item'],
-                    'size' => $line['size'],
-                    'option_type' => $line['option_type'],
-                    'option_value' => $line['option_value'],
-                ]);
-            }
-
-            if (bccomp($allocatedPaid, $calculation['paid_amount'], 2) !== 0
-                || bccomp($allocatedRemaining, $calculation['remaining_amount'], 2) !== 0) {
-                throw ValidationException::withMessages(['services' => 'Распределение оплаты по услугам не совпадает с итогом счёта.']);
-            }
-
-            if (($data['payment_type'] ?? 'one_time') === 'plan') {
-                $plan = PaymentPlan::active()->lockForUpdate()->findOrFail($data['payment_plan_id']);
-                $this->installmentPlans->generate($invoice, $plan, $data['registration_date']);
-            } else {
-                $this->installmentPlans->generateSingle($invoice, $year->end_date->toDateString());
+                if ($fee->category === Fee::CATEGORY_REGISTRATION) {
+                    $enrollment->update(['registration_fee_charged_at' => now()]);
+                }
             }
 
             if (bccomp($paidNow, '0.00', 2) > 0) {

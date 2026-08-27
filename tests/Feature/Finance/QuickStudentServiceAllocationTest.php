@@ -11,8 +11,11 @@ use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\MealPlan;
+use App\Models\MealSubscription;
+use App\Models\PaymentPlan;
 use App\Models\SchoolClass;
 use App\Models\Stage;
+use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -115,5 +118,71 @@ class QuickStudentServiceAllocationTest extends TestCase
         $this->assertSame('Полный день', $items[0]->metadata['meal_plan']);
         $this->assertSame('monthly', $items[1]->metadata['payment_period']);
         $this->assertTrue($items[1]->metadata['first_last_month']);
+
+        // Phase 2 — new subscriptions must be created exclusively through
+        // StudentServiceSubscriptionService::subscribe(), not a raw
+        // StudentServiceSubscription::create() call, and every food-category
+        // line must still produce a MealSubscription.
+        $this->assertSame(2, StudentServiceSubscription::count());
+        $mealSubscription = MealSubscription::sole();
+        $this->assertSame($plan->id, $mealSubscription->meal_plan_id);
+        $this->assertSame($items[0]->subscription_id, StudentServiceSubscription::where('fee_id', $meal->id)->sole()->id);
+    }
+
+    public function test_an_audit_log_is_written_for_the_created_invoice(): void
+    {
+        $fee = $this->fee('Книги', Fee::CATEGORY_BOOKS, '100.00');
+        $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+        ])->assertSessionHasNoErrors();
+
+        $invoice = Invoice::sole();
+        $this->assertDatabaseHas('audit_logs', [
+            'model' => 'Invoice', 'model_id' => $invoice->id,
+            'action' => 'created', 'user_id' => $this->user->id,
+        ]);
+    }
+
+    public function test_an_unpaid_invoice_receives_an_installment_immediately_at_issuance(): void
+    {
+        $fee = $this->fee('Книги', Fee::CATEGORY_BOOKS, '100.00');
+        $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+        ])->assertSessionHasNoErrors();
+
+        $invoice = Invoice::sole();
+        $this->assertSame(1, $invoice->installments()->count());
+    }
+
+    /**
+     * Transaction/atomicity rule (Phase 2): a food line's subscription,
+     * its MealSubscription, the invoice and its items are all created
+     * inside the same transaction as the final initial-payment step. If
+     * that final step fails, none of it — not even the MealSubscription
+     * created earlier in the same request — may survive.
+     */
+    public function test_a_late_failure_rolls_back_the_meal_subscription_and_everything_else(): void
+    {
+        $meal = $this->fee('Питание', Fee::CATEGORY_FOOD, '1200.00');
+        $plan = MealPlan::create(['name_ru' => 'Полный день', 'meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '1200.00', 'is_active' => true]);
+        $paymentPlan = PaymentPlan::create(['name_ru' => 'План', 'is_active' => true]);
+        $paymentPlan->installments()->create(['name_ru' => 'Первый', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '10']);
+        $paymentPlan->installments()->create(['name_ru' => 'Второй', 'sequence' => 2, 'offset_days' => 30, 'percentage' => '90']);
+
+        $response = $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'plan', 'payment_plan_id' => $paymentPlan->id,
+            'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
+            'services' => [['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => '200.00', 'meal_plan_id' => $plan->id]],
+        ]);
+
+        // 200.00 exceeds the first installment's 10% (120.00) — rejected
+        // after the subscription/invoice/items have already been created
+        // in-transaction, so this exercises the rollback, not a pre-check.
+        $response->assertSessionHasErrors('services');
+        $this->assertDatabaseCount('students', 0);
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
+        $this->assertDatabaseCount('student_service_subscriptions', 0);
+        $this->assertDatabaseCount('meal_subscriptions', 0);
     }
 }

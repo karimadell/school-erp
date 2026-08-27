@@ -107,6 +107,59 @@ class EnrollmentWorkflowTest extends TestCase
         }
     }
 
+    /**
+     * Phase 2 regression coverage: this path used to hand-roll
+     * Invoice::create()/InvoiceItem::create() directly and never generated
+     * any InvoiceInstallment row at all — since it also never collects a
+     * payment, that gap never self-healed either (unlike the classic
+     * screen, which at least gets one lazily on first payment). It now
+     * issues through InvoiceIssuanceService like every other live entry
+     * point, so it gets one immediately, unconditionally.
+     */
+    public function test_the_unpaid_draft_invoice_receives_an_installment_immediately_at_issuance(): void
+    {
+        $catalog = $this->catalog();
+        $this->actingAs($this->admin)->post(route('dashboard.school-enrollment.store'), $this->payload($catalog))
+            ->assertSessionHasNoErrors();
+
+        $invoice = \App\Models\Invoice::firstOrFail();
+        $this->assertSame(1, $invoice->installments()->count());
+        $this->assertSame('3500.00', $invoice->installments()->sole()->remaining_amount);
+    }
+
+    public function test_an_audit_log_is_written_for_the_created_invoice(): void
+    {
+        $catalog = $this->catalog();
+        $this->actingAs($this->admin)->post(route('dashboard.school-enrollment.store'), $this->payload($catalog))
+            ->assertSessionHasNoErrors();
+
+        $invoice = \App\Models\Invoice::firstOrFail();
+        $this->assertDatabaseHas('audit_logs', [
+            'model' => 'Invoice', 'model_id' => $invoice->id,
+            'action' => 'created', 'user_id' => $this->admin->id,
+        ]);
+    }
+
+    /**
+     * New subscriptions must be created exclusively through
+     * StudentServiceSubscriptionService::subscribe() (Phase 2, constraint 7)
+     * — not a raw StudentServiceSubscription::create() call — and each
+     * InvoiceItem must be linked to the subscription that resolver created.
+     */
+    public function test_subscriptions_are_linked_to_their_invoice_items(): void
+    {
+        $catalog = $this->catalog();
+        $this->actingAs($this->admin)->post(route('dashboard.school-enrollment.store'), $this->payload($catalog))
+            ->assertSessionHasNoErrors();
+
+        $invoice = \App\Models\Invoice::with('items')->firstOrFail();
+        $this->assertSame(2, \App\Models\StudentServiceSubscription::count());
+        foreach ($invoice->items as $item) {
+            $this->assertNotNull($item->subscription_id);
+            $this->assertSame(\App\Models\StudentServiceSubscription::STATUS_ACTIVE, \App\Models\StudentServiceSubscription::find($item->subscription_id)->status);
+        }
+    }
+
     public function test_manage_students_permission_is_required(): void
     {
         $user = User::factory()->create(['is_active' => true]);

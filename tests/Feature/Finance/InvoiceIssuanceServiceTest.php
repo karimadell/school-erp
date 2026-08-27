@@ -5,6 +5,7 @@ namespace Tests\Feature\Finance;
 use App\Models\AuditLog;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\StudentServiceSubscription;
 use App\Services\Finance\InvoiceIssuanceService;
 use Illuminate\Validation\ValidationException;
 
@@ -89,5 +90,81 @@ class InvoiceIssuanceServiceTest extends FinanceOperationsTestCase
         } finally {
             $this->assertDatabaseCount('invoices', 0);
         }
+    }
+
+    /**
+     * Transaction/atomicity rule (Phase 2): a failure in installment
+     * generation must roll back the invoice and its items too — there must
+     * be no state where the invoice persists but its schedule doesn't.
+     */
+    public function test_a_failure_generating_the_installment_plan_rolls_back_the_whole_invoice(): void
+    {
+        try {
+            app(InvoiceIssuanceService::class)->issue(
+                $this->student,
+                $this->data(['payment_type' => 'plan', 'payment_plan_id' => 999999]),
+                $this->accountant,
+            );
+            $this->fail('Expected a ModelNotFoundException for the missing payment plan.');
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            // expected
+        }
+
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
+        $this->assertDatabaseCount('invoice_installments', 0);
+    }
+
+    /**
+     * Phase 2 — the resolver hook. This service must stay ignorant of how a
+     * subscription is created: it only asks the caller and attaches whatever
+     * id comes back, never importing StudentServiceSubscription/
+     * StudentServiceSubscriptionService/MealSubscription itself.
+     */
+    public function test_resolver_is_invoked_for_a_line_with_no_existing_subscription_and_its_id_is_attached(): void
+    {
+        $calls = [];
+        $resolver = function ($fee, $selection, $enrollment) use (&$calls) {
+            $calls[] = [$fee->id, $enrollment->id];
+
+            return $this->enrollment->serviceSubscriptions()->create([
+                'fee_id' => $fee->id, 'start_date' => '2026-09-01', 'status' => StudentServiceSubscription::STATUS_ACTIVE,
+            ])->id;
+        };
+
+        $invoice = app(InvoiceIssuanceService::class)
+            ->issue($this->student, $this->data(), $this->accountant, subscriptionResolver: $resolver);
+
+        $this->assertCount(1, $calls);
+        $this->assertSame($this->fee->id, $calls[0][0]);
+        $this->assertSame($this->enrollment->id, $calls[0][1]);
+        $item = InvoiceItem::sole();
+        $this->assertNotNull($item->subscription_id);
+        $this->assertSame(StudentServiceSubscription::STATUS_ACTIVE, StudentServiceSubscription::find($item->subscription_id)->status);
+    }
+
+    public function test_a_null_resolver_leaves_the_line_unsubscribed_exactly_like_before(): void
+    {
+        $invoice = app(InvoiceIssuanceService::class)->issue($this->student, $this->data(), $this->accountant);
+
+        $this->assertNull(InvoiceItem::sole()->subscription_id);
+        $this->assertSame(0, StudentServiceSubscription::count());
+    }
+
+    public function test_an_existing_active_subscription_is_reused_and_the_resolver_is_never_called(): void
+    {
+        $existing = StudentServiceSubscription::create([
+            'enrollment_id' => $this->enrollment->id, 'fee_id' => $this->fee->id,
+            'start_date' => '2026-09-01', 'status' => StudentServiceSubscription::STATUS_ACTIVE,
+        ]);
+        $resolver = function () {
+            $this->fail('The resolver must not be called when an active subscription already exists.');
+        };
+
+        $invoice = app(InvoiceIssuanceService::class)
+            ->issue($this->student, $this->data(), $this->accountant, subscriptionResolver: $resolver);
+
+        $this->assertSame($existing->id, InvoiceItem::sole()->subscription_id);
+        $this->assertSame(1, StudentServiceSubscription::count());
     }
 }

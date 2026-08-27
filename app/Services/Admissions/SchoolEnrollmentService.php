@@ -8,7 +8,6 @@ use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
-use App\Models\InvoiceItem;
 use App\Models\MealPlan;
 use App\Models\MealSubscription;
 use App\Models\SchoolClass;
@@ -16,7 +15,9 @@ use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\AcademicStructureService;
+use App\Services\StudentServiceSubscriptionService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -26,7 +27,8 @@ use Throwable;
 class SchoolEnrollmentService
 {
     public function __construct(
-        private InvoiceCalculationService $calculator,
+        private InvoiceIssuanceService $issuer,
+        private StudentServiceSubscriptionService $subscriptions,
         private AcademicStructureService $structure,
     )
     {
@@ -77,12 +79,6 @@ class SchoolEnrollmentService
                         'option_value' => $price->option_value,
                     ];
                 })->all();
-                $calculation = $this->calculator->calculate(
-                    items: $items,
-                    initialPaymentAmount: '0.00',
-                    pricingDate: $pricingDate,
-                    academicYearId: $year->id,
-                );
 
                 if ($photo) {
                     $photoPath = $photo->store('students/photos', config('filesystems.uploads.public'));
@@ -130,68 +126,57 @@ class SchoolEnrollmentService
                     'notes' => 'Оформлено через современный мастер зачисления.',
                 ]);
 
-                $invoice = Invoice::create([
-                    'student_id' => $student->id,
-                    'academic_year_id' => $year->id,
-                    'customer_name' => $student->full_name,
-                    'currency' => InvoiceCalculationService::CURRENCY,
-                    'subtotal_amount' => $calculation['subtotal'],
-                    'total_amount' => $calculation['total_amount'],
-                    'discount_amount' => '0.00',
-                    'paid_amount' => '0.00',
-                    'remaining_amount' => $calculation['total_amount'],
-                    'status' => Invoice::STATUS_UNPAID,
-                    'due_date' => $year->end_date,
-                    'created_by' => $actor->id,
-                ]);
-                $invoice->invoice_number = Invoice::numberFor($invoice->id, $invoice->created_at->format('Y'));
-                $invoice->save();
-
-                foreach ($calculation['line_items'] as $index => $line) {
-                    $selection = $items[$index];
-                    $fee = Fee::query()->lockForUpdate()->findOrFail($line['fee_id']);
-                    if ($fee->category === Fee::CATEGORY_REGISTRATION) {
-                        $enrollment->update(['registration_fee_charged_at' => now()]);
-                    }
-                    $metadata = array_filter([
-                        'grade_group' => $selection['grade_group'],
-                        'payment_period' => $selection['payment_period'],
-                        'size' => $selection['size'],
-                        'item' => $selection['item'],
-                        'option_type' => $selection['option_type'],
-                        'option_value' => $selection['option_value'],
-                    ], fn ($value) => filled($value));
-                    $subscription = StudentServiceSubscription::create([
-                        'enrollment_id' => $enrollment->id,
-                        'fee_id' => $fee->id,
+                // Phase 2: issuance — invoice, items, the registration-fee
+                // duplicate guard, subscription linkage, an installment row
+                // at issuance (this path never had one before), and audit
+                // logging — is delegated to the canonical
+                // InvoiceIssuanceService instead of being hand-rolled here.
+                // Subscription/MealSubscription creation stays an
+                // Admissions-domain concern owned entirely by this resolver;
+                // InvoiceIssuanceService never imports either.
+                $subscriptionResolver = function (Fee $fee, array $selection, Enrollment $enrollment) use ($pricingDate, $actor) {
+                    $subscription = $this->subscriptions->subscribe($enrollment, $fee, [
                         'start_date' => $pricingDate,
                         'quantity' => 1,
                         'status' => StudentServiceSubscription::STATUS_ACTIVE,
-                        'metadata' => $metadata,
-                    ]);
-                    if ($fee->category === Fee::CATEGORY_FOOD && is_numeric($selection['option_value'])) {
+                        'metadata' => $this->lineMetadata($selection),
+                    ], $actor);
+
+                    if ($fee->category === Fee::CATEGORY_FOOD && filled($selection['option_value'] ?? null)) {
                         $mealPlan = MealPlan::active()->find((int) $selection['option_value']);
                         if ($mealPlan) {
-                            MealSubscription::create(['enrollment_id' => $enrollment->id, 'meal_plan_id' => $mealPlan->id, 'start_date' => $pricingDate]);
+                            MealSubscription::create([
+                                'enrollment_id' => $enrollment->id,
+                                'meal_plan_id' => $mealPlan->id,
+                                'start_date' => $pricingDate,
+                            ]);
                         }
                     }
-                    InvoiceItem::create([
-                        'invoice_id' => $invoice->id,
-                        'fee_id' => $fee->id,
-                        'subscription_id' => $subscription->id,
-                        'description' => $line['description'],
-                        'unit_price' => $line['unit_price'],
-                        'quantity' => 1,
-                        'amount' => $line['amount'],
-                        'paid_amount' => '0.00',
-                        'remaining_amount' => $line['amount'],
-                        'is_non_refundable' => $fee->is_non_refundable,
-                        'metadata' => $metadata,
-                    ]);
-                    $invoice->fees()->attach($fee->id, [
-                        'amount' => $line['amount'], 'item' => $line['item'], 'size' => $line['size'],
-                        'option_type' => $line['option_type'], 'option_value' => $line['option_value'],
-                    ]);
+
+                    return $subscription->id;
+                };
+
+                $invoice = $this->issuer->issue($student, [
+                    'student_id' => $student->id,
+                    'academic_year_id' => $year->id,
+                    'due_date' => $year->end_date->toDateString(),
+                    'pricing_date' => $pricingDate,
+                    'items' => $items,
+                    'payment_type' => 'one_time',
+                ], $actor, subscriptionResolver: $subscriptionResolver);
+
+                // The curated (non-raw) metadata snapshot and the legacy
+                // registration_fee_charged_at bookkeeping are layered on top
+                // of the just-issued, canonical InvoiceItem rows — still
+                // inside the same transaction as issue(), so a failure here
+                // rolls back the invoice too.
+                foreach ($invoice->items as $item) {
+                    $selection = collect($items)->firstWhere('fee_id', $item->fee_id);
+                    $item->update(['metadata' => $this->lineMetadata($selection)]);
+
+                    if (Fee::find($item->fee_id)?->category === Fee::CATEGORY_REGISTRATION) {
+                        $enrollment->update(['registration_fee_charged_at' => now()]);
+                    }
                 }
 
                 return compact('student', 'enrollment', 'invoice');
@@ -202,6 +187,19 @@ class SchoolEnrollmentService
             }
             throw $exception;
         }
+    }
+
+    /** @param array<string, mixed> $selection */
+    private function lineMetadata(array $selection): array
+    {
+        return array_filter([
+            'grade_group' => $selection['grade_group'],
+            'payment_period' => $selection['payment_period'],
+            'size' => $selection['size'],
+            'item' => $selection['item'],
+            'option_type' => $selection['option_type'],
+            'option_value' => $selection['option_value'],
+        ], fn ($value) => filled($value));
     }
 
     private function contact(array $data, string $prefix): array

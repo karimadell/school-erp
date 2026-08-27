@@ -177,12 +177,76 @@ class InvoiceCreationTest extends TestCase
 
     public function test_overpayment_is_rejected_in_russian(): void
     {
+        // Phase 2: the overpayment guard now lives in InvoicePaymentService
+        // (shared with every other issuance path) rather than being
+        // recomputed inline here, so it is keyed 'amount' and reports the
+        // remaining balance rather than the invoice total — the rejection
+        // itself, and the fact that nothing persists, are unchanged.
         $response = $this->actingAs($this->user)->post(route('dashboard.invoices.store'), $this->payload([
             'initial_payment_amount' => '1000.01', 'payment_method' => 'cash',
         ]));
 
-        $response->assertSessionHasErrors('initial_payment_amount');
-        $this->assertStringContainsString('не может превышать сумму счёта', session('errors')->first('initial_payment_amount'));
+        $response->assertSessionHasErrors('amount');
+        $this->assertStringContainsString('не может превышать остаток по счёту', session('errors')->first('amount'));
         $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
+        $this->assertDatabaseCount('invoice_payments', 0);
+    }
+
+    /**
+     * Phase 2 regression coverage: the classic screen used to hand-roll
+     * Invoice::create()/InvoiceItem::create() directly, with no installment
+     * created at issuance, no audit log, and no registration-fee duplicate
+     * guard. It now issues through InvoiceIssuanceService like every other
+     * live entry point, so it gets all three for free.
+     */
+    public function test_an_unpaid_invoice_receives_an_installment_immediately_at_issuance(): void
+    {
+        $response = $this->actingAs($this->user)->post(route('dashboard.invoices.store'), $this->payload());
+
+        $response->assertSessionHasNoErrors();
+        $invoice = Invoice::sole();
+        $this->assertSame(Invoice::STATUS_UNPAID, $invoice->status);
+        $this->assertSame(1, $invoice->installments()->count());
+        $this->assertSame('1000.00', $invoice->installments()->sole()->remaining_amount);
+    }
+
+    public function test_an_audit_log_is_written_for_the_created_invoice(): void
+    {
+        $response = $this->actingAs($this->user)->post(route('dashboard.invoices.store'), $this->payload());
+
+        $response->assertSessionHasNoErrors();
+        $invoice = Invoice::sole();
+        $this->assertDatabaseHas('audit_logs', [
+            'model' => 'Invoice', 'model_id' => $invoice->id,
+            'action' => 'created', 'user_id' => $this->user->id,
+        ]);
+    }
+
+    public function test_a_second_registration_fee_invoice_for_the_same_student_and_year_is_rejected(): void
+    {
+        $registration = Fee::create(['name_ru' => 'Организационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '500.00', 'is_active' => true]);
+        $this->actingAs($this->user)->post(route('dashboard.invoices.store'), $this->payload(['fees' => [$registration->id]]))
+            ->assertSessionHasNoErrors();
+        $this->assertSame(1, Invoice::count());
+
+        $response = $this->actingAs($this->user)->post(route('dashboard.invoices.store'), $this->payload(['fees' => [$registration->id]]));
+
+        $response->assertSessionHasErrors('fees');
+        $this->assertStringContainsString('Регистрационный взнос уже начислен', session('errors')->first('fees'));
+        $this->assertSame(1, Invoice::count());
+    }
+
+    public function test_a_discount_is_still_applied_after_migrating_onto_the_canonical_issuance_service(): void
+    {
+        $response = $this->actingAs($this->user)->post(route('dashboard.invoices.store'), $this->payload([
+            'discount_type' => 'percent', 'discount_value' => '10',
+        ]));
+
+        $response->assertSessionHasNoErrors();
+        $invoice = Invoice::sole();
+        $this->assertSame('1000.00', $invoice->subtotal_amount);
+        $this->assertSame('100.00', $invoice->discount_amount);
+        $this->assertSame('900.00', $invoice->total_amount);
     }
 }

@@ -29,6 +29,12 @@ class InstallmentQuickRegistrationTest extends QuickRegistrationUxTestCase
         $cash=CashAccount::create(['name'=>'Касса','type'=>'cash','is_active'=>true]);
         $payload=$this->payload($structure,$fee,['payment_type'=>'plan','payment_plan_id'=>$plan->id,'cash_account_id'=>$cash->id,'payment_method'=>'cash','services'=>[['fee_id'=>$fee->id,'quantity'=>1,'paid_now'=>'200.00']]]);
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'),$payload)->assertSessionHasErrors('services');
+        // Phase 2 transaction/atomicity rule: this failure happens *after*
+        // issuance (invoice, items, subscription) has already run inside the
+        // same transaction — nothing from any stage may survive.
         $this->assertDatabaseCount('students',0); $this->assertDatabaseCount('invoices',0);
+        $this->assertDatabaseCount('invoice_items', 0);
+        $this->assertDatabaseCount('student_service_subscriptions', 0);
+        $this->assertDatabaseCount('invoice_installments', 0);
     }
 }

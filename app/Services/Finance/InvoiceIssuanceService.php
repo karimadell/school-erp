@@ -11,6 +11,7 @@ use App\Models\InvoiceItem;
 use App\Models\PaymentPlan;
 use App\Models\Student;
 use App\Models\User;
+use Closure;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -44,14 +45,23 @@ class InvoiceIssuanceService
      * Issue an invoice for the given student from validated request data.
      *
      * @param  array<string, mixed>  $data  Output of StoreInvoiceRequest::validated().
+     * @param  ?Closure(Fee, array<string, mixed>, Enrollment): ?int  $subscriptionResolver
+     *         Invoked once per line item that has no existing active
+     *         StudentServiceSubscription, so the caller can create one and
+     *         return its id to attach — this service deliberately has no
+     *         knowledge of StudentServiceSubscriptionService, MealSubscription,
+     *         or any other Admissions-domain concern; that stays entirely
+     *         with the caller's resolver. Passing null (the default)
+     *         preserves the original behaviour of only ever linking an
+     *         already-existing subscription, never creating one.
      */
-    public function issue(Student $student, array $data, User $actor, ?string $ip = null, ?string $userAgent = null): Invoice
+    public function issue(Student $student, array $data, User $actor, ?string $ip = null, ?string $userAgent = null, ?Closure $subscriptionResolver = null): Invoice
     {
         if ((int) $data['student_id'] !== $student->id) {
             throw ValidationException::withMessages(['student_id' => 'Выбранный ученик не соответствует адресу формы.']);
         }
 
-        return DB::transaction(function () use ($data, $student, $actor, $ip, $userAgent) {
+        return DB::transaction(function () use ($data, $student, $actor, $ip, $userAgent, $subscriptionResolver) {
             $student = Student::query()->lockForUpdate()->findOrFail($student->id);
             $year = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
             $enrollment = Enrollment::query()->where('student_id', $student->id)->where('academic_year_id', $year->id)->where('is_active', true)->lockForUpdate()->first();
@@ -74,11 +84,19 @@ class InvoiceIssuanceService
 
                 return $item;
             })->all();
-            $calculation = $this->calculator->calculate($items, null, null, '0', $data['pricing_date'], $year->id);
+            // Discount fields are part of the shared StoreInvoiceRequest shape
+            // (used by both the classic and per-student create screens) but
+            // were previously only ever honoured by the classic controller's
+            // own inline calculation. Reading them here — they are null/absent
+            // for every caller that never offered a discount UI — makes the
+            // classic screen's discount feature survive its migration onto
+            // this service instead of being silently dropped.
+            $calculation = $this->calculator->calculate($items, $data['discount_type'] ?? null, $data['discount_value'] ?? null, '0', $data['pricing_date'], $year->id);
             $invoiceData = [
                 'student_id'=>$student->id, 'academic_year_id'=>$year->id, 'customer_name'=>$student->full_name,
                 'currency'=>'EGP', 'subtotal_amount'=>$calculation['subtotal'], 'total_amount'=>$calculation['total_amount'],
-                'discount_amount'=>'0.00', 'paid_amount'=>'0.00', 'remaining_amount'=>$calculation['total_amount'],
+                'discount_type'=>$data['discount_type'] ?? null, 'discount_value'=>$data['discount_value'] ?? '0.00',
+                'discount_amount'=>$calculation['discount_amount'], 'paid_amount'=>'0.00', 'remaining_amount'=>$calculation['total_amount'],
                 'status'=>Invoice::STATUS_UNPAID, 'due_date'=>$data['due_date'],
                 'created_by'=>$actor->id,
             ];
@@ -95,8 +113,12 @@ class InvoiceIssuanceService
                 $selection = collect($items)->firstWhere('fee_id', $line['fee_id']);
                 $fee = Fee::findOrFail($line['fee_id']);
                 $subscription = $enrollment->serviceSubscriptions()->where('fee_id', $line['fee_id'])->where('status', 'active')->first();
+                $subscriptionId = $subscription?->id;
+                if (! $subscriptionId && $subscriptionResolver) {
+                    $subscriptionId = $subscriptionResolver($fee, $selection, $enrollment);
+                }
                 InvoiceItem::create([
-                    'invoice_id'=>$invoice->id, 'fee_id'=>$line['fee_id'], 'subscription_id'=>$subscription?->id,
+                    'invoice_id'=>$invoice->id, 'fee_id'=>$line['fee_id'], 'subscription_id'=>$subscriptionId,
                     'description'=>$line['description'], 'unit_price'=>$line['unit_price'], 'quantity'=>$line['quantity'],
                     'amount'=>$line['amount'], 'paid_amount'=>'0.00', 'remaining_amount'=>$line['amount'],
                     'is_non_refundable'=>$fee->is_non_refundable,

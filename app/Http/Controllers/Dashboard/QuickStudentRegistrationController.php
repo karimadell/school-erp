@@ -33,7 +33,16 @@ class QuickStudentRegistrationController extends Controller
     {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
         $modes = EnrollmentMode::active()->ordered()->get();
-        $fees = Fee::with(['prices' => fn ($query) => $query->active()->orderByDesc('start_date')])
+        // Scoped to the same FeePrice::sellable() rules InvoiceCalculationService
+        // resolves by, and to the academic years this screen actually offers —
+        // a stale prior-year or inactive/expired price must never appear as if
+        // it were an available tariff (grade_group/payment_period dropdowns,
+        // and the per-service availability gating below, both read from this).
+        $academicYearIds = $academicYears->pluck('id');
+        $fees = Fee::with(['prices' => fn ($query) => $query
+                ->sellable()
+                ->whereIn('academic_year_id', $academicYearIds)
+                ->orderByDesc('start_date')])
             ->active()->orderBy('category')->orderBy('name_ru')->get();
 
         return view('dashboard.quick-registration.create', [

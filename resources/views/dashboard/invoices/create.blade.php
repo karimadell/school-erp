@@ -195,18 +195,24 @@
                                    data-fee-id="{{ $foodFee->id }}"
                                    data-base-price="{{ $foodFee->amount ?? 0 }}">
 
-                            <input type="hidden" name="option_type[{{ $foodFee->id }}]" value="food_type">
+                            {{-- Canonical food dimension: option_type='meal_plan', option_value=<meal_plans.id>
+                                 — the same convention InvoiceCalculationService resolves by and Quick
+                                 Registration already sends. Options are read from the real MealPlan
+                                 catalog, not a hardcoded enum, so this list can never offer a plan that
+                                 doesn't exist. --}}
+                            <input type="hidden" name="option_type[{{ $foodFee->id }}]" value="meal_plan">
 
                             <select name="option_value[{{ $foodFee->id }}]"
                                     id="food-option"
                                     class="form-select">
                                 <option value="">{{ __('invoices.no_food') ?? 'Без питания' }}</option>
-                                <option value="daily">Ежедневно</option>
-                                <option value="weekly">Еженедельно</option>
-                                <option value="monthly">Ежемесячно</option>
-                                <option value="full_day">Полный день</option>
-                                <option value="half_day">Половина дня</option>
+                                @foreach($mealPlans as $plan)
+                                    <option value="{{ $plan->id }}">{{ $plan->name_ru }}</option>
+                                @endforeach
                             </select>
+                            @if($mealPlans->isEmpty())
+                                <div class="form-text text-danger">Нет активных планов питания с настроенной ценой.</div>
+                            @endif
                         </div>
                     </div>
                 @endif
@@ -582,7 +588,7 @@
             }
 
             if (document.getElementById('food-checkbox') === cb) {
-                filters.option_type = 'food_type';
+                filters.option_type = 'meal_plan';
                 filters.option_value = document.getElementById('food-option')?.value || '';
             }
 

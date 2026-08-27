@@ -113,6 +113,20 @@ class FeePrice extends Model
             });
     }
 
+    /**
+     * The single shared "is this row actually chargeable right now" scope:
+     * active, EGP (the only currency InvoiceCalculationService ever bills
+     * in), and date-current. Every place that needs to know whether a fee
+     * has a usable tariff — the resolver itself, the classic Invoice
+     * Create preview payload, and Quick Registration's availability
+     * gating — composes this scope instead of re-deriving it, so they
+     * cannot silently drift from each other again.
+     */
+    public function scopeSellable($query, $date = null)
+    {
+        return $query->active()->current($date)->where('currency', 'EGP');
+    }
+
     public function status(?string $date = null): string
     {
         $date = \Illuminate\Support\Carbon::parse($date ?? now()->toDateString());

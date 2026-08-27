@@ -13,6 +13,7 @@ use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoicePayment;
+use App\Models\MealPlan;
 use App\Models\Student;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoicePaymentService;
@@ -60,6 +61,7 @@ class InvoiceController extends Controller
             'cashAccounts' => CashAccount::excludingOwner()->orderBy('name')->get(),
             'grades' => Grade::ordered()->get(),
             'fees' => $fees,
+            'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
             'priceRows' => $this->currentPriceRows($fees, $academicYears),
         ]);
     }
@@ -74,10 +76,10 @@ class InvoiceController extends Controller
      * paying "the full amount" as the (wrong) preview showed it then had
      * their submission rejected by the server's own overpayment guard —
      * this is the exact "invoice did not save" UAT symptom. Filtering by
-     * the same FeePrice::active()/current() scopes already used
-     * elsewhere in this codebase, restricted to the academic years this
-     * screen actually offers, and sorted to match
-     * InvoiceCalculationService::resolvePrice()'s own tie-break
+     * the same FeePrice::sellable() scope InvoiceCalculationService's own
+     * resolver query now composes (active, EGP, date-current), restricted
+     * to the academic years this screen actually offers, and sorted to
+     * match InvoiceCalculationService::resolvePrice()'s own tie-break
      * (start_date desc, id desc) closes that gap without duplicating its
      * more elaborate grade/enrollment-mode fallback matching.
      *
@@ -90,8 +92,7 @@ class InvoiceController extends Controller
         $prices = FeePrice::query()
             ->whereIn('fee_id', $fees->pluck('id'))
             ->whereIn('academic_year_id', $academicYears->pluck('id'))
-            ->active()
-            ->current()
+            ->sellable()
             ->orderByDesc('start_date')
             ->orderByDesc('id')
             ->get();
@@ -211,54 +212,6 @@ class InvoiceController extends Controller
         return redirect()
             ->route('dashboard.invoices.print', $invoice)
             ->with('success', 'Счёт успешно создан. Все суммы рассчитаны в EGP.');
-    }
-
-    private function resolveFeeAmount(Fee $fee, ?Request $request = null): float
-    {
-        if (! $request) {
-            return (float) ($fee->amount ?? $fee->base_price ?? 0);
-        }
-
-        $date = now()->toDateString();
-
-        if (method_exists($fee, 'prices')) {
-            $query = $fee->prices()
-                ->where('start_date', '<=', $date)
-                ->where(function ($q) use ($date) {
-                    $q->whereNull('end_date')->orWhere('end_date', '>=', $date);
-                });
-
-            if (Schema::hasColumn('fee_prices', 'is_active')) {
-                $query->where('is_active', 1);
-            }
-
-            $filters = [
-                'grade_group' => $request->input("grade_group.{$fee->id}"),
-                'payment_period' => $request->input("payment_period.{$fee->id}"),
-                'size' => $request->input("uniform_size.{$fee->id}"),
-                'item' => $request->input("uniform_item.{$fee->id}"),
-                'option_type' => $request->input("option_type.{$fee->id}"),
-                'option_value' => $request->input("option_value.{$fee->id}"),
-            ];
-
-            foreach ($filters as $column => $value) {
-                if (filled($value) && Schema::hasColumn('fee_prices', $column)) {
-                    $query->where($column, $value);
-                }
-            }
-
-            $price = $query->orderByDesc('start_date')->first();
-
-            if ($price) {
-                return (float) $price->amount;
-            }
-        }
-
-        if (method_exists($fee, 'priceForDate')) {
-            return (float) $fee->priceForDate($date);
-        }
-
-        return (float) ($fee->amount ?? $fee->base_price ?? 0);
     }
 
     public function show(Invoice $invoice): View

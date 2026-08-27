@@ -3,7 +3,9 @@
 namespace App\Http\Requests;
 
 use App\Models\AcademicYear;
+use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Models\MealPlan;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -31,6 +33,27 @@ class StoreFinanceTariffRequest extends FormRequest
     {
         return [function (Validator $validator): void {
             if ($validator->errors()->isNotEmpty()) return;
+
+            // Canonical dimension contract: transport is always priced by
+            // option_type='zone', food always by option_type='meal_plan'
+            // with option_value pointing at a real, active MealPlan. This
+            // is enforced here — not just defaulted in the admin UI — so a
+            // direct request can't silently create a tariff no consumer
+            // will ever be able to resolve.
+            $fee = Fee::find($this->integer('fee_id'));
+            if ($fee?->category === Fee::CATEGORY_TRANSPORT && $this->filled('option_type') && $this->input('option_type') !== 'zone') {
+                $validator->errors()->add('option_type', 'Для транспорта параметр option_type должен быть «zone».');
+            }
+            if ($fee?->category === Fee::CATEGORY_FOOD) {
+                if ($this->filled('option_type') && $this->input('option_type') !== 'meal_plan') {
+                    $validator->errors()->add('option_type', 'Для питания параметр option_type должен быть «meal_plan».');
+                }
+                if ($this->filled('option_value') && ! MealPlan::query()->whereKey($this->input('option_value'))->exists()) {
+                    $validator->errors()->add('option_value', 'Выбранный план питания не найден.');
+                }
+            }
+            if ($validator->errors()->isNotEmpty()) return;
+
             $year = AcademicYear::find($this->integer('academic_year_id'));
             $start = $this->date('start_date'); $end = $this->filled('end_date') ? $this->date('end_date') : null;
             if (! $year || $start->gt($year->end_date) || ($end && $end->gt($year->end_date))) {

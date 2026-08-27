@@ -5,6 +5,7 @@ namespace App\Services\Finance;
 use App\Models\AcademicYear;
 use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Models\MealPlan;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -12,6 +13,18 @@ class SchoolPriceListImportService
 {
     public const YEAR = '2025/2026';
     public const REASON = 'Первоначальный импорт прайс-листа 2025/2026';
+
+    /**
+     * Canonical FeePrice.option_type values. Every producer (this importer,
+     * the admin tariff-creation screens) and every consumer (Quick
+     * Registration, InvoiceCalculationService) must agree on these two
+     * strings — a prior version of this importer used 'Район' for
+     * transport, which no consumer ever queried by, silently making every
+     * imported transport tariff unresolvable.
+     */
+    public const TRANSPORT_ZONE_OPTION_TYPE = 'zone';
+
+    public const MEAL_PLAN_OPTION_TYPE = 'meal_plan';
 
     /** @return array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} */
     public function import(bool $dryRun = false): array
@@ -100,7 +113,7 @@ class SchoolPriceListImportService
                         continue;
                     }
 
-                    FeePrice::create($attributes);
+                    FeePrice::create(collect($attributes)->except('option_label')->all());
                     $result['tariffs_created']++;
                 }
             }
@@ -126,8 +139,8 @@ class SchoolPriceListImportService
             ]))],
             ['name' => 'Трансфер', 'category' => Fee::CATEGORY_TRANSPORT, 'type' => 'service', 'service_period' => null, 'tariffs' => $tariffs($this->optionPeriodVariants([
                 'Каусер, Мубарак 2, Интерконтиненталь' => ['13500.00', '1500.00'], 'Арабия, Мадарес, Шератон' => ['16200.00', '1800.00'], 'Мубарак 7, Эль-Хеляль, Эль-Ахья' => ['19800.00', '2200.00'],
-            ], 'Район'))],
-            ['name' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'type' => 'service', 'service_period' => Fee::PERIOD_DAILY, 'tariffs' => $tariffs(array_map(fn ($item, $amount) => ['amount' => $amount, 'payment_period' => Fee::PERIOD_DAILY, 'item' => $item], array_keys($meals = ['Комплексное питание' => '170.00', 'Завтрак' => '70.00', 'Обед' => '100.00', 'Суп' => '20.00', 'Второе блюдо' => '80.00', 'Напиток' => '10.00']), array_values($meals)))],
+            ], self::TRANSPORT_ZONE_OPTION_TYPE))],
+            ['name' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'type' => 'service', 'service_period' => Fee::PERIOD_DAILY, 'tariffs' => $tariffs($this->mealPlanTariffs())],
             ['name' => 'Экстернат', 'category' => Fee::CATEGORY_TUITION_EXTERNAL, 'type' => 'service', 'service_period' => null, 'tariffs' => $tariffs($this->periodVariants(['1–4 классы' => ['25600.00', '3200.00']]))],
             ['name' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM, 'type' => 'service', 'service_period' => Fee::PERIOD_PACKAGE, 'description' => 'Комплект: 2 майки + 1 поло + 1 толстовка', 'tariffs' => $tariffs($this->uniformVariants())],
         ];
@@ -155,6 +168,44 @@ class SchoolPriceListImportService
         return $rows;
     }
 
+    /**
+     * Food is priced per MealPlan — the real domain entity a student's
+     * food subscription is recorded against (MealSubscription.meal_plan_id),
+     * and the same convention Quick Registration already resolves prices
+     * by (option_type='meal_plan', option_value=<meal_plan id>). The
+     * three plans below are subscription-shaped (a daily meal_type over a
+     * period), matching what MealPlan actually models; the previous
+     * catalog's a-la-carte add-ons (soup, second course, a drink) don't
+     * fit that shape and are intentionally dropped rather than forced
+     * into a MealPlan record — a future a-la-carte extras category would
+     * need its own dimension, out of scope here.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function mealPlanTariffs(): array
+    {
+        $plans = [
+            ['name' => 'Комплексное питание', 'meal_type' => MealPlan::TYPE_BOTH, 'amount' => '170.00'],
+            ['name' => 'Завтрак', 'meal_type' => MealPlan::TYPE_BREAKFAST, 'amount' => '70.00'],
+            ['name' => 'Обед', 'meal_type' => MealPlan::TYPE_LUNCH, 'amount' => '100.00'],
+        ];
+
+        return array_map(function (array $definition): array {
+            $plan = MealPlan::firstOrCreate(
+                ['name_ru' => $definition['name']],
+                ['meal_type' => $definition['meal_type'], 'period' => MealPlan::PERIOD_DAILY, 'price' => $definition['amount'], 'is_active' => true],
+            );
+
+            return [
+                'amount' => $definition['amount'],
+                'payment_period' => Fee::PERIOD_DAILY,
+                'option_type' => self::MEAL_PLAN_OPTION_TYPE,
+                'option_value' => (string) $plan->id,
+                'option_label' => $definition['name'],
+            ];
+        }, $plans);
+    }
+
     private function uniformVariants(): array
     {
         $groups = [
@@ -174,6 +225,8 @@ class SchoolPriceListImportService
     /** @param array<string,mixed> $attributes */
     private function variantLabel(array $attributes): string
     {
-        return implode(', ', array_filter([$attributes['grade_group'], $attributes['payment_period'], $attributes['option_value'], $attributes['item'], $attributes['size']])) ?: 'общий';
+        $optionLabel = $attributes['option_label'] ?? $attributes['option_value'] ?? null;
+
+        return implode(', ', array_filter([$attributes['grade_group'], $attributes['payment_period'], $optionLabel, $attributes['item'], $attributes['size']])) ?: 'общий';
     }
 }

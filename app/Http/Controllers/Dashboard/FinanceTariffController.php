@@ -8,6 +8,7 @@ use App\Models\AcademicYear;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
+use App\Models\MealPlan;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -35,7 +36,7 @@ class FinanceTariffController extends Controller
 
     public function create(Request $request): View
     {
-        return view('dashboard.finance.tariffs.create', ['services' => Fee::active()->orderBy('name_ru')->get(), 'years' => AcademicYear::orderByDesc('start_date')->get(), 'grades' => Grade::ordered()->get(), 'selectedFeeId' => $request->integer('fee_id') ?: null]);
+        return view('dashboard.finance.tariffs.create', ['services' => Fee::active()->orderBy('name_ru')->get(), 'years' => AcademicYear::orderByDesc('start_date')->get(), 'grades' => Grade::ordered()->get(), 'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(), 'selectedFeeId' => $request->integer('fee_id') ?: null]);
     }
 
     public function store(StoreFinanceTariffRequest $request): RedirectResponse

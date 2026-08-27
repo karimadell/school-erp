@@ -124,7 +124,7 @@ class AcademicYearPriceListPdfTest extends TestCase
         $uniform = $this->fee('Школьная форма', Fee::CATEGORY_UNIFORM);
         $this->price($tuition, '40500.00', ['grade_group' => '1–4 классы', 'payment_period' => 'yearly']);
         $this->price($tuition, '4500.00', ['grade_group' => '1–4 классы', 'payment_period' => 'monthly']);
-        $this->price($transport, '1500.00', ['option_type' => 'Район', 'option_value' => 'Каусер', 'payment_period' => 'monthly']);
+        $this->price($transport, '1500.00', ['option_type' => 'zone', 'option_value' => 'Каусер', 'payment_period' => 'monthly']);
         $this->price($food, '170.00', ['item' => 'Комплексное питание', 'payment_period' => 'daily']);
         $this->price($uniform, '1200.00', ['item' => 'Толстовка', 'size' => '12–16', 'payment_period' => 'once']);
 

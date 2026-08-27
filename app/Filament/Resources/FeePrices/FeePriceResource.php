@@ -7,6 +7,7 @@ use App\Models\AcademicYear;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
+use App\Models\MealPlan;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
@@ -61,8 +62,18 @@ class FeePriceResource extends Resource
                 ->visible(fn (Get $get): bool => self::category($get('fee_id')) === Fee::CATEGORY_TRANSPORT)->dehydratedWhenHidden(false),
             TextInput::make('option_value')->label(__('finance_uat.transport_zone'))->maxLength(150)
                 ->visible(fn (Get $get): bool => self::category($get('fee_id')) === Fee::CATEGORY_TRANSPORT)->dehydratedWhenHidden(false),
-            TextInput::make('item')->label(fn (Get $get): string => self::category($get('fee_id')) === Fee::CATEGORY_FOOD ? __('finance_uat.meal_item') : __('finance_uat.uniform_item'))->maxLength(100)
-                ->visible(fn (Get $get): bool => in_array(self::category($get('fee_id')), [Fee::CATEGORY_FOOD, Fee::CATEGORY_UNIFORM], true))->dehydratedWhenHidden(false),
+            // Food is priced per MealPlan — the same domain entity Quick
+            // Registration already resolves prices by (option_type='meal_plan',
+            // option_value=<meal_plans.id>). A free-text field here would let an
+            // admin create a tariff no consumer can ever match.
+            Hidden::make('option_type')->default('meal_plan')
+                ->visible(fn (Get $get): bool => self::category($get('fee_id')) === Fee::CATEGORY_FOOD)->dehydratedWhenHidden(false),
+            Select::make('option_value')->label(__('finance_uat.meal_item'))
+                ->options(fn () => MealPlan::query()->active()->orderBy('name_ru')->pluck('name_ru', 'id'))
+                ->visible(fn (Get $get): bool => self::category($get('fee_id')) === Fee::CATEGORY_FOOD)
+                ->dehydratedWhenHidden(false)->searchable(),
+            TextInput::make('item')->label(__('finance_uat.uniform_item'))->maxLength(100)
+                ->visible(fn (Get $get): bool => self::category($get('fee_id')) === Fee::CATEGORY_UNIFORM)->dehydratedWhenHidden(false),
             TextInput::make('size')->label(__('finance_uat.uniform_size'))->maxLength(50)
                 ->visible(fn (Get $get): bool => self::category($get('fee_id')) === Fee::CATEGORY_UNIFORM)->dehydratedWhenHidden(false),
             TextInput::make('notes')->label('Примечание')->maxLength(1000),

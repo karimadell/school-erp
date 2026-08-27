@@ -242,8 +242,21 @@ document.addEventListener('DOMContentLoaded', () => {
             method: 'POST', body, headers: { Accept: 'application/json' },
         });
         if (!response.ok) {
-            totalEl.textContent = 'Тариф не настроен';
-            validityEl.textContent = 'На выбранную дату тариф не настроен.';
+            // Surface the resolver's own validation message when available
+            // (e.g. "Нет тарифа для выбранной зоны") instead of a generic
+            // string; never display anything from a non-422 response.
+            let message = 'Тариф не настроен.';
+            if (response.status === 422) {
+                try {
+                    const problem = await response.json();
+                    const firstError = Object.values(problem.errors || {})[0]?.[0];
+                    if (firstError) message = firstError;
+                } catch (e) { /* keep the generic fallback */ }
+            } else {
+                message = 'Не удалось рассчитать тариф. Попробуйте ещё раз.';
+            }
+            totalEl.textContent = message;
+            validityEl.textContent = message;
             submit.disabled = true;
             return;
         }

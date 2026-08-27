@@ -14,6 +14,27 @@
     $oldServices = collect(old('services', []))->keyBy(fn ($service) => (string) ($service['fee_id'] ?? ''));
     $configurationReady = $academicYears->isNotEmpty() && $modes->isNotEmpty() && $fees->isNotEmpty();
     $periodLabels = ['once' => 'Разово', 'daily' => 'Ежедневно', 'monthly' => 'Ежемесячно', 'quarterly' => 'Ежеквартально', 'term' => 'За семестр', 'yearly' => 'За год', 'package' => 'Пакет'];
+
+    // Minimum safe availability gating (full readiness dashboard is a later
+    // phase): a service whose category needs a dimensioned tariff is only
+    // selectable when $fee->prices (already scoped to FeePrice::sellable()
+    // for the active academic year — see QuickStudentRegistrationController::create())
+    // actually contains a row using the canonical dimension for that
+    // category. This reads the SAME data the price-preview endpoint
+    // resolves from, so it cannot drift from what submitting would do.
+    $serviceIsAvailable = fn ($fee) => match ($fee->category) {
+        'transport' => $fee->prices->where('option_type', 'zone')->isNotEmpty(),
+        'food' => $fee->prices->where('option_type', 'meal_plan')->isNotEmpty(),
+        'uniform' => $fee->prices->whereNotNull('item')->whereNotNull('size')->isNotEmpty(),
+        default => true,
+    };
+    $unavailableReason = fn ($fee) => match ($fee->category) {
+        'transport' => 'Нет тарифа ни для одной транспортной зоны на выбранный учебный год.',
+        'food' => 'Нет активного плана питания с настроенной ценой.',
+        'uniform' => 'Нет доступных тарифов на школьную форму.',
+        default => null,
+    };
+    $installmentsAvailable = $paymentPlans->isNotEmpty();
 @endphp
 <div class="container-fluid py-4">
     <ul class="nav nav-pills mb-4" role="tablist">
@@ -68,12 +89,19 @@
                 @foreach($groups as $groupKey => $group)
                     <h5 class="mt-3 mb-3">{{ $group['title'] }}</h5>
                     @forelse($group['fees'] as $fee)
-                        @php $index = $fees->search(fn ($candidate) => $candidate->id === $fee->id); $oldService = $oldServices->get((string) $fee->id, []); @endphp
-                        <div class="service-row border rounded p-3 mb-3" data-service-row data-fee-id="{{ $fee->id }}" data-name="{{ $fee->name_ru }}">
+                        @php
+                            $index = $fees->search(fn ($candidate) => $candidate->id === $fee->id);
+                            $oldService = $oldServices->get((string) $fee->id, []);
+                            $available = $serviceIsAvailable($fee);
+                        @endphp
+                        <div class="service-row border rounded p-3 mb-3 {{ $available ? '' : 'opacity-75' }}" data-service-row data-fee-id="{{ $fee->id }}" data-name="{{ $fee->name_ru }}">
                             <div class="form-check">
-                                <input class="form-check-input service-toggle" type="checkbox" name="services[{{ $index }}][fee_id]" value="{{ $fee->id }}" id="fee-{{ $fee->id }}" @checked($oldService !== [])>
+                                <input class="form-check-input service-toggle" type="checkbox" name="services[{{ $index }}][fee_id]" value="{{ $fee->id }}" id="fee-{{ $fee->id }}" @checked($oldService !== []) @disabled(!$available)>
                                 <label class="form-check-label fw-bold" for="fee-{{ $fee->id }}">{{ $fee->name_ru }} — {{ $fee->prices->isNotEmpty() ? 'цена определяется по выбранным параметрам' : number_format($fee->current_amount, 2, '.', '').' EGP' }}</label>
                             </div>
+                            @unless($available)
+                                <div class="text-danger small mt-1">{{ $unavailableReason($fee) }}</div>
+                            @endunless
                             <div class="service-fields row g-3 mt-1 d-none">
                                 @if($groupKey !== 'uniform')<input type="hidden" name="services[{{ $index }}][quantity]" value="1" class="quantity">@endif
                                 @if($groupKey === 'tuition')
@@ -166,19 +194,32 @@ async function updateRow(row) {
     const mealPlan = row.querySelector('[name$="[meal_plan_id]"]'); if (mealPlan?.value) body.append('meal_plan_id', mealPlan.value);
     const product = row.querySelector('.uniform-product')?.selectedOptions[0]; if (product?.value) { body.append('item', product.dataset.item); body.append('size', product.dataset.size); }
 
-    let unit = null, total = null;
+    let unit = null, total = null, errorMessage = 'Тариф не настроен.';
     const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {'Accept': 'application/json'}});
     let tariffPeriod = '';
     if (response.ok) {
         const result = await response.json(); unit = Number(result.unit_price); total = Number(result.amount);
         const displayDate = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU') : null;
         if (result.valid_from) tariffPeriod = `Действует с ${displayDate(result.valid_from)}${result.valid_to ? ` по ${displayDate(result.valid_to)}` : ''}`;
+    } else if (response.status === 422) {
+        // Surface InvoiceCalculationService's own validation message
+        // (e.g. "Для услуги «Транспорт» выберите все параметры тарифа.")
+        // instead of a generic string, so the reason is actionable. Never
+        // display anything from a non-422 response — that could be a
+        // framework/server error message, not a validation reason.
+        try {
+            const problem = await response.json();
+            const firstError = Object.values(problem.errors || {})[0]?.[0];
+            if (firstError) errorMessage = firstError;
+        } catch (e) { /* keep the generic fallback */ }
+    } else {
+        errorMessage = 'Не удалось рассчитать тариф. Попробуйте ещё раз.';
     }
     if (unit === null || total === null) {
-        row.querySelector('.resolved-unit').textContent = 'Тариф не настроен.';
+        row.querySelector('.resolved-unit').textContent = errorMessage;
         row.querySelector('.resolved-total').textContent = '—';
         row.querySelector('.remaining').textContent = '—';
-        row.querySelector('.tariff-period').textContent = 'На выбранную дату тариф не настроен.';
+        row.querySelector('.tariff-period').textContent = errorMessage;
         row.dataset.pricingAvailable = 'false';
         row.dataset.total = row.dataset.paid = row.dataset.remaining = '0';
         updateSummary();

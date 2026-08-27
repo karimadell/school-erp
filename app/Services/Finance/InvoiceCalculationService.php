@@ -179,11 +179,8 @@ class InvoiceCalculationService
 
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
-            ->where('is_active', true)
-            ->when($academicYearId, fn ($query) => $query->where('academic_year_id', $academicYearId))
-            ->where('currency', self::CURRENCY)
-            ->whereDate('start_date', '<=', $date)
-            ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $date));
+            ->sellable($date)
+            ->when($academicYearId, fn ($query) => $query->where('academic_year_id', $academicYearId));
 
         $gradeGroup = $selection['grade_group'] ?? $this->gradeGroupFor($selection['grade_id'] ?? null);
         if (filled($selection['grade_group'] ?? null)) {

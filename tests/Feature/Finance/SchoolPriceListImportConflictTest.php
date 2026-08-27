@@ -30,6 +30,6 @@ class SchoolPriceListImportConflictTest extends TestCase
         $this->assertSame('41000.00', $manual->fresh()->amount);
         $this->assertSame('Ручная цена директора', $manual->fresh()->change_reason);
         $this->assertDatabaseMissing('fee_prices', ['fee_id' => $fee->id, 'grade_group' => '1–4 классы', 'payment_period' => 'yearly', 'amount' => '40500.00']);
-        $this->assertSame(36, $result['tariffs_created']);
+        $this->assertSame(33, $result['tariffs_created']);
     }
 }

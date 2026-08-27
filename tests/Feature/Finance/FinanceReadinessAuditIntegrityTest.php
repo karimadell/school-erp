@@ -150,6 +150,64 @@ class FinanceReadinessAuditIntegrityTest extends TestCase
         $this->assertMatchesRegularExpression('/tuition\s*\|.*READY/i', $output);
     }
 
+    public function test_section_m_required_action_names_master_data_not_a_new_fee_price_for_transport(): void
+    {
+        $transport = Fee::create(['name_ru' => 'Транспорт', 'category' => Fee::CATEGORY_TRANSPORT, 'amount' => '500.00', 'is_active' => true]);
+        $this->price($transport, ['option_type' => 'zone', 'option_value' => 'Зона 1']);
+        // Deliberately zero transport_routes rows.
+
+        $exitCode = Artisan::call('finance:readiness-audit', ['--year' => '2026/2027']);
+        $output = Artisan::output();
+
+        $this->assertSame(0, $exitCode);
+        $this->assertStringContainsString('Create at least one transport_routes row (master data', $output);
+        $this->assertStringNotContainsString('Add a transport FeePrice with option_type=zone', $output);
+    }
+
+    public function test_section_m_required_action_names_master_data_not_a_new_fee_price_for_food(): void
+    {
+        $food = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '300.00', 'is_active' => true]);
+        $this->price($food, ['option_type' => 'meal_plan', 'option_value' => 'Напиток']);
+        // Pricing exists (legacy textual value) but zero MealPlan rows.
+
+        $exitCode = Artisan::call('finance:readiness-audit', ['--year' => '2026/2027']);
+        $output = Artisan::output();
+
+        $this->assertSame(0, $exitCode);
+        $this->assertStringContainsString('Create MealPlan row(s) and update the existing Food FeePrice.option_value', $output);
+        $this->assertStringNotContainsString('Add a food FeePrice with option_type=meal_plan', $output);
+    }
+
+    public function test_section_m_required_action_names_master_data_not_a_new_fee_price_for_uniform(): void
+    {
+        $uniform = Fee::create(['name_ru' => 'Футболка', 'category' => Fee::CATEGORY_UNIFORM, 'amount' => '200.00', 'is_active' => true]);
+        $this->price($uniform, ['item' => 'Футболка', 'size' => 'M']);
+        // Pricing exists but zero uniform_products rows.
+
+        $exitCode = Artisan::call('finance:readiness-audit', ['--year' => '2026/2027']);
+        $output = Artisan::output();
+
+        $this->assertSame(0, $exitCode);
+        $this->assertStringContainsString('Create active uniform_products row(s) matching the existing FeePrice', $output);
+        $this->assertStringNotContainsString('Add a uniform FeePrice with item+size', $output);
+    }
+
+    public function test_section_m_required_action_still_asks_for_a_fee_price_when_none_exists_at_all(): void
+    {
+        Fee::create(['name_ru' => 'Транспорт', 'category' => Fee::CATEGORY_TRANSPORT, 'amount' => '500.00', 'is_active' => true]);
+        Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '300.00', 'is_active' => true]);
+        Fee::create(['name_ru' => 'Футболка', 'category' => Fee::CATEGORY_UNIFORM, 'amount' => '200.00', 'is_active' => true]);
+        // Zero FeePrice rows for any of them.
+
+        $exitCode = Artisan::call('finance:readiness-audit', ['--year' => '2026/2027']);
+        $output = Artisan::output();
+
+        $this->assertSame(0, $exitCode);
+        $this->assertStringContainsString('Create a transport FeePrice with option_type=zone (no zone tariff exists at all yet)', $output);
+        $this->assertStringContainsString('Create a food FeePrice with option_type=meal_plan (no Food tariff exists at all yet)', $output);
+        $this->assertStringContainsString('Create a uniform FeePrice with item+size (no Uniform tariff exists at all yet)', $output);
+    }
+
     public function test_the_audit_completes_read_only_with_all_gaps_present_simultaneously(): void
     {
         $food = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '300.00', 'is_active' => true]);

@@ -143,7 +143,7 @@ class FinanceReadinessAudit extends Command
         $readinessByCategory = $this->sectionL($year);
 
         // ----- M. Final readiness matrix -------------------------------------------
-        $this->sectionM($year, $grades, $classified, $readinessByCategory);
+        $this->sectionM($year, $grades, $classified, $readinessByCategory, $fees);
 
         $this->newLine();
         $this->components->info('Audit complete. No data was created, updated, or deleted.');
@@ -627,7 +627,7 @@ class FinanceReadinessAudit extends Command
     // =====================================================================
     // M
     // =====================================================================
-    private function sectionM(AcademicYear $year, Collection $grades, Collection $classified, array $readiness): void
+    private function sectionM(AcademicYear $year, Collection $grades, Collection $classified, array $readiness, Collection $fees): void
     {
         $this->header('M. Final readiness matrix');
 
@@ -650,9 +650,9 @@ class FinanceReadinessAudit extends Command
             ['Registration', $readiness['registration']['ready'] ? 'READY' : 'MISSING', $readiness['registration']['reason'], $readiness['registration']['ready'] ? null : 'Create registration Fee + FeePrice'],
             ['Tuition', $sellableGrades->count() === $grades->count() && $grades->isNotEmpty() ? 'READY' : ($sellableGrades->isNotEmpty() ? 'PARTIAL' : 'MISSING'), $sellableGrades->count().' of '.$grades->count().' active grades sellable (ordinary tuition only — see F)', $sellableGrades->count() < $grades->count() ? 'Add tuition FeePrice for the remaining grades' : null],
             ['Externat', $readiness['tuition_external']['ready'] ? ($sellableExternatGrades->count() === $grades->count() ? 'READY' : 'PARTIAL') : 'NOT REQUIRED FOR BASE TEST', $readiness['tuition_external']['ready'] ? $sellableExternatGrades->count().' of '.$grades->count().' active grades sellable — see F2' : $readiness['tuition_external']['reason'], null],
-            ['Transport', $readiness['transport']['ready'] ? 'READY' : 'PARTIAL/MISSING — see G', $readiness['transport']['reason'], $readiness['transport']['ready'] ? null : 'Add a transport FeePrice with option_type=zone'],
-            ['Food', $readiness['food']['ready'] ? 'READY' : 'PARTIAL/MISSING — see H', $readiness['food']['reason'], $readiness['food']['ready'] ? null : 'Add a food FeePrice with option_type=meal_plan'],
-            ['Uniform', $readiness['uniform']['ready'] ? 'READY' : 'PARTIAL/MISSING — see I', $readiness['uniform']['reason'], $readiness['uniform']['ready'] ? null : 'Add a uniform FeePrice with item+size'],
+            ['Transport', $readiness['transport']['ready'] ? 'READY' : 'PARTIAL/MISSING — see G', $readiness['transport']['reason'], $this->transportRequiredAction($readiness['transport'])],
+            ['Food', $readiness['food']['ready'] ? 'READY' : 'PARTIAL/MISSING — see H', $readiness['food']['reason'], $this->foodRequiredAction($readiness['food'], $fees)],
+            ['Uniform', $readiness['uniform']['ready'] ? 'READY' : 'PARTIAL/MISSING — see I', $readiness['uniform']['reason'], $this->uniformRequiredAction($readiness['uniform'], $fees)],
             ['Extra services', 'NOT REQUIRED FOR BASE TEST', null, null],
             ['Installment plans', $readiness['installments']['ready'] ? 'READY' : 'MISSING', $readiness['installments']['reason'], $readiness['installments']['ready'] ? null : 'Create at least one active PaymentPlan'],
             ['Operating cash', CashAccount::operating() ? 'READY' : 'MISSING', null, CashAccount::operating() ? null : 'Run the canonical cash-accounts migration/backfill'],
@@ -660,6 +660,49 @@ class FinanceReadinessAudit extends Command
             ['InstaPay', CashAccount::instapay() ? 'READY' : 'MISSING', null, CashAccount::instapay() ? null : 'Configure an instapay CashAccount role'],
         ];
         $this->table(['COMPONENT', 'STATUS', 'BLOCKER', 'REQUIRED ACTION'], $rows);
+    }
+
+    /**
+     * Phase 4B: the REQUIRED ACTION column must name the actual master-data
+     * gap. Pricing readiness is frequently already correct — the missing
+     * piece is a catalog row (transport_routes / MealPlan / uniform_products)
+     * or the link between an existing tariff and that catalog row, never a
+     * new FeePrice, and the wording must not suggest otherwise.
+     */
+    private function transportRequiredAction(array $transportReadiness): ?string
+    {
+        if ($transportReadiness['ready']) {
+            return null;
+        }
+
+        return str_contains((string) $transportReadiness['reason'], 'ROUTE METADATA MISSING')
+            ? 'Create at least one transport_routes row (master data — name/driver/bus; route is metadata, not a FeePrice change)'
+            : 'Create a transport FeePrice with option_type=zone (no zone tariff exists at all yet)';
+    }
+
+    private function foodRequiredAction(array $foodReadiness, Collection $fees): ?string
+    {
+        if ($foodReadiness['ready']) {
+            return null;
+        }
+        $hasFoodPricing = FeePrice::whereIn('fee_id', $fees->where('category', Fee::CATEGORY_FOOD)->pluck('id'))->exists();
+
+        return $hasFoodPricing
+            ? 'Create MealPlan row(s) and update the existing Food FeePrice.option_value to the matching numeric MealPlan id (master-data creation + linking — not a new FeePrice)'
+            : 'Create a food FeePrice with option_type=meal_plan (no Food tariff exists at all yet)';
+    }
+
+    private function uniformRequiredAction(array $uniformReadiness, Collection $fees): ?string
+    {
+        if ($uniformReadiness['ready']) {
+            return null;
+        }
+        $hasUniformPricing = FeePrice::whereIn('fee_id', $fees->where('category', Fee::CATEGORY_UNIFORM)->pluck('id'))
+            ->whereNotNull('item')->whereNotNull('size')->exists();
+
+        return $hasUniformPricing
+            ? 'Create active uniform_products row(s) matching the existing FeePrice item+size combinations (master-data creation — not a new FeePrice)'
+            : 'Create a uniform FeePrice with item+size (no Uniform tariff exists at all yet)';
     }
 
     private function header(string $title): void

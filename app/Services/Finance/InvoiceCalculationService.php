@@ -45,6 +45,14 @@ class InvoiceCalculationService
 
         $lines = [];
         $subtotal = '0.00';
+        // Perf (504 investigation, 2026-08-29): every line item in one Quick
+        // Registration/invoice submission shares the same enrollment_mode_id
+        // — resolvePrice() used to re-run EnrollmentMode::find() for it on
+        // every single line. Memoized per calculate() call only (never
+        // persisted beyond this request), so a mode change mid-request is
+        // still impossible to miss — enrollment_mode_id itself is immutable
+        // input for the whole call.
+        $modeCache = [];
 
         foreach ($items as $item) {
             $fee = $fees->get((int) $item['fee_id']);
@@ -61,7 +69,7 @@ class InvoiceCalculationService
                 ]);
             }
 
-            $resolvedPrice = $this->resolvePrice($fee, $item, $pricingDate, $academicYearId);
+            $resolvedPrice = $this->resolvePrice($fee, $item, $pricingDate, $academicYearId, $modeCache);
             $amount = $resolvedPrice['amount'];
             $quantity = (int) ($item['quantity'] ?? 1);
 
@@ -138,9 +146,14 @@ class InvoiceCalculationService
         ];
     }
 
-    /** @param array<string, mixed> $selection */
-    /** @return array{amount:string, valid_from:?string, valid_to:?string, metadata:array<string, mixed>} */
-    private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId): array
+    /**
+     * @param  array<string, mixed>  $selection
+     * @param  array<int, ?EnrollmentMode>  $modeCache  Keyed by enrollment_mode_id,
+     *         shared across every line item in the same calculate() call —
+     *         see the perf note at its call site.
+     * @return array{amount:string, valid_from:?string, valid_to:?string, metadata:array<string, mixed>}
+     */
+    private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId, array &$modeCache = []): array
     {
         if (filled($selection['fee_price_id'] ?? null)) {
             $price = FeePrice::query()->lockForUpdate()->find((int) $selection['fee_price_id']);
@@ -217,7 +230,8 @@ class InvoiceCalculationService
                 ? $query->where('option_type', $selection['option_type'])
                 : $query->whereNull('option_type');
         } elseif (filled($selection['enrollment_mode_id'] ?? null)) {
-            $mode = EnrollmentMode::find((int) $selection['enrollment_mode_id']);
+            $modeId = (int) $selection['enrollment_mode_id'];
+            $mode = array_key_exists($modeId, $modeCache) ? $modeCache[$modeId] : ($modeCache[$modeId] = EnrollmentMode::find($modeId));
             $modeTypes = ['enrollment_mode', 'Форма', 'Форма обучения'];
             $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->unique()->values();
             $hasModePrices = (clone $query)->whereIn('option_type', $modeTypes)->exists();

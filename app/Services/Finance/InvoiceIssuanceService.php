@@ -12,6 +12,7 @@ use App\Models\PaymentPlan;
 use App\Models\Student;
 use App\Models\User;
 use Closure;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
@@ -76,8 +77,20 @@ class InvoiceIssuanceService
                 throw ValidationException::withMessages(['fees' => 'Регистрационный взнос уже начислен ученику за этот учебный год.']);
             }
 
-            $items = collect($data['items'])->map(function (array $item) use ($enrollment) {
-                $fee = Fee::findOrFail($item['fee_id']);
+            // Perf (504 investigation, 2026-08-29): Fee was previously reloaded
+            // with a fresh findOrFail() per line item here, and again per line
+            // item in the post-creation loop below — 2 queries per line on top
+            // of InvoiceCalculationService's own batched fetch. One batched
+            // fetch, reused by both loops, removes that duplication without
+            // changing the not-found behaviour (still throws
+            // ModelNotFoundException for an unknown fee_id).
+            $feesById = Fee::whereIn('id', collect($data['items'])->pluck('fee_id')->unique())->get()->keyBy('id');
+            $resolveFee = function (int $feeId) use ($feesById): Fee {
+                return $feesById->get($feeId) ?? throw (new ModelNotFoundException())->setModel(Fee::class, [$feeId]);
+            };
+
+            $items = collect($data['items'])->map(function (array $item) use ($enrollment, $resolveFee) {
+                $fee = $resolveFee((int) $item['fee_id']);
                 if (in_array($fee->category, [Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR, Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL], true)
                     && blank($item['grade_group'] ?? null)) {
                     $item['grade_id'] = $enrollment->grade_id;
@@ -118,13 +131,29 @@ class InvoiceIssuanceService
                 'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
             ]);
 
+            // Perf (504 investigation, 2026-08-29): pre-load every active
+            // subscription for this enrollment once instead of one
+            // `->where('fee_id', ...)->first()` query per line item. Updated
+            // in-loop (not just read) so a fee_id repeated across two line
+            // items — same edge case the original per-item query handled —
+            // still sees the subscription created for the first occurrence.
+            $activeSubscriptionsByFee = $enrollment->serviceSubscriptions()->where('status', 'active')->get()->keyBy('fee_id');
+            // Batched into one attach() call after the loop when every line
+            // has a distinct fee_id (the overwhelming common case — the Quick
+            // Registration UI can't submit the same fee twice). If a caller's
+            // payload ever does repeat a fee_id, fall back to the original
+            // one-attach()-per-line behaviour so pivot rows are never
+            // silently collapsed.
+            $feePivotRows = [];
+            $hasDuplicateFeeLines = collect($calculation['line_items'])->pluck('fee_id')->duplicates()->isNotEmpty();
+
             foreach ($calculation['line_items'] as $line) {
                 $selection = collect($items)->firstWhere('fee_id', $line['fee_id']);
-                $fee = Fee::findOrFail($line['fee_id']);
-                $subscription = $enrollment->serviceSubscriptions()->where('fee_id', $line['fee_id'])->where('status', 'active')->first();
-                $subscriptionId = $subscription?->id;
+                $fee = $resolveFee((int) $line['fee_id']);
+                $subscriptionId = $activeSubscriptionsByFee->get($line['fee_id'])?->id;
                 if (! $subscriptionId && $subscriptionResolver) {
                     $subscriptionId = $subscriptionResolver($fee, $selection, $enrollment);
+                    $activeSubscriptionsByFee->put($line['fee_id'], (object) ['id' => $subscriptionId]);
                 }
                 InvoiceItem::create([
                     'invoice_id'=>$invoice->id, 'fee_id'=>$line['fee_id'], 'subscription_id'=>$subscriptionId,
@@ -135,10 +164,18 @@ class InvoiceIssuanceService
                         'pricing_date'=>$data['pricing_date'], 'tariff_valid_from'=>$line['tariff_valid_from'], 'tariff_valid_to'=>$line['tariff_valid_to'],
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
-                $invoice->fees()->attach($line['fee_id'], [
+                $pivotData = [
                     'amount'=>$line['amount'], 'item'=>$line['item'], 'size'=>$line['size'],
                     'option_type'=>$line['option_type'], 'option_value'=>$line['option_value'],
-                ]);
+                ];
+                if ($hasDuplicateFeeLines) {
+                    $invoice->fees()->attach($line['fee_id'], $pivotData);
+                } else {
+                    $feePivotRows[$line['fee_id']] = $pivotData;
+                }
+            }
+            if ($feePivotRows) {
+                $invoice->fees()->attach($feePivotRows);
             }
 
             if ($data['payment_type'] === 'plan') {

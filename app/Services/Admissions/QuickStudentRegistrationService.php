@@ -23,7 +23,9 @@ use App\Services\AcademicStructureService;
 use App\Services\StudentServiceSubscriptionService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class QuickStudentRegistrationService
@@ -41,7 +43,14 @@ class QuickStudentRegistrationService
     /** @return array{student: Student, enrollment: Enrollment, invoice: Invoice} */
     public function register(array $data, User $actor): array
     {
-        return DB::transaction(function () use ($data, $actor) {
+        // TEMP DIAGNOSTIC (504 investigation, 2026-08-28) — remove after test.
+        Log::info('quick_registration.checkpoint', [
+            'stage' => 'B_service_register_entry',
+            'trace_id' => Context::get('qr_trace_id'),
+            'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
+        ]);
+
+        $result = DB::transaction(function () use ($data, $actor) {
             $year = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
             if (! $year->is_active) {
                 throw ValidationException::withMessages(['academic_year_id' => 'Выбранный учебный год больше не активен.']);
@@ -64,6 +73,13 @@ class QuickStudentRegistrationService
             if (! $mode->is_active) {
                 throw ValidationException::withMessages(['enrollment_mode_id' => 'Выбранная форма обучения больше не активна.']);
             }
+
+            // TEMP DIAGNOSTIC — remove after test.
+            Log::info('quick_registration.checkpoint', [
+                'stage' => 'C_reference_locks_acquired',
+                'trace_id' => Context::get('qr_trace_id'),
+                'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
+            ]);
 
             $student = Student::create([
                 'last_name_ru' => $data['student_last_name_ru'],
@@ -90,6 +106,13 @@ class QuickStudentRegistrationService
                     'Быстрая предварительная регистрация. Личное дело не завершено.',
                     $data['notes'] ?? null,
                 ])->filter()->implode("\n"),
+            ]);
+
+            // TEMP DIAGNOSTIC — remove after test.
+            Log::info('quick_registration.checkpoint', [
+                'stage' => 'D_student_enrollment_created',
+                'trace_id' => Context::get('qr_trace_id'),
+                'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
             ]);
 
             $feesById = [];
@@ -247,6 +270,17 @@ class QuickStudentRegistrationService
 
             return compact('student', 'enrollment', 'invoice');
         });
+
+        // TEMP DIAGNOSTIC — remove after test. Runs after the outer
+        // transaction has committed (DB::transaction() only returns once
+        // the commit succeeds), so this timestamp marks checkpoint I.
+        Log::info('quick_registration.checkpoint', [
+            'stage' => 'I_after_commit',
+            'trace_id' => Context::get('qr_trace_id'),
+            'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
+        ]);
+
+        return $result;
     }
 
     private function metadata(Fee $fee, array $selection): array

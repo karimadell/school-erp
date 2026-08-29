@@ -14,9 +14,7 @@ use App\Models\User;
 use Closure;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
@@ -124,13 +122,6 @@ class InvoiceIssuanceService
             $invoice->invoice_number = Invoice::numberFor($invoice->id, $invoice->created_at->format('Y'));
             $invoice->save();
 
-            // TEMP DIAGNOSTIC (504 investigation, 2026-08-28) — remove after test.
-            Log::info('quick_registration.checkpoint', [
-                'stage' => 'E_invoice_row_created',
-                'trace_id' => Context::get('qr_trace_id'),
-                'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
-            ]);
-
             // Perf (504 investigation, 2026-08-29): pre-load every active
             // subscription for this enrollment once instead of one
             // `->where('fee_id', ...)->first()` query per line item. Updated
@@ -184,13 +175,6 @@ class InvoiceIssuanceService
             } else {
                 $this->plans->generateSingle($invoice, $data['due_date']);
             }
-
-            // TEMP DIAGNOSTIC — remove after test.
-            Log::info('quick_registration.checkpoint', [
-                'stage' => 'F_installments_subscriptions_generated',
-                'trace_id' => Context::get('qr_trace_id'),
-                'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
-            ]);
 
             AuditLog::create(['user_id'=>$actor->id,'action'=>'created','model'=>'Invoice','model_id'=>$invoice->id,'new_values'=>['invoice_number'=>$invoice->invoice_number,'total_amount'=>$invoice->total_amount],'ip'=>$ip,'user_agent'=>$userAgent]);
 

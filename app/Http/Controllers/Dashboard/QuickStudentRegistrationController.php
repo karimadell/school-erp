@@ -20,10 +20,7 @@ use App\Services\Finance\InvoiceCalculationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -122,23 +119,7 @@ class QuickStudentRegistrationController extends Controller
         StoreQuickStudentRegistrationRequest $request,
         QuickStudentRegistrationService $service,
     ): RedirectResponse {
-        // TEMP DIAGNOSTIC (504 investigation, 2026-08-28) — remove after test.
-        Context::add('qr_trace_id', (string) Str::uuid());
-        Context::add('qr_start_at', microtime(true));
-        Log::info('quick_registration.checkpoint', [
-            'stage' => 'A_controller_store_entry',
-            'trace_id' => Context::get('qr_trace_id'),
-            'elapsed_ms' => 0,
-        ]);
-
         $result = $service->register($request->validated(), $request->user());
-
-        // TEMP DIAGNOSTIC — remove after test.
-        Log::info('quick_registration.checkpoint', [
-            'stage' => 'J_before_redirect',
-            'trace_id' => Context::get('qr_trace_id'),
-            'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
-        ]);
 
         // Karim: Quick Registration must stay a single-page flow — issuing
         // the invoice already confirms the payment, so there is no separate

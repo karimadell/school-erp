@@ -5,6 +5,7 @@ namespace Tests\Feature\Finance;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\Enrollment;
+use App\Models\Fee;
 use App\Models\Invoice;
 use App\Models\InvoiceInstallment;
 use App\Models\InvoiceItem;
@@ -13,6 +14,7 @@ use App\Models\PaymentPlan;
 use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Services\Finance\CashSessionService;
+use App\Services\Finance\InvoiceIssuanceService;
 
 /**
  * Single-page "Register + Invoice + Confirm Payment" hardening.
@@ -260,5 +262,176 @@ class QuickRegistrationAtomicPaymentRegressionTest extends QuickRegistrationUxTe
             ->assertSee('1000.00')
             ->assertSee('0.00')
             ->assertSee(route('dashboard.payments.receipt', $payment));
+    }
+
+    // ----- 10. string-typed fee_id (real browser shape) with paid_now on the -----
+    // ----- FIRST, larger line and 0 on the SECOND, smaller line — the exact --
+    // ----- UATDIAG3 shape that exposed the line-to-item matching bug --------
+
+    /**
+     * Regression for the 2026-08-29 UAT finding: every HTML form field is a
+     * string over HTTP, but the previous line-to-item matching in
+     * QuickStudentRegistrationService::register() compared fee_id with
+     * strict === against InvoiceItem's (uncast, int) fee_id column. That
+     * always failed to match, and Collection::search()'s `false` result
+     * silently coerced to array index 0 — every line after the first
+     * quietly reused the *first* submitted service's paid_now. It only
+     * surfaced as a visible error when an earlier line's paid_now exceeded
+     * a later line's real amount (registration 7000 before tuition 4500);
+     * the existing test above puts paid_now on the *second* line, which
+     * hides the bug because index 0's paid_now is always 0.00 there.
+     *
+     * fee_id is deliberately cast to string in the payload — passing the
+     * model's native int id would skip past this bug entirely, since
+     * Laravel's test client never round-trips through real HTTP.
+     */
+    public function test_string_fee_ids_with_paid_now_on_the_first_of_two_lines_does_not_misroute_amounts(): void
+    {
+        $structure = $this->structure();
+        $registration = Fee::create(['name_ru' => 'Регистрационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '7000.00', 'is_active' => true]);
+        $tuition = Fee::create(['name_ru' => 'Обучение', 'category' => Fee::CATEGORY_TUITION, 'amount' => '4500.00', 'is_active' => true]);
+        $account = CashAccount::operating();
+        app(CashSessionService::class)->open($account, $this->accountant);
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $registration, [
+            'services' => [
+                ['fee_id' => (string) $registration->id, 'quantity' => 1, 'paid_now' => '7000.00'],
+                ['fee_id' => (string) $tuition->id, 'quantity' => 1, 'paid_now' => '0.00'],
+            ],
+            'payment_method' => 'cash',
+        ]));
+
+        // 1: no false "payment exceeds calculated cost" error.
+        $response->assertSessionHasNoErrors()->assertRedirect();
+
+        // 2: per-item financial fields — each line keeps its own figures,
+        // not a value borrowed from the other line.
+        $registrationItem = InvoiceItem::where('fee_id', $registration->id)->sole();
+        $this->assertSame('7000.00', $registrationItem->amount);
+        $this->assertSame('7000.00', $registrationItem->paid_amount);
+        $this->assertSame('0.00', $registrationItem->remaining_amount);
+
+        $tuitionItem = InvoiceItem::where('fee_id', $tuition->id)->sole();
+        $this->assertSame('4500.00', $tuitionItem->amount);
+        $this->assertSame('0.00', $tuitionItem->paid_amount);
+        $this->assertSame('4500.00', $tuitionItem->remaining_amount);
+
+        // 3: invoice-level result.
+        $invoice = Invoice::sole();
+        $this->assertSame('11500.00', $invoice->total_amount);
+        $this->assertSame('7000.00', $invoice->paid_amount);
+        $this->assertSame('4500.00', $invoice->remaining_amount);
+        $this->assertSame(Invoice::STATUS_PARTIAL, $invoice->status);
+
+        // 4: payment/cash behavior — exactly one of each, exactly 7000.
+        $this->assertSame(1, InvoicePayment::count());
+        $this->assertSame('7000.00', InvoicePayment::sole()->amount);
+        $this->assertSame(1, CashTransaction::count());
+        $this->assertSame('7000.00', CashTransaction::sole()->amount);
+    }
+
+    // ----- 11. atomicity still holds for the fixed (int-cast) matching path -----
+
+    /**
+     * The fix changes *how* lines are matched, not the transaction
+     * boundary. Reuses the same string-fee_id, front-loaded-payment shape
+     * as test 10 but with a closed cash drawer, so the payment step itself
+     * fails after the (now-correct) per-item matching has already run —
+     * proving the whole thing (student, enrollment, invoice, items) still
+     * rolls back together, and confirming idempotency-key generation
+     * ({@see \Illuminate\Support\Str::uuid()} in register()) is never
+     * reached/persisted on a rolled-back attempt.
+     */
+    public function test_atomic_rollback_still_holds_with_string_fee_ids_and_front_loaded_payment(): void
+    {
+        $structure = $this->structure();
+        $registration = Fee::create(['name_ru' => 'Регистрационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '7000.00', 'is_active' => true]);
+        $tuition = Fee::create(['name_ru' => 'Обучение', 'category' => Fee::CATEGORY_TUITION, 'amount' => '4500.00', 'is_active' => true]);
+        // Deliberately no CashSessionService::open() — the operating drawer
+        // exists but no shift is open on it, so payment recording fails
+        // after items/matching have already succeeded.
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $registration, [
+            'services' => [
+                ['fee_id' => (string) $registration->id, 'quantity' => 1, 'paid_now' => '7000.00'],
+                ['fee_id' => (string) $tuition->id, 'quantity' => 1, 'paid_now' => '0.00'],
+            ],
+            'payment_method' => 'cash',
+        ]))->assertSessionHasErrors('payment_method');
+
+        $this->assertDatabaseCount('students', 0);
+        $this->assertDatabaseCount('enrollments', 0);
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
+        $this->assertDatabaseCount('invoice_payments', 0);
+        $this->assertDatabaseCount('cash_transactions', 0);
+
+        // Retrying after fixing the blocking condition still creates
+        // exactly one set of records — idempotency/retry behavior
+        // unchanged by the matching fix.
+        app(CashSessionService::class)->open(CashAccount::operating(), $this->accountant);
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $registration, [
+            'services' => [
+                ['fee_id' => (string) $registration->id, 'quantity' => 1, 'paid_now' => '7000.00'],
+                ['fee_id' => (string) $tuition->id, 'quantity' => 1, 'paid_now' => '0.00'],
+            ],
+            'payment_method' => 'cash',
+        ]))->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame(1, Student::count());
+        $this->assertSame(1, Invoice::count());
+        $this->assertSame(1, InvoicePayment::count());
+        $this->assertSame(1, CashTransaction::count());
+    }
+
+    // ----- 12. an unmatched fee_id fails loudly instead of defaulting to index 0 -----
+
+    /**
+     * Under correct operation, $invoice->items and $normalizedServices are
+     * always built from the same submitted fee_ids, so they can only
+     * diverge if something upstream is broken — exactly the class of bug
+     * this fix guards against. InvoiceIssuanceService is mocked here to
+     * hand back an invoice whose item references a fee_id that was never
+     * submitted, which is the only way to force that divergence without
+     * reintroducing the original type-mismatch bug. Proves the guard
+     * throws instead of silently reading normalizedServices[0].
+     */
+    public function test_an_unmatched_fee_id_fails_loudly_instead_of_defaulting_to_service_index_zero(): void
+    {
+        $structure = $this->structure();
+        $registration = $this->fee();
+        $unrelatedFee = Fee::create(['name_ru' => 'Постороннее', 'category' => Fee::CATEGORY_OTHER, 'amount' => '999.00', 'is_active' => true]);
+        [$year] = $structure;
+
+        $this->mock(InvoiceIssuanceService::class, function ($mock) use ($unrelatedFee, $year) {
+            $mock->shouldReceive('issue')->once()->andReturnUsing(function ($student) use ($unrelatedFee, $year) {
+                $invoice = Invoice::create([
+                    'student_id' => $student->id, 'academic_year_id' => $year->id, 'currency' => 'EGP',
+                    'subtotal_amount' => '999.00', 'total_amount' => '999.00', 'paid_amount' => '0.00',
+                    'remaining_amount' => '999.00', 'status' => Invoice::STATUS_UNPAID,
+                    'due_date' => $year->end_date, 'created_by' => 1,
+                ]);
+                InvoiceItem::create([
+                    'invoice_id' => $invoice->id, 'fee_id' => $unrelatedFee->id,
+                    'description' => $unrelatedFee->name_ru, 'unit_price' => '999.00', 'quantity' => 1,
+                    'amount' => '999.00', 'paid_amount' => '0.00', 'remaining_amount' => '999.00',
+                ]);
+
+                return $invoice->fresh();
+            });
+        });
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $registration, [
+            'services' => [['fee_id' => (string) $registration->id, 'quantity' => 1, 'paid_now' => '0.00']],
+            'payment_method' => '',
+        ]))->assertSessionHasErrors('services');
+
+        // The whole attempt rolled back — including the student/enrollment
+        // created before the (mocked) issue() call — not just skipped the
+        // mismatched line.
+        $this->assertDatabaseCount('students', 0);
+        $this->assertDatabaseCount('enrollments', 0);
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
     }
 }

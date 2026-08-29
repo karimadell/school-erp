@@ -219,7 +219,25 @@ class QuickStudentRegistrationService
             // runs inside the same outer transaction as issue(), so a
             // failure here rolls back the invoice too.
             foreach ($invoice->items as $item) {
-                $index = $normalizedServices->search(fn (array $service) => $service['fee_id'] === $item->fee_id);
+                // Bug fix (2026-08-29): fee_id arrives here as a string
+                // (every HTML form field is a string over HTTP) while
+                // $item->fee_id is an int (InvoiceItem has no cast on this
+                // column, so Eloquent returns whatever the driver gives —
+                // an int on every driver we run against). A strict === used
+                // to never match, so search() always returned false, and
+                // $normalizedServices[false] silently coerced to index 0 —
+                // every line after the first quietly reused the *first*
+                // submitted service's paid_now instead of its own. Compare
+                // both sides as int, and fail loudly instead of guessing if
+                // an invoice item still can't be matched to any submitted
+                // line — that indicates a real inconsistency, not something
+                // safe to paper over with index 0.
+                $index = $normalizedServices->search(fn (array $service) => (int) $service['fee_id'] === (int) $item->fee_id);
+                if ($index === false) {
+                    throw ValidationException::withMessages([
+                        'services' => "Не удалось сопоставить строку счёта с выбранной услугой (fee_id: {$item->fee_id}).",
+                    ]);
+                }
                 $selection = $normalizedServices[$index];
                 $fee = $feesById[$item->fee_id];
                 $metadata = $this->metadata($fee, $selection);

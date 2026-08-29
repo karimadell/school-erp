@@ -9,9 +9,7 @@ use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\InvoiceInstallment;
 use App\Models\User;
-use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -131,13 +129,6 @@ class InvoicePaymentService
                 $cashSessionId = $session->id;
             }
 
-            // TEMP DIAGNOSTIC (504 investigation, 2026-08-28) — remove after test.
-            Log::info('quick_registration.checkpoint', [
-                'stage' => 'G_payment_service_ready_to_write',
-                'trace_id' => Context::get('qr_trace_id'),
-                'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
-            ]);
-
             $payment = InvoicePayment::create([
                 'invoice_id' => $invoice->id,
                 'invoice_installment_id' => $installment?->id,
@@ -163,13 +154,6 @@ class InvoicePaymentService
                 'type' => CashTransaction::TYPE_IN,
                 'category' => CashTransaction::CATEGORY_INCOME,
                 'description' => "Платёж {$payment->payment_number} по счёту {$invoice->display_number}",
-            ]);
-
-            // TEMP DIAGNOSTIC — remove after test.
-            Log::info('quick_registration.checkpoint', [
-                'stage' => 'H_cash_transaction_created',
-                'trace_id' => Context::get('qr_trace_id'),
-                'elapsed_ms' => round((microtime(true) - Context::get('qr_start_at', microtime(true))) * 1000, 1),
             ]);
 
             $newPaid = bcadd($paid, $amount, 2);

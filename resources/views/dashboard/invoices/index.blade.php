@@ -77,20 +77,23 @@
                                     {{ $invoice->cashAccount?->name ?? '—' }}
                                 </td>
 
+                                @php
+                                    // Explicit per-status mapping — a status with no entry here
+                                    // falls back to its raw value instead of ever being
+                                    // mislabeled as cancelled (see the 2026-08-29 UAT bug where
+                                    // 'partial' fell through a catch-all @else into "Cancelled").
+                                    $statusBadge = [
+                                        'paid' => ['class' => 'bg-success', 'label' => __('invoices.paid')],
+                                        'unpaid' => ['class' => 'bg-warning text-dark', 'label' => __('invoices.unpaid')],
+                                        'pending' => ['class' => 'bg-warning text-dark', 'label' => __('invoices.unpaid')],
+                                        'partial' => ['class' => 'bg-info text-dark', 'label' => __('invoices.partial')],
+                                        'cancelled' => ['class' => 'bg-secondary', 'label' => __('invoices.cancelled')],
+                                    ][$invoice->status] ?? ['class' => 'bg-light text-dark', 'label' => $invoice->status];
+                                @endphp
                                 <td>
-                                    @if($invoice->status === 'paid')
-                                        <span class="badge bg-success">
-                                            {{ __('invoices.paid') }}
-                                        </span>
-                                    @elseif($invoice->status === 'unpaid' || $invoice->status === 'pending')
-                                        <span class="badge bg-warning text-dark">
-                                            {{ __('invoices.unpaid') }}
-                                        </span>
-                                    @else
-                                        <span class="badge bg-secondary">
-                                            {{ __('invoices.cancelled') }}
-                                        </span>
-                                    @endif
+                                    <span class="badge {{ $statusBadge['class'] }}">
+                                        {{ $statusBadge['label'] }}
+                                    </span>
                                 </td>
 
                                 <td>

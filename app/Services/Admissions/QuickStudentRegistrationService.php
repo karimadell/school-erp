@@ -186,7 +186,7 @@ class QuickStudentRegistrationService
                 'items' => $items,
                 'payment_type' => $data['payment_type'] ?? 'one_time',
                 'payment_plan_id' => $data['payment_plan_id'] ?? null,
-            ], $actor, subscriptionResolver: $subscriptionResolver);
+            ], $actor, subscriptionResolver: $subscriptionResolver, origin: Invoice::ORIGIN_QUICK_REGISTRATION);
 
             // Quick Registration's own per-line concerns — the initial
             // paid/remaining split per service, the enriched description,

@@ -92,4 +92,8 @@ return [
 'refund_success' => 'Refund issued.',
 'original_payment' => 'Original payment',
 'refund_receipt' => 'Refund receipt',
+
+// Phase 1 — Quick Registration document semantics
+'show_unpaid_quick_registration' => 'Show unpaid obligations',
+'hide_unpaid_quick_registration' => 'Hide unpaid obligations',
 ];

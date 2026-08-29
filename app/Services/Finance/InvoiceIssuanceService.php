@@ -55,14 +55,19 @@ class InvoiceIssuanceService
      *         with the caller's resolver. Passing null (the default)
      *         preserves the original behaviour of only ever linking an
      *         already-existing subscription, never creating one.
+     * @param  ?string  $origin  Which flow issued this invoice (see
+     *         Invoice::ORIGIN_* constants) — Phase 1, Quick Registration
+     *         document semantics only. Optional and untracked (null) for
+     *         every other caller; passing null preserves the original
+     *         behaviour of not recording an origin at all.
      */
-    public function issue(Student $student, array $data, User $actor, ?string $ip = null, ?string $userAgent = null, ?Closure $subscriptionResolver = null): Invoice
+    public function issue(Student $student, array $data, User $actor, ?string $ip = null, ?string $userAgent = null, ?Closure $subscriptionResolver = null, ?string $origin = null): Invoice
     {
         if ((int) $data['student_id'] !== $student->id) {
             throw ValidationException::withMessages(['student_id' => 'Выбранный ученик не соответствует адресу формы.']);
         }
 
-        return DB::transaction(function () use ($data, $student, $actor, $ip, $userAgent, $subscriptionResolver) {
+        return DB::transaction(function () use ($data, $student, $actor, $ip, $userAgent, $subscriptionResolver, $origin) {
             $student = Student::query()->lockForUpdate()->findOrFail($student->id);
             $year = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
             $enrollment = Enrollment::query()->where('student_id', $student->id)->where('academic_year_id', $year->id)->where('is_active', true)->lockForUpdate()->first();
@@ -115,6 +120,9 @@ class InvoiceIssuanceService
             ];
             if (Schema::hasColumn('invoices', 'note')) {
                 $invoiceData['note'] = $data['notes'] ?? null;
+            }
+            if ($origin !== null && Schema::hasColumn('invoices', 'origin')) {
+                $invoiceData['origin'] = $origin;
             }
             $invoice = new Invoice($invoiceData);
             $invoice->created_at = Carbon::parse($data['pricing_date'])->startOfDay();

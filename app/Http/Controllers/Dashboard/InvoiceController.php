@@ -33,13 +33,17 @@ class InvoiceController extends Controller
         $this->middleware('permission:manage invoices')->only(['create', 'store', 'pay', 'refund', 'generateMonthlyInvoices']);
     }
 
-    public function index(): View
+    public function index(Request $request): View
     {
-        $invoices = Invoice::with(['student', 'cashAccount', 'fees'])
-            ->latest()
-            ->paginate(15);
+        $showUnpaidQuickRegistration = $request->boolean('show_unpaid_quick_registration');
 
-        return view('dashboard.invoices.index', compact('invoices'));
+        $invoices = Invoice::with(['student', 'cashAccount', 'fees'])
+            ->visibleInDocumentList($showUnpaidQuickRegistration)
+            ->latest()
+            ->paginate(15)
+            ->withQueryString();
+
+        return view('dashboard.invoices.index', compact('invoices', 'showUnpaidQuickRegistration'));
     }
 
     public function create(InvoiceCalculationService $calculator): View

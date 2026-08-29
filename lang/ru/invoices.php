@@ -140,4 +140,8 @@ return [
 'original_payment' => 'Исходный платёж',
 'refund_receipt' => 'Квитанция возврата',
 
+// Phase 1 — Quick Registration document semantics
+'show_unpaid_quick_registration' => 'Показать обязательства без оплаты',
+'hide_unpaid_quick_registration' => 'Скрыть обязательства без оплаты',
+
 ];

@@ -92,4 +92,8 @@ return [
 'refund_success' => 'تم تنفيذ الاسترجاع.',
 'original_payment' => 'الدفعة الأصلية',
 'refund_receipt' => 'إيصال الاسترجاع',
+
+// Phase 1 — Quick Registration document semantics
+'show_unpaid_quick_registration' => 'عرض الالتزامات غير المدفوعة',
+'hide_unpaid_quick_registration' => 'إخفاء الالتزامات غير المدفوعة',
 ];

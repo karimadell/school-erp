@@ -139,6 +139,29 @@ class InvoiceController extends Controller
 
             $initialPayment = (string) ($data['initial_payment_amount'] ?? '0');
             if (bccomp($initialPayment, '0.00', 2) > 0) {
+                // Finance V2, Phase 1B — a brand-new invoice never has prior
+                // payments, so it is always "allocation-clean"; a multi-item
+                // invoice being paid immediately must have its initial
+                // payment explicitly split across items (Phase 1A already
+                // auto-allocates the single-item case, so nothing extra is
+                // built for it here).
+                $invoiceItems = $invoice->items()->get();
+                $allocations = null;
+                if ($invoiceItems->count() > 1) {
+                    $submitted = collect($data['allocations'] ?? []);
+                    $allocations = $invoiceItems
+                        ->map(function ($item) use ($submitted) {
+                            $raw = $submitted->get($item->fee_id);
+
+                            return $raw !== null && bccomp((string) $raw, '0.00', 2) > 0
+                                ? ['invoice_item_id' => $item->id, 'amount' => (string) $raw]
+                                : null;
+                        })
+                        ->filter()
+                        ->values()
+                        ->all();
+                }
+
                 $payments->record(
                     invoiceId: $invoice->id,
                     cashAccountId: CashAccount::resolvePaymentAccountId($data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null),
@@ -147,6 +170,7 @@ class InvoiceController extends Controller
                     idempotencyKey: (string) Str::uuid(),
                     actor: $actor,
                     reference: 'Первоначальная оплата по счёту '.$invoice->display_number,
+                    allocations: $allocations,
                 );
             }
 

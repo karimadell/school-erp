@@ -26,6 +26,14 @@ class StoreModernInvoicePaymentRequest extends FormRequest
             'payment_method' => ['required', 'in:cash,card,bank,instapay'],
             'idempotency_key' => ['required', 'uuid'],
             'notes' => ['nullable', 'string', 'max:1000'],
+            // Finance V2, Phase 1B — optional per-line amount, keyed by
+            // invoice_item_id (the invoice already exists here, unlike the
+            // Classic Invoice create form). Only meaningful, and only
+            // required by the controller, when the invoice is multi-item
+            // and allocation-clean (see InvoicePaymentService::
+            // isAllocationClean()).
+            'allocations' => ['nullable', 'array'],
+            'allocations.*' => ['nullable', 'decimal:0,2', 'min:0'],
         ];
     }
 

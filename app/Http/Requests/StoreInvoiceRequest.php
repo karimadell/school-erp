@@ -66,6 +66,13 @@ class StoreInvoiceRequest extends FormRequest
             'initial_payment_amount' => ['nullable', 'decimal:0,2', 'min:0'],
             'payment_method' => ['nullable', 'in:cash,bank,card,transfer'],
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
+            // Finance V2, Phase 1B — optional per-fee amount for the initial
+            // payment, keyed by fee_id (fees are guaranteed distinct above,
+            // so fee_id is a safe key before the corresponding InvoiceItem
+            // exists). Only meaningful when the invoice has more than one
+            // item; single-item invoices keep Phase 1A's auto-allocation.
+            'allocations' => ['nullable', 'array'],
+            'allocations.*' => ['nullable', 'decimal:0,2', 'min:0'],
             'notes' => ['nullable', 'string', 'max:1000'],
             'payment_type' => ['required', 'in:one_time,plan'],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],

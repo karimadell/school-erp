@@ -374,6 +374,14 @@
                         </div>
                     </div>
 
+                    <div class="card modern-card mb-4 d-none" id="allocation-card">
+                        <div class="card-body">
+                            <h5 class="fw-bold mb-3">📋 Распределение первоначального платежа по услугам</h5>
+                            <div class="small text-muted mb-2">Счёт содержит несколько услуг — укажите, сколько из первоначального платежа относится к каждой.</div>
+                            <div id="allocation-rows"></div>
+                        </div>
+                    </div>
+
                     <div class="card total-card shadow-sm">
                         <div class="card-body">
                             <div class="d-flex justify-content-between mb-2">
@@ -641,6 +649,46 @@
     });
 
     calculate();
+
+    // Finance V2, Phase 1B — a multi-item invoice is always "allocation
+    // clean" at creation (zero prior payments), so its initial payment can
+    // always be safely split explicitly by service. This section is purely
+    // additive: single-fee invoices never show it, and it never overrides
+    // the deterministic single-item auto-allocation InvoicePaymentService
+    // already applies.
+    const FEE_NAMES = @json($fees->pluck('name_ru', 'id'));
+
+    function syncAllocationSection() {
+        const checkedIds = Array.from(document.querySelectorAll('.fee-checkbox:checked')).map(cb => cb.value);
+        const card = document.getElementById('allocation-card');
+        const rows = document.getElementById('allocation-rows');
+        const paid = Number(document.getElementById('initial_payment_amount')?.value || 0);
+
+        if (checkedIds.length < 2 || !(paid > 0)) {
+            card.classList.add('d-none');
+            rows.innerHTML = '';
+            return;
+        }
+
+        const existing = {};
+        rows.querySelectorAll('input[data-fee-id]').forEach(input => { existing[input.dataset.feeId] = input.value; });
+
+        card.classList.remove('d-none');
+        rows.innerHTML = checkedIds.map(feeId => `
+            <div class="row g-2 align-items-center mb-2">
+                <div class="col-md-7">${FEE_NAMES[feeId] ?? ('Услуга #' + feeId)}</div>
+                <div class="col-md-5">
+                    <input type="number" step="0.01" min="0" class="form-control form-control-sm"
+                           name="allocations[${feeId}]" data-fee-id="${feeId}"
+                           value="${existing[feeId] ?? ''}" placeholder="0.00">
+                </div>
+            </div>
+        `).join('');
+    }
+
+    document.querySelectorAll('.fee-checkbox').forEach(cb => cb.addEventListener('change', syncAllocationSection));
+    document.getElementById('initial_payment_amount')?.addEventListener('input', syncAllocationSection);
+    syncAllocationSection();
 </script>
 
 @endsection

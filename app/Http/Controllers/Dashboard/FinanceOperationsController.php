@@ -121,21 +121,54 @@ class FinanceOperationsController extends Controller
             ->download('student-finance-'.$student->id.'.pdf');
     }
 
-    public function createPayment(Invoice $invoice): View
+    public function createPayment(Invoice $invoice, InvoicePaymentService $service): View
     {
         abort_if($invoice->status === Invoice::STATUS_PAID || bccomp((string) $invoice->remaining_amount, '0.00', 2) <= 0, 422, 'Счёт уже полностью оплачен.');
-        $invoice->load(['student', 'installments' => fn ($query) => $query->where('remaining_amount', '>', '0')->orderBy('sequence')]);
+        $invoice->load(['student', 'installments' => fn ($query) => $query->where('remaining_amount', '>', '0')->orderBy('sequence'), 'items.fee']);
+
+        // Finance V2, Phase 1B — a multi-item invoice only gets per-line
+        // allocation UI when it is "allocation-clean" (every payment so far
+        // is fully represented in PaymentAllocation rows). A pre-Phase-1
+        // invoice with historical unallocated payments cannot safely show a
+        // "remaining per line" number, so it keeps Phase 1A's unallocated
+        // behaviour instead (docs/finance-v2-architecture.md §19 Phase 1B).
+        $allocationClean = $invoice->items->count() > 1 && $service->isAllocationClean($invoice);
+        $remainingByItem = $allocationClean ? $service->remainingAllocatableByItem($invoice) : collect();
 
         return view('dashboard.finance.payments.create', [
             'invoice' => $invoice,
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'idempotencyKey' => (string) Str::uuid(),
+            'allocationClean' => $allocationClean,
+            'remainingByItem' => $remainingByItem,
         ]);
     }
 
     public function storePayment(StoreModernInvoicePaymentRequest $request, Invoice $invoice, InvoicePaymentService $service): RedirectResponse
     {
         $existing = InvoicePayment::where('idempotency_key', $request->string('idempotency_key'))->exists();
+
+        // Finance V2, Phase 1B — mirrors createPayment()'s allocation-clean
+        // gate exactly: only a multi-item, allocation-clean invoice both
+        // offers and requires an explicit per-item split here; every other
+        // invoice keeps Phase 1A's null-allocations fallback untouched.
+        $allocations = null;
+        $items = $invoice->items()->get();
+        if ($items->count() > 1 && $service->isAllocationClean($invoice)) {
+            $submitted = collect($request->input('allocations', []));
+            $allocations = $items
+                ->map(function ($item) use ($submitted) {
+                    $raw = $submitted->get($item->id);
+
+                    return $raw !== null && bccomp((string) $raw, '0.00', 2) > 0
+                        ? ['invoice_item_id' => $item->id, 'amount' => (string) $raw]
+                        : null;
+                })
+                ->filter()
+                ->values()
+                ->all();
+        }
+
         $payment = $service->record(
             invoiceId: $invoice->id,
             cashAccountId: CashAccount::resolvePaymentAccountId((string) $request->input('payment_method'), $request->integer('cash_account_id')),
@@ -146,6 +179,7 @@ class FinanceOperationsController extends Controller
             reference: 'Оплата по счёту '.$invoice->display_number,
             notes: $request->input('notes'),
             installmentId: $request->integer('invoice_installment_id') ?: null,
+            allocations: $allocations,
         );
 
         return redirect()->route('dashboard.payments.receipt', $payment)

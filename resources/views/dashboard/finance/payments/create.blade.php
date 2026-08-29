@@ -3,7 +3,28 @@
 <div class="container py-4"><h1 class="h3 mb-4">Принять оплату</h1>
 @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
 <div class="card border-0 shadow-sm mb-4"><div class="card-body"><h2 class="h5">Счёт {{ $invoice->display_number }}</h2><div>{{ $invoice->student?->full_name }}</div><div class="row g-2 mt-3"><div class="col-md-4">Итого: <strong>{{ $invoice->total_amount }} EGP</strong></div><div class="col-md-4">Оплачено: <strong>{{ $invoice->paid_amount }} EGP</strong></div><div class="col-md-4">Остаток: <strong>{{ $invoice->remaining_amount }} EGP</strong></div></div></div></div>
-<form method="POST" action="{{ route('dashboard.invoices.payments.store',$invoice) }}" class="card border-0 shadow-sm"><div class="card-body row g-3">@csrf<input type="hidden" name="idempotency_key" value="{{ $idempotencyKey }}">
+@if($allocationClean ?? false)
+<div class="card border-0 shadow-sm mb-4"><div class="card-body">
+<h2 class="h6 mb-3">Распределение платежа по строкам счёта</h2>
+<div class="table-responsive"><table class="table table-sm mb-0">
+<thead><tr><th>Услуга</th><th class="text-end">Сумма строки</th><th class="text-end">Уже оплачено</th><th class="text-end">Остаток</th><th class="text-end">Сумма для этого платежа</th></tr></thead>
+<tbody>
+@foreach($invoice->items as $item)
+@php $remaining = (string) $remainingByItem->get($item->id, '0.00'); @endphp
+<tr>
+<td>{{ $item->fee?->name_ru ?? $item->description }}</td>
+<td class="text-end">{{ $item->amount }} EGP</td>
+<td class="text-end">{{ bcsub((string) $item->amount, $remaining, 2) }} EGP</td>
+<td class="text-end">{{ $remaining }} EGP</td>
+<td class="text-end"><input type="number" step="0.01" min="0" max="{{ $remaining }}" name="allocations[{{ $item->id }}]" value="{{ old('allocations.'.$item->id) }}" class="form-control form-control-sm" form="payment-form"></td>
+</tr>
+@endforeach
+</tbody>
+</table></div>
+<div class="small text-muted mt-2">Сумма распределения должна совпадать с суммой платежа.</div>
+</div></div>
+@endif
+<form id="payment-form" method="POST" action="{{ route('dashboard.invoices.payments.store',$invoice) }}" class="card border-0 shadow-sm"><div class="card-body row g-3">@csrf<input type="hidden" name="idempotency_key" value="{{ $idempotencyKey }}">
 @if($invoice->installments->isNotEmpty())<div class="col-12"><label class="form-label">Этап рассрочки</label><select name="invoice_installment_id" id="installment" class="form-select" required>@foreach($invoice->installments as $installment)<option value="{{ $installment->id }}" data-remaining="{{ $installment->remaining_amount }}" @selected(old('invoice_installment_id')==$installment->id)>{{ $installment->name_ru }} · до {{ $installment->due_date->format('d.m.Y') }} · остаток {{ $installment->remaining_amount }} EGP</option>@endforeach</select></div>@endif
 <div class="col-md-4"><label class="form-label">Сумма, EGP</label><input id="payment-amount" type="number" step="0.01" min="0.01" max="{{ $invoice->installments->first()?->remaining_amount ?? $invoice->remaining_amount }}" name="amount" value="{{ old('amount',$invoice->installments->first()?->remaining_amount ?? $invoice->remaining_amount) }}" class="form-control" required></div>
 <div class="col-md-4"><label class="form-label">Способ оплаты</label><select name="payment_method" id="payment-method" class="form-select" required><option value="cash">Наличные</option><option value="card">Банковская карта</option><option value="bank">Банковский перевод</option><option value="instapay">InstaPay</option></select></div>

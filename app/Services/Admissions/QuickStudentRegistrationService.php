@@ -195,6 +195,13 @@ class QuickStudentRegistrationService
             // of the just-issued, canonical InvoiceItem rows. This still
             // runs inside the same outer transaction as issue(), so a
             // failure here rolls back the invoice too.
+            // Finance V2, Phase 1A: this loop already matches each submitted
+            // service line to its real InvoiceItem (by fee_id, see the fix
+            // below) and already computes that line's own $linePaid — the
+            // exact, already-deterministic mapping PaymentAllocation needs.
+            // Collected here and passed to InvoicePaymentService::record()
+            // below; zero-paid lines are skipped (nothing to allocate).
+            $allocations = [];
             foreach ($invoice->items as $item) {
                 // Bug fix (2026-08-29): fee_id arrives here as a string
                 // (every HTML form field is a string over HTTP) while
@@ -233,6 +240,10 @@ class QuickStudentRegistrationService
                 }
                 $lineRemaining = bcsub($item->amount, $linePaid, 2);
 
+                if (bccomp($linePaid, '0.00', 2) > 0) {
+                    $allocations[] = ['invoice_item_id' => $item->id, 'amount' => $linePaid];
+                }
+
                 $item->update([
                     'description' => $this->description($item->description, $metadata),
                     'paid_amount' => $linePaid,
@@ -260,6 +271,7 @@ class QuickStudentRegistrationService
                     reference: "Быстрая регистрация {$invoice->invoice_number}",
                     notes: $data['payment_note'] ?? null,
                     installmentId: $installment->id,
+                    allocations: $allocations,
                 );
             }
 

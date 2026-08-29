@@ -8,7 +8,9 @@ use App\Models\CashTransaction;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\InvoiceInstallment;
+use App\Models\PaymentAllocation;
 use App\Models\User;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -19,6 +21,27 @@ class InvoicePaymentService
     {
     }
 
+    /**
+     * @param  ?array<int, array{invoice_item_id: int, amount: string}>  $allocations
+     *         Finance V2, Phase 1A (docs/finance-v2-architecture.md §7).
+     *         Which InvoiceItem(s) this payment pays down, and how much of
+     *         each. Optional and backward-compatible:
+     *           - Omitted (null) against an invoice with exactly one
+     *             InvoiceItem: one PaymentAllocation is created
+     *             automatically for the full payment amount — no caller
+     *             change required.
+     *           - Omitted (null) against a multi-item invoice: no
+     *             PaymentAllocation rows are created at all (Phase 1A's
+     *             intentional, temporary "unallocated" state — Charge &
+     *             Collect, Classic Invoice, and existing-invoice payment
+     *             are not yet updated to supply this; that is Phase 1B).
+     *             This is never treated as an error in Phase 1A.
+     *           - Supplied explicitly: every invoice_item_id must belong
+     *             to this same invoice, every amount must be > 0, and the
+     *             amounts must sum to exactly $amount — validated with the
+     *             same decimal-string rigor as the payment amount itself.
+     *             Never inferred, never proportional.
+     */
     public function record(
         int $invoiceId,
         int $cashAccountId,
@@ -29,6 +52,7 @@ class InvoicePaymentService
         ?string $reference = null,
         ?string $notes = null,
         ?int $installmentId = null,
+        ?array $allocations = null,
     ): InvoicePayment {
         $amount = $this->money($amount);
         if (! Str::isUuid($idempotencyKey)) {
@@ -39,7 +63,7 @@ class InvoicePaymentService
         }
         $hash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
 
-        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash) {
+        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $allocations) {
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
                 return $this->replay($existing, $hash);
@@ -72,6 +96,23 @@ class InvoicePaymentService
             }
             if (bccomp($amount, $remaining, 2) > 0) {
                 throw ValidationException::withMessages(['amount' => 'Платёж не может превышать остаток по счёту.']);
+            }
+
+            // Finance V2, Phase 1A — resolve which InvoiceItem(s) this
+            // payment pays down. Explicit allocations are validated as
+            // given; omitted allocations auto-resolve only when the
+            // invoice has exactly one item (no ambiguity to guess at).
+            // Any other omitted case is left unallocated — Phase 1A's
+            // intentional, temporary, non-error state (see the record()
+            // docblock and docs/finance-v2-architecture.md §19 Phase 1A).
+            $invoiceItems = $invoice->items()->get();
+            if ($allocations !== null) {
+                $this->validateAllocations($allocations, $invoiceItems, $amount);
+            } elseif ($invoiceItems->count() === 1) {
+                $allocations = [[
+                    'invoice_item_id' => $invoiceItems->first()->id,
+                    'amount' => $amount,
+                ]];
             }
 
             $installment = null;
@@ -145,6 +186,18 @@ class InvoicePaymentService
             $payment->payment_number = InvoicePayment::numberFor($payment->id, $payment->created_at->format('Y'));
             $payment->save();
 
+            // Finance V2, Phase 1A — same transaction as the payment and
+            // its CashTransaction, so all three succeed or roll back
+            // together. $allocations is null whenever Phase 1A leaves this
+            // payment intentionally unallocated (see above).
+            foreach ($allocations ?? [] as $allocation) {
+                PaymentAllocation::create([
+                    'invoice_payment_id' => $payment->id,
+                    'invoice_item_id' => (int) $allocation['invoice_item_id'],
+                    'amount' => $this->money((string) $allocation['amount']),
+                ]);
+            }
+
             CashTransaction::create([
                 'cash_account_id' => $account->id,
                 'cash_session_id' => $cashSessionId, // FK-at-creation; null for non-cash
@@ -184,7 +237,7 @@ class InvoicePaymentService
                 'user_agent' => request()->userAgent(),
             ]);
 
-            return $payment->fresh(['cashTransaction']);
+            return $payment->fresh(['cashTransaction', 'allocations']);
         });
     }
 
@@ -195,6 +248,41 @@ class InvoicePaymentService
         }
 
         return $payment;
+    }
+
+    /**
+     * Finance V2, Phase 1A — validate an explicitly-supplied allocation
+     * split. Never inferred, never proportional: every line must belong to
+     * this same invoice, be strictly positive, and the lines must sum to
+     * exactly the payment amount.
+     *
+     * @param  array<int, array{invoice_item_id: int, amount: string}>  $allocations
+     */
+    private function validateAllocations(array $allocations, Collection $invoiceItems, string $amount): void
+    {
+        if ($allocations === []) {
+            throw ValidationException::withMessages(['allocations' => 'Укажите распределение платежа по услугам.']);
+        }
+
+        $validItemIds = $invoiceItems->pluck('id');
+        $sum = '0.00';
+        foreach ($allocations as $allocation) {
+            if (! isset($allocation['invoice_item_id'], $allocation['amount'])) {
+                throw ValidationException::withMessages(['allocations' => 'Некорректные данные распределения платежа.']);
+            }
+            if (! $validItemIds->contains((int) $allocation['invoice_item_id'])) {
+                throw ValidationException::withMessages(['allocations' => 'Строка счёта не принадлежит указанному счёту.']);
+            }
+            $lineAmount = $this->money((string) $allocation['amount']);
+            if (bccomp($lineAmount, '0.00', 2) <= 0) {
+                throw ValidationException::withMessages(['allocations' => 'Сумма распределения должна быть больше нуля.']);
+            }
+            $sum = bcadd($sum, $lineAmount, 2);
+        }
+
+        if (bccomp($sum, $amount, 2) !== 0) {
+            throw ValidationException::withMessages(['allocations' => 'Сумма распределения должна совпадать с суммой платежа.']);
+        }
     }
 
     private function money(string $value): string

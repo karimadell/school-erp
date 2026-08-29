@@ -85,6 +85,12 @@ class InvoicePayment extends Model
         return $this->hasMany(PaymentRefund::class);
     }
 
+    /** Finance V2, Phase 1A — which InvoiceItem(s) this payment paid down. */
+    public function allocations()
+    {
+        return $this->hasMany(PaymentAllocation::class, 'invoice_payment_id');
+    }
+
     /** Amount already refunded against this specific payment. */
     public function refundedAmount(): string
     {

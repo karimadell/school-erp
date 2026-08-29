@@ -26,6 +26,18 @@
         </div>
     @endif
 
+    <div class="mb-3">
+        @if($showUnpaidQuickRegistration)
+            <a href="{{ route('dashboard.invoices.index') }}" class="btn btn-sm btn-outline-secondary">
+                {{ __('invoices.hide_unpaid_quick_registration') }}
+            </a>
+        @else
+            <a href="{{ route('dashboard.invoices.index', ['show_unpaid_quick_registration' => 1]) }}" class="btn btn-sm btn-outline-secondary">
+                {{ __('invoices.show_unpaid_quick_registration') }}
+            </a>
+        @endif
+    </div>
+
     <div class="card shadow-sm border-0">
         <div class="card-body p-0">
             <div class="table-responsive">

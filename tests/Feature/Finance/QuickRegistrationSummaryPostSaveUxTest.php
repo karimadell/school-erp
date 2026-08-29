@@ -50,7 +50,11 @@ class QuickRegistrationSummaryPostSaveUxTest extends QuickRegistrationUxTestCase
         // the panel replaces the form there, no navigation to another page.
         $page = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))->assertOk();
 
-        $page->assertSee('Регистрация и оплата подтверждены')
+        // Phase 1 — Quick Registration document semantics: 250.00 was
+        // collected against this fee's 1000.00 total, so this is a
+        // partial payment — the header must say so, not falsely claim
+        // the registration and payment are fully confirmed.
+        $page->assertSee('Регистрация завершена. Принята частичная оплата.')
             ->assertSee($invoice->invoice_number)
             ->assertSee($payment->payment_number)
             ->assertSee($invoice->total_amount)

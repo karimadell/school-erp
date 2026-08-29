@@ -13,6 +13,12 @@ class Invoice extends Model
     public const STATUS_PAID = 'paid';
     public const STATUS_CANCELLED = 'cancelled';
 
+    /**
+     * Which flow issued this invoice. Optional and untracked (null) for
+     * every flow except Quick Registration — see scopeVisibleInDocumentList().
+     */
+    public const ORIGIN_QUICK_REGISTRATION = 'quick_registration';
+
     protected $fillable = [
         'student_id',
         'invoice_number',
@@ -32,6 +38,7 @@ class Invoice extends Model
         'paid_at',
         'due_date',
         'note',
+        'origin',
         'created_by',
         'cancelled_at',
         'cancelled_by',
@@ -189,6 +196,30 @@ class Invoice extends Model
     public function scopeOutstanding($query)
     {
         return $query->whereIn('status', [self::STATUS_UNPAID, self::STATUS_PARTIAL]);
+    }
+
+    /**
+     * "Счета" list visibility rule (Phase 1, Quick Registration document
+     * semantics): a Quick Registration invoice with nothing collected yet
+     * is a genuine internal obligation, not something staff issued as a
+     * document, so it's excluded from the default list. Every other
+     * unpaid invoice — Classic Invoice, Mass Billing, Charge & Collect,
+     * or any invoice with no recorded origin — is untouched by this
+     * scope; it only ever excludes origin=quick_registration rows with
+     * paid_amount exactly 0. Passing $includeUnpaidQuickRegistration=true
+     * reveals them. The row itself remains reachable by direct route and
+     * is always counted by Student Finance regardless of this scope.
+     */
+    public function scopeVisibleInDocumentList($query, bool $includeUnpaidQuickRegistration = false)
+    {
+        if ($includeUnpaidQuickRegistration) {
+            return $query;
+        }
+
+        return $query->where(fn ($query) => $query
+            ->where('origin', '!=', self::ORIGIN_QUICK_REGISTRATION)
+            ->orWhereNull('origin')
+            ->orWhere('paid_amount', '>', 0));
     }
 
     public function scopeOverdue($query, $asOf = null)

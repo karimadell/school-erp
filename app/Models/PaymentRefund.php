@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use LogicException;
 
 /**
@@ -102,5 +103,11 @@ class PaymentRefund extends Model
     public function executor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /** Finance V2, Phase 1D — which PaymentAllocation(s) this refund reversed. */
+    public function allocations(): HasMany
+    {
+        return $this->hasMany(PaymentRefundAllocation::class, 'payment_refund_id');
     }
 }

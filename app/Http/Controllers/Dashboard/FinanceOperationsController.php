@@ -6,6 +6,7 @@ use App\Exceptions\DuplicateOpenInvoiceException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreChargeAndCollectRequest;
 use App\Http\Requests\StoreModernInvoicePaymentRequest;
+use App\Http\Requests\StoreRefundRequest;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
 use App\Models\Fee;
@@ -255,24 +256,62 @@ class FinanceOperationsController extends Controller
     {
         abort_if(bccomp($invoicePayment->refundableAmount(), '0.00', 2) <= 0, 422, 'По этому платежу нет суммы, доступной к возврату.');
 
-        $invoicePayment->load(['invoice.student', 'cashAccount']);
+        $invoicePayment->load(['invoice.student', 'cashAccount', 'allocations.item.fee']);
+
+        // Finance V2, Phase 1D — the per-line split UI is only offered when
+        // there is more than one PaymentAllocation to choose between; a
+        // zero- or single-allocation payment keeps the plain amount/reason
+        // form unchanged (the service auto-allocates or stays unattributed
+        // on its own — see InvoiceRefundService::refund()). These figures
+        // are advisory display only; the service is the sole source of
+        // truth for what a refund may actually do.
+        $refundLines = $invoicePayment->allocations->count() > 1
+            ? $invoicePayment->allocations->map(fn ($allocation) => [
+                'id' => $allocation->id,
+                'label' => $allocation->item->fee?->name_ru ?? $allocation->item->description,
+                'allocated' => (string) $allocation->amount,
+                'refunded' => $allocation->refundedAmount(),
+                'remaining' => bcsub((string) $allocation->amount, $allocation->refundedAmount(), 2),
+                'non_refundable' => (bool) $allocation->item->is_non_refundable,
+            ])
+            : collect();
 
         return view('dashboard.finance.refunds.create', [
             'payment' => $invoicePayment,
             'refundable' => $invoicePayment->refundableAmount(),
             'idempotencyKey' => (string) Str::uuid(),
+            'refundLines' => $refundLines,
         ]);
     }
 
-    public function storeRefund(Request $request, InvoicePayment $invoicePayment, InvoiceRefundService $service): RedirectResponse
+    public function storeRefund(StoreRefundRequest $request, InvoicePayment $invoicePayment, InvoiceRefundService $service): RedirectResponse
     {
-        $data = $request->validate([
-            'amount' => ['required', 'numeric', 'min:0.01'],
-            'reason' => ['required', 'string', 'max:500'],
-            'idempotency_key' => ['required', 'uuid'],
-        ]);
-
+        $data = $request->validated();
         $existing = PaymentRefund::where('idempotency_key', $data['idempotency_key'])->exists();
+
+        // Finance V2, Phase 1D — mirrors storePayment()'s allocation-split
+        // gate: only a payment with more than one PaymentAllocation offers
+        // (and forwards) an explicit per-line split here; every other
+        // payment keeps allocations omitted, letting the service resolve
+        // it (zero-allocation compatibility, or single-allocation
+        // auto-attribution). Purely advisory shaping of the request — all
+        // authoritative validation happens inside InvoiceRefundService.
+        $allocations = null;
+        $paymentAllocations = $invoicePayment->allocations()->get();
+        if ($paymentAllocations->count() > 1) {
+            $submitted = collect($data['allocations'] ?? []);
+            $allocations = $paymentAllocations
+                ->map(function ($allocation) use ($submitted) {
+                    $raw = $submitted->get($allocation->id);
+
+                    return $raw !== null && bccomp((string) $raw, '0.00', 2) > 0
+                        ? ['payment_allocation_id' => $allocation->id, 'amount' => (string) $raw]
+                        : null;
+                })
+                ->filter()
+                ->values()
+                ->all();
+        }
 
         $refund = $service->refund(
             invoicePaymentId: $invoicePayment->id,
@@ -280,6 +319,7 @@ class FinanceOperationsController extends Controller
             reason: (string) $data['reason'],
             idempotencyKey: (string) $data['idempotency_key'],
             actor: $request->user(),
+            allocations: $allocations,
         );
 
         return redirect()->route('dashboard.refunds.receipt', $refund)

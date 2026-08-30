@@ -10,7 +10,34 @@
 <div class="col-md-4">{{ __('invoices.refunded') }}: <strong>{{ $payment->refundedAmount() }} EGP</strong></div>
 <div class="col-md-4">{{ __('invoices.refundable') }}: <strong>{{ $refundable }} EGP</strong></div>
 </div></div></div>
-<form method="POST" action="{{ route('dashboard.payments.refund.store',$payment) }}" class="card border-0 shadow-sm"><div class="card-body row g-3">@csrf
+@if(($refundLines ?? collect())->isNotEmpty())
+<div class="card border-0 shadow-sm mb-4"><div class="card-body">
+<h2 class="h6 mb-3">{{ __('invoices.refund_lines_heading') }}</h2>
+<div class="table-responsive"><table class="table table-sm mb-0">
+<thead><tr><th>{{ __('invoices.refund_line_service') }}</th><th class="text-end">{{ __('invoices.refund_line_allocated') }}</th><th class="text-end">{{ __('invoices.refund_line_refunded') }}</th><th class="text-end">{{ __('invoices.refund_line_remaining') }}</th><th class="text-end">{{ __('invoices.refund_amount') }}</th></tr></thead>
+<tbody>
+@foreach($refundLines as $line)
+<tr>
+<td>{{ $line['label'] }}@if($line['non_refundable'])<span class="badge bg-secondary ms-2">{{ __('invoices.refund_line_non_refundable') }}</span>@endif</td>
+<td class="text-end">{{ $line['allocated'] }} EGP</td>
+<td class="text-end">{{ $line['refunded'] }} EGP</td>
+<td class="text-end">{{ $line['remaining'] }} EGP</td>
+<td class="text-end">
+@if(! $line['non_refundable'] && bccomp($line['remaining'], '0.00', 2) > 0)
+<input type="number" step="0.01" min="0" max="{{ $line['remaining'] }}" name="allocations[{{ $line['id'] }}]" value="{{ old('allocations.'.$line['id']) }}" class="form-control form-control-sm" form="refund-form">
+@else
+—
+@endif
+</td>
+</tr>
+@endforeach
+</tbody>
+</table></div>
+<div class="small text-muted mt-2">{{ __('invoices.refund_split_hint') }}</div>
+@error('allocations')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+</div></div>
+@endif
+<form id="refund-form" method="POST" action="{{ route('dashboard.payments.refund.store',$payment) }}" class="card border-0 shadow-sm"><div class="card-body row g-3">@csrf
 <input type="hidden" name="idempotency_key" value="{{ $idempotencyKey }}">
 <div class="col-md-6"><label class="form-label" for="amount">{{ __('invoices.refund_amount') }}, EGP <span class="text-danger" aria-hidden="true">*</span></label>
 <input id="amount" type="number" step="0.01" min="0.01" max="{{ $refundable }}" name="amount" value="{{ old('amount',$refundable) }}" class="form-control @error('amount') is-invalid @enderror" required>

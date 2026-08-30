@@ -46,4 +46,16 @@ class PaymentAllocation extends Model
     {
         return $this->belongsTo(InvoiceItem::class, 'invoice_item_id');
     }
+
+    /** Finance V2, Phase 1D — which PaymentRefund(s) reversed this allocation. */
+    public function refundAllocations()
+    {
+        return $this->hasMany(PaymentRefundAllocation::class, 'payment_allocation_id');
+    }
+
+    /** Amount already refunded against this specific allocation. */
+    public function refundedAmount(): string
+    {
+        return bcadd((string) $this->refundAllocations()->sum('amount'), '0', 2);
+    }
 }

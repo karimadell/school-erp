@@ -140,6 +140,15 @@ return [
 'original_payment' => 'Исходный платёж',
 'refund_receipt' => 'Квитанция возврата',
 
+// Finance V2, Phase 1D — refund allocation by service line
+'refund_lines_heading' => 'Распределение возврата по строкам счёта',
+'refund_line_service' => 'Услуга',
+'refund_line_allocated' => 'Сумма строки',
+'refund_line_refunded' => 'Уже возвращено',
+'refund_line_remaining' => 'Остаток к возврату',
+'refund_line_non_refundable' => 'Не подлежит возврату',
+'refund_split_hint' => 'Сумма распределения должна совпадать с суммой возврата.',
+
 // Phase 1 — Quick Registration document semantics
 'show_unpaid_quick_registration' => 'Показать обязательства без оплаты',
 'hide_unpaid_quick_registration' => 'Скрыть обязательства без оплаты',

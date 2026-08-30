@@ -282,12 +282,24 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
         $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store', $this->student), $this->payload([$this->fee, $ordinary], [$ordinaryPrice]));
         $invoice = Invoice::sole();
         $payments = app(InvoicePaymentService::class);
+        $itemTuition = $invoice->items()->where('fee_id', $this->fee->id)->sole();
+        $itemOrdinary = $invoice->items()->where('fee_id', $ordinary->id)->sole();
 
-        $payments->record($invoice->id, $this->cash->id, '500.00', 'cash', (string) Str::uuid(), $this->accountant);
+        // Finance V2, Phase 1C — this invoice is multi-item and
+        // allocation-clean (brand new, zero prior payments/refunds), so an
+        // explicit split is required; the amounts here are otherwise
+        // arbitrary and don't change what this test is proving (whole-invoice
+        // paid/remaining/status tracking across two payments).
+        $payments->record($invoice->id, $this->cash->id, '500.00', 'cash', (string) Str::uuid(), $this->accountant, allocations: [
+            ['invoice_item_id' => $itemTuition->id, 'amount' => '200.00'],
+            ['invoice_item_id' => $itemOrdinary->id, 'amount' => '300.00'],
+        ]);
         $this->assertSame(Invoice::STATUS_PARTIAL, $invoice->fresh()->status);
         $this->assertSame('1000.00', $invoice->fresh()->remaining_amount);
 
-        $payments->record($invoice->id, $this->cash->id, '1000.00', 'cash', (string) Str::uuid(), $this->accountant);
+        $payments->record($invoice->id, $this->cash->id, '1000.00', 'cash', (string) Str::uuid(), $this->accountant, allocations: [
+            ['invoice_item_id' => $itemTuition->id, 'amount' => '1000.00'],
+        ]);
         $this->assertSame(Invoice::STATUS_PAID, $invoice->fresh()->status);
         $this->assertSame('0.00', $invoice->fresh()->remaining_amount);
         $this->assertDatabaseCount('invoice_items', 2);

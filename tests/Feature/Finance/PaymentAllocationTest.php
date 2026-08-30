@@ -20,10 +20,13 @@ use Illuminate\Validation\ValidationException;
  *
  * Proves the new payment_allocations table/model/service extension is
  * correct in isolation: schema, decimal semantics, single-item
- * auto-allocation, the intentional "unallocated multi-item payment is not
- * an error" compatibility state, explicit allocation validation, atomicity,
- * and non-interference with refunds, overpayment protection, and
- * StudentCredit.
+ * auto-allocation, explicit allocation validation, atomicity, and
+ * non-interference with refunds, overpayment protection, and StudentCredit.
+ *
+ * Phase 1A's "unallocated multi-item payment is not an error" compatibility
+ * state was unconditional; Phase 1C narrowed it to genuinely
+ * allocation-ambiguous invoices only (see FinanceV2Phase1CAllocationInvariantTest
+ * and FinanceV2Phase1BAllocationTest for that exception).
  */
 class PaymentAllocationTest extends FinanceOperationsTestCase
 {
@@ -116,24 +119,29 @@ class PaymentAllocationTest extends FinanceOperationsTestCase
         $this->assertSame($invoice->items->first()->id, $payment->allocations->first()->invoice_item_id);
     }
 
-    public function test_multi_item_payment_without_allocation_still_succeeds_and_creates_zero_allocation_rows(): void
+    /**
+     * Finance V2, Phase 1C (docs/finance-v2-architecture.md §19 Phase 1C)
+     * closed this: a brand-new multi-item invoice has zero prior payments
+     * and zero refunds, so it is always allocation-clean, and a clean
+     * multi-item invoice has no excuse for an unallocated payment anymore.
+     * This test used to characterize Phase 1A's original "must not error"
+     * compatibility state for exactly this shape; Phase 1C's central
+     * safety test (FinanceV2Phase1CAllocationInvariantTest) now proves the
+     * opposite is true here, and the still-valid "genuinely ambiguous
+     * invoice" exception is covered there and in
+     * FinanceV2Phase1BAllocationTest instead.
+     */
+    public function test_multi_item_payment_without_allocation_is_rejected_on_a_clean_invoice(): void
     {
         $invoice = $this->invoice('1000.00');
         $this->secondInvoiceItem($invoice, '500.00');
         $invoice->update(['total_amount' => '1500.00', 'remaining_amount' => '1500.00']);
 
-        // Phase 1A's intentional, temporary compatibility state: a legacy
-        // caller (Charge & Collect, Classic Invoice, existing-invoice
-        // payment — none updated yet) omits allocations against a
-        // multi-item invoice. This must not error and must not guess.
-        $payment = app(InvoicePaymentService::class)->record(
+        $this->expectException(ValidationException::class);
+        app(InvoicePaymentService::class)->record(
             invoiceId: $invoice->id, cashAccountId: $this->cash->id, amount: '900.00',
             paymentMethod: 'cash', idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
         );
-
-        $this->assertSame('900.00', (string) $payment->amount);
-        $this->assertCount(0, $payment->allocations);
-        $this->assertSame(0, PaymentAllocation::count());
     }
 
     public function test_explicit_valid_allocations_create_the_exact_submitted_rows(): void

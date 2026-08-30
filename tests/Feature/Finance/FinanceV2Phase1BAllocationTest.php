@@ -3,6 +3,7 @@
 namespace Tests\Feature\Finance;
 
 use App\Models\CashAccount;
+use App\Models\CashTransaction;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
@@ -72,6 +73,45 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
         return [$invoice, $itemA, $itemB];
     }
 
+    /**
+     * Finance V2, Phase 1C closed the service-level path that used to let a
+     * test (or any caller) simulate a historical unallocated payment by
+     * calling InvoicePaymentService::record() with allocations omitted
+     * against a currently allocation-clean multi-item invoice — that call
+     * is now itself the thing Phase 1C rejects (see
+     * FinanceV2Phase1CAllocationInvariantTest's central safety test).
+     * Genuinely pre-Phase-1 (or pre-Phase-1C) rows already exist in
+     * production without ever going through record(), so characterizing
+     * that legacy shape here means writing the InvoicePayment/CashTransaction
+     * rows directly, exactly as they would already exist on disk — never
+     * inventing which item they paid down.
+     */
+    private function insertLegacyUnallocatedPayment(Invoice $invoice, CashAccount $account, string $amount): InvoicePayment
+    {
+        $payment = InvoicePayment::create([
+            'invoice_id' => $invoice->id,
+            'cash_account_id' => $account->id,
+            'amount' => $amount,
+            'payment_method' => 'cash',
+            'paid_at' => now(),
+            'created_by' => $this->accountant->id,
+            'idempotency_key' => (string) Str::uuid(),
+            'idempotency_hash' => hash('sha256', 'legacy-'.Str::random()),
+        ]);
+        CashTransaction::create([
+            'cash_account_id' => $account->id,
+            'created_by' => $this->accountant->id,
+            'invoice_payment_id' => $payment->id,
+            'amount' => $amount,
+            'type' => CashTransaction::TYPE_IN,
+            'category' => CashTransaction::CATEGORY_INCOME,
+            'description' => 'Legacy pre-Phase-1 payment (test fixture)',
+        ]);
+        $invoice->refreshPaymentStatus();
+
+        return $payment;
+    }
+
     public function test_per_item_outstanding_cap_is_enforced_across_separate_payments(): void
     {
         [$invoice, $itemA, $itemB] = $this->issueCleanMultiItemInvoice('CapEnforced');
@@ -130,17 +170,12 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
         $account = $this->cashAccount();
 
         // Simulate a payment recorded before Phase 1 allocation tracking
-        // existed — the same call shape Phase 1A's fallback (and the
-        // orphaned InvoiceController::pay() caller) still produces:
-        // allocations omitted entirely against a multi-item invoice.
-        app(InvoicePaymentService::class)->record(
-            invoiceId: $invoice->id,
-            cashAccountId: $account->id,
-            amount: '300.00',
-            paymentMethod: 'cash',
-            idempotencyKey: (string) Str::uuid(),
-            actor: $this->accountant,
-        );
+        // existed. Phase 1C closes the service-level path that used to let
+        // record() itself produce this shape against a clean invoice (see
+        // insertLegacyUnallocatedPayment()'s docblock), so the legacy row
+        // is written directly here instead — exactly the shape it would
+        // already have on disk.
+        $this->insertLegacyUnallocatedPayment($invoice, $account, '300.00');
         $this->assertSame(0, PaymentAllocation::count(), 'the historical payment carries no allocation rows, by construction');
 
         // The invoice is no longer allocation-clean. A caller that now
@@ -163,14 +198,7 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
         [$invoice, , ] = $this->issueCleanMultiItemInvoice('HistoricalUi');
         $account = $this->cashAccount();
 
-        app(InvoicePaymentService::class)->record(
-            invoiceId: $invoice->id,
-            cashAccountId: $account->id,
-            amount: '300.00',
-            paymentMethod: 'cash',
-            idempotencyKey: (string) Str::uuid(),
-            actor: $this->accountant,
-        );
+        $this->insertLegacyUnallocatedPayment($invoice, $account, '300.00');
 
         // The payment form must not offer (and must not require) per-item
         // allocation for an invoice we cannot safely compute remaining

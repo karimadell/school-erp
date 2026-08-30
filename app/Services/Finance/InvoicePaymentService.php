@@ -24,24 +24,34 @@ class InvoicePaymentService
 
     /**
      * @param  ?array<int, array{invoice_item_id: int, amount: string}>  $allocations
-     *         Finance V2, Phase 1A (docs/finance-v2-architecture.md §7).
-     *         Which InvoiceItem(s) this payment pays down, and how much of
-     *         each. Optional and backward-compatible:
+     *         Finance V2, Phase 1A/1C (docs/finance-v2-architecture.md §7,
+     *         §19 Phase 1C). Which InvoiceItem(s) this payment pays down,
+     *         and how much of each:
      *           - Omitted (null) against an invoice with exactly one
      *             InvoiceItem: one PaymentAllocation is created
      *             automatically for the full payment amount — no caller
      *             change required.
-     *           - Omitted (null) against a multi-item invoice: no
-     *             PaymentAllocation rows are created at all (Phase 1A's
-     *             intentional, temporary "unallocated" state — Charge &
-     *             Collect, Classic Invoice, and existing-invoice payment
-     *             are not yet updated to supply this; that is Phase 1B).
-     *             This is never treated as an error in Phase 1A.
+     *           - Omitted (null) against a multi-item invoice: legal only
+     *             when the invoice is allocation-ambiguous (a historical
+     *             unallocated payment, or any refund, already makes its
+     *             true per-item remaining capacity unknowable — see
+     *             isAllocationClean()). Zero PaymentAllocation rows are
+     *             created. Never automatically distributed, never
+     *             inferred. Against an allocation-clean multi-item invoice
+     *             this is now rejected (Phase 1C) instead of silently
+     *             leaving the payment unallocated (Phase 1A's closed
+     *             default) — the clean/ambiguous decision is made here,
+     *             inside this method's own transaction and invoice lock,
+     *             never trusted from a caller's own (possibly stale)
+     *             pre-check.
      *           - Supplied explicitly: every invoice_item_id must belong
      *             to this same invoice, every amount must be > 0, and the
      *             amounts must sum to exactly $amount — validated with the
      *             same decimal-string rigor as the payment amount itself.
-     *             Never inferred, never proportional.
+     *             Never inferred, never proportional. Rejected outright
+     *             against an allocation-ambiguous invoice (existing
+     *             behavior, unchanged by Phase 1C — see
+     *             validateAllocations()).
      */
     public function record(
         int $invoiceId,
@@ -114,9 +124,6 @@ class InvoicePaymentService
             // payment pays down. Explicit allocations are validated as
             // given; omitted allocations auto-resolve only when the
             // invoice has exactly one item (no ambiguity to guess at).
-            // Any other omitted case is left unallocated — Phase 1A's
-            // intentional, temporary, non-error state (see the record()
-            // docblock and docs/finance-v2-architecture.md §19 Phase 1A).
             $invoiceItems = $invoice->items()->get();
             if ($allocations !== null) {
                 $this->validateAllocations($allocations, $invoice, $invoiceItems, $amount, $paid);
@@ -125,6 +132,33 @@ class InvoicePaymentService
                     'invoice_item_id' => $invoiceItems->first()->id,
                     'amount' => $amount,
                 ]];
+            } elseif ($invoiceItems->count() > 1) {
+                // Finance V2, Phase 1C (docs/finance-v2-architecture.md §19
+                // Phase 1C) — omitted allocations against a multi-item
+                // invoice are only acceptable when the invoice is already
+                // allocation-ambiguous (a historical unallocated payment, or
+                // a refund, makes its true per-item remaining capacity
+                // unknowable — see isAllocationClean()). A genuinely
+                // allocation-clean multi-item invoice has no such excuse:
+                // every caller reaching this point must supply an explicit
+                // split, so omitting one is rejected instead of silently
+                // leaving the payment unallocated (Phase 1A's old,
+                // now-closed, default for this case).
+                //
+                // Decided here, inside record()'s own transaction and after
+                // the invoice lock above, via isAllocationCleanLocked() —
+                // never trusting a caller's own (possibly stale,
+                // pre-lock) isAllocationClean() check. That call uses the
+                // exact same hasAnyRefunds()/allocated-vs-paid comparison
+                // validateAllocations() relies on, so "clean" means the
+                // same thing on both the explicit and omitted paths.
+                if ($this->isAllocationCleanLocked($invoice, $invoiceItems, $paid)) {
+                    throw ValidationException::withMessages(['allocations' => 'Укажите распределение платежа по услугам.']);
+                }
+                // Ambiguous multi-item invoice — Phase 1C's intentional,
+                // temporary compatibility exception. $allocations stays
+                // null; zero PaymentAllocation rows are created below. Never
+                // guess which item(s) this money actually pays down.
             }
 
             $installment = null;
@@ -287,16 +321,42 @@ class InvoicePaymentService
      */
     public function isAllocationClean(Invoice $invoice): bool
     {
+        $paid = $this->money((string) InvoicePayment::query()->where('invoice_id', $invoice->id)->sum('amount'));
+
+        return $this->isAllocationCleanLocked($invoice, $invoice->items()->get(), $paid);
+    }
+
+    /**
+     * Finance V2, Phase 1C — the single, authoritative definition of
+     * "allocation-clean" (docs/finance-v2-architecture.md §19 Phase 1C):
+     * no refund has ever touched this invoice, AND every payment recorded
+     * against it so far is fully represented in PaymentAllocation rows.
+     * Both isAllocationClean() (the advisory, outside-the-lock check UI
+     * controllers use to decide what to show) and record() itself (the
+     * authoritative, inside-the-lock check that decides whether an omitted
+     * allocation is actually legal) call this same helper so the two can
+     * never silently disagree on what "clean" means.
+     *
+     * record() passes a $paidSoFar it already computed under the invoice
+     * lock (Invoice::netPaidAmount(), taken after Invoice::lockForUpdate())
+     * — safe because a refund existing at all is caught by the
+     * hasAnyRefunds() check below regardless, so net and gross paid only
+     * ever differ in exactly the case this method already treats as
+     * unclean.
+     *
+     * @param  Collection<int, \App\Models\InvoiceItem>  $invoiceItems
+     */
+    private function isAllocationCleanLocked(Invoice $invoice, Collection $invoiceItems, string $paidSoFar): bool
+    {
         if ($this->hasAnyRefunds($invoice->id)) {
             return false;
         }
 
-        $paid = $this->money((string) InvoicePayment::query()->where('invoice_id', $invoice->id)->sum('amount'));
         $allocated = $this->money((string) PaymentAllocation::query()
-            ->whereIn('invoice_item_id', $invoice->items()->pluck('id'))
+            ->whereIn('invoice_item_id', $invoiceItems->pluck('id'))
             ->sum('amount'));
 
-        return bccomp($paid, $allocated, 2) === 0;
+        return bccomp($paidSoFar, $allocated, 2) === 0;
     }
 
     /** Whether any PaymentRefund exists against any payment on this invoice. */

@@ -124,16 +124,16 @@ class CashBalanceArithmeticTest extends TestCase
         $this->openCashSession($account, $user);
         $invoice = $this->makeInvoice($account, total: 1000, paid: 0);
 
-        $response = $this->actingAs($user)->post(route('dashboard.invoices.pay', $invoice), [
-            'amount' => 300,
-            'cash_account_id' => $account->id,
-            'payment_method' => 'cash',
-            // ADR-008: every money write requires an idempotency key (uuid).
-            // Deterministic literal so the test posts a single, well-formed key.
-            'idempotency_key' => '11111111-1111-4111-8111-111111111111',
-        ]);
+        // Finance V2, Phase 1B.1: InvoiceController::pay() (formerly posted
+        // to here) is retired (410) — it never resolved cash_account_id to
+        // its canonical account and stayed capable of creating unallocated
+        // multi-item payments after Phase 1B closed that gap everywhere
+        // else. recordCashPayment() exercises the same canonical service
+        // every other write path in this file already uses, against the
+        // same arbitrary (non-canonical) drawer this test's balance
+        // arithmetic is actually about.
+        $this->recordCashPayment($invoice, $account, $user, '300.00', '11111111-1111-4111-8111-111111111111');
 
-        $response->assertSessionHasNoErrors();
         $this->assertSame('800.00', $account->fresh()->balance);
     }
 
@@ -144,13 +144,7 @@ class CashBalanceArithmeticTest extends TestCase
         $this->openCashSession($account, $user);
         $invoice = $this->makeInvoice($account, total: 1000, paid: 0);
 
-        $this->actingAs($user)->post(route('dashboard.invoices.pay', $invoice), [
-            'amount' => 250,
-            'cash_account_id' => $account->id,
-            'payment_method' => 'cash',
-            // ADR-008: idempotency key (uuid) required on every money write.
-            'idempotency_key' => '22222222-2222-4222-8222-222222222222',
-        ]);
+        $this->recordCashPayment($invoice, $account, $user, '250.00', '22222222-2222-4222-8222-222222222222');
 
         // Exactly one ledger row and exactly one balance movement — not
         // 500 (the old, doubled behavior). Opening the shift adds no

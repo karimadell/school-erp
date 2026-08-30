@@ -90,7 +90,18 @@ class InvoicePaymentService
                 throw ValidationException::withMessages(['amount' => 'Сумма платежа должна быть больше нуля.']);
             }
 
-            $paid = $this->money((string) InvoicePayment::query()->where('invoice_id', $invoice->id)->sum('amount'));
+            // Finance V2, Phase 1B.1 — net of refunds, not gross InvoicePayment
+            // sum. InvoiceRefundService::refund() never writes a negative
+            // InvoicePayment row, so a gross sum here would never reflect a
+            // refund: an invoice paid in full and then partially refunded
+            // would still read as "fully paid" and reject a legitimate
+            // replacement payment. Invoice::netPaidAmount() is the same
+            // canonical (gross payments − gross refunds) calculation
+            // Invoice::refreshPaymentStatus() already uses after a refund —
+            // reusing it here keeps record()'s own view of "already paid"
+            // consistent with the invoice's own persisted state instead of
+            // diverging from it.
+            $paid = $this->money($invoice->netPaidAmount());
             $remaining = bcsub($this->money($invoice->total_amount), $paid, 2);
             if (bccomp($remaining, '0.00', 2) <= 0) {
                 throw ValidationException::withMessages(['amount' => 'Счёт уже полностью оплачен.']);

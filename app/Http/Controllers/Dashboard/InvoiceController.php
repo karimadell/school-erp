@@ -226,26 +226,21 @@ class InvoiceController extends Controller
         return $pdf->download('invoice-'.$invoice->id.'.pdf');
     }
 
-    public function pay(Request $request, Invoice $invoice, InvoicePaymentService $payments): RedirectResponse
+    public function pay(Request $request, Invoice $invoice): RedirectResponse
     {
-        $data = $request->validate([
-            'amount' => ['required', 'numeric', 'min:0.01'],
-            'cash_account_id' => ['required', 'exists:cash_accounts,id'],
-            'payment_method' => ['required', 'in:cash,bank,card,transfer'],
-            'idempotency_key' => ['required', 'uuid'],
-        ]);
-
-        $payments->record(
-            invoiceId: $invoice->id,
-            cashAccountId: (int) $data['cash_account_id'],
-            paymentMethod: $data['payment_method'],
-            amount: (string) $data['amount'],
-            idempotencyKey: $data['idempotency_key'],
-            actor: $request->user(),
-            reference: 'Оплата по счёту '.$invoice->display_number,
-        );
-
-        return back()->with('success', __('invoices.payment_received'));
+        // Finance V2, Phase 1B.1 safety lockdown: this endpoint predates the
+        // modern payment screen (FinanceOperationsController::createPayment()/
+        // storePayment(), route dashboard.invoices.payments.*), had no
+        // reachable UI of its own (dashboard/invoices/pay.blade.php is never
+        // served by any GET route), never resolved cash_account_id to its
+        // canonical account the way every other student-facing payment
+        // caller does, and always called InvoicePaymentService::record()
+        // with $allocations omitted — so against a real multi-item invoice
+        // it remained capable of creating an unallocated payment even after
+        // Phase 1B closed that gap everywhere it could be reached from the
+        // UI. Audited for live consumers before disabling: none found
+        // (see docs/finance-v2-architecture.md §19 Phase 1B.1).
+        abort(410, 'Устаревший способ оплаты отключён. Используйте современную форму приёма платежа.');
     }
 
     public function refund(Request $request, Invoice $invoice): RedirectResponse

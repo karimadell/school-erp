@@ -73,6 +73,30 @@ class Phase0SafetyLockdownTest extends FinanceOperationsTestCase
             ->assertStatus(410);
     }
 
+    public function test_legacy_invoice_pay_endpoint_is_disabled(): void
+    {
+        // Finance V2, Phase 1B.1: InvoiceController::pay() had no reachable
+        // UI (dashboard/invoices/pay.blade.php is never served by any GET
+        // route), never resolved cash_account_id to its canonical account,
+        // and always called InvoicePaymentService::record() unallocated —
+        // so it stayed capable of creating an unallocated multi-item
+        // payment after Phase 1B closed that gap everywhere reachable from
+        // the UI. Retired with the same 410 pattern as the legacy refund
+        // endpoint above.
+        $invoice = $this->invoice();
+
+        $this->actingAs($this->accountant)
+            ->post(route('dashboard.invoices.pay', $invoice), [
+                'amount' => '100.00',
+                'cash_account_id' => $this->cash->id,
+                'payment_method' => 'cash',
+                'idempotency_key' => (string) Str::uuid(),
+            ])
+            ->assertStatus(410);
+
+        $this->assertDatabaseCount('invoice_payments', 0);
+    }
+
     public function test_legacy_transport_monthly_invoices_is_disabled(): void
     {
         $this->actingAs($this->accountant)

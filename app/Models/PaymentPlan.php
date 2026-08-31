@@ -18,4 +18,10 @@ class PaymentPlan extends Model
     {
         return $query->where('is_active', true);
     }
+
+    /** Finance V2, Phase 2B — Fees this plan is explicitly assigned to. */
+    public function fees()
+    {
+        return $this->belongsToMany(Fee::class, 'fee_payment_plan');
+    }
 }

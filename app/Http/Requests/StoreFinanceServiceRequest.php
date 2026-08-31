@@ -26,6 +26,21 @@ class StoreFinanceServiceRequest extends FormRequest
             'is_active' => ['required', 'boolean'],
             'is_non_refundable' => ['required', 'boolean'],
             'amount' => ['prohibited'], 'base_price' => ['prohibited'],
+            // Finance V2, Phase 2B — service-aware billing schedules: which
+            // billing periods this Fee allows, and (only meaningful when
+            // 'custom_plan' is among them) which specific PaymentPlan(s)
+            // are explicitly assigned to it. A PaymentPlan is never offered
+            // to a Fee that isn't listed here.
+            'billing_periods' => ['nullable', 'array'],
+            'billing_periods.*' => [Rule::in([
+                \App\Models\FeeBillingPeriod::PERIOD_ONCE,
+                \App\Models\FeeBillingPeriod::PERIOD_MONTHLY,
+                \App\Models\FeeBillingPeriod::PERIOD_QUARTERLY,
+                \App\Models\FeeBillingPeriod::PERIOD_YEARLY,
+                \App\Models\FeeBillingPeriod::PERIOD_CUSTOM_PLAN,
+            ])],
+            'payment_plan_ids' => ['nullable', 'array'],
+            'payment_plan_ids.*' => ['integer', 'exists:payment_plans,id'],
         ];
     }
 

@@ -186,6 +186,7 @@ class QuickStudentRegistrationService
                 'items' => $items,
                 'payment_type' => $data['payment_type'] ?? 'one_time',
                 'payment_plan_id' => $data['payment_plan_id'] ?? null,
+                'billing_period' => $data['billing_period'] ?? null,
             ], $actor, subscriptionResolver: $subscriptionResolver, origin: Invoice::ORIGIN_QUICK_REGISTRATION);
 
             // Quick Registration's own per-line concerns — the initial
@@ -257,22 +258,97 @@ class QuickStudentRegistrationService
             }
 
             if (bccomp($paidNow, '0.00', 2) > 0) {
-                $installment = $invoice->installments()->orderBy('sequence')->firstOrFail();
-                if (bccomp($paidNow, (string)$installment->remaining_amount, 2) > 0) {
-                    throw ValidationException::withMessages(['services'=>'Первоначальная оплата превышает сумму первого этапа рассрочки.']);
+                // Finance V2, Phase 2B (§4 of the approved design): a
+                // calendar/custom-plan schedule can now have more than one
+                // installment, and "full payment" must settle every one of
+                // them, not just the first. Walk installments in sequence,
+                // fully settling as many as $paidNow covers; a remainder
+                // that doesn't exactly cover the next whole installment is
+                // rejected (same validation-error pattern as the old
+                // single-installment check, generalized to "the next
+                // uncovered installment" rather than hardcoded to #1).
+                $installments = $invoice->installments()->orderBy('sequence')->get();
+                if ($installments->isEmpty()) {
+                    throw ValidationException::withMessages(['services' => 'У счёта отсутствуют этапы оплаты.']);
                 }
-                $this->payments->record(
-                    invoiceId: $invoice->id,
-                    cashAccountId: CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null),
-                    amount: $paidNow,
-                    paymentMethod: $data['payment_method'],
-                    idempotencyKey: (string) Str::uuid(),
-                    actor: $actor,
-                    reference: "Быстрая регистрация {$invoice->invoice_number}",
-                    notes: $data['payment_note'] ?? null,
-                    installmentId: $installment->id,
-                    allocations: $allocations,
-                );
+
+                // Each entry: [installment, amount to record against it].
+                // For the single-installment case, amount is $paidNow
+                // itself (may be a genuine partial payment, unchanged from
+                // the original behavior). For a multi-installment schedule,
+                // each settled installment's amount is its own full
+                // remaining_amount, since only whole installments may be
+                // settled (validated below).
+                $toRecord = [];
+
+                if ($installments->count() === 1) {
+                    // Unchanged original behavior: a single-installment
+                    // invoice (one_time payment_type — the overwhelmingly
+                    // common case) accepts any partial-or-full amount up
+                    // to that one installment's remaining balance. The
+                    // "must exactly cover a whole number of installments"
+                    // rule below only makes sense once there's more than
+                    // one installment to walk.
+                    $installment = $installments->first();
+                    if (bccomp($paidNow, (string) $installment->remaining_amount, 2) > 0) {
+                        throw ValidationException::withMessages(['services' => 'Первоначальная оплата превышает сумму первого этапа рассрочки.']);
+                    }
+                    $toRecord[] = [$installment, $paidNow];
+                } else {
+                    $remainingToApply = $paidNow;
+                    foreach ($installments as $installment) {
+                        if (bccomp($remainingToApply, '0.00', 2) <= 0) {
+                            break;
+                        }
+                        $due = (string) $installment->remaining_amount;
+                        if (bccomp($remainingToApply, $due, 2) < 0) {
+                            throw ValidationException::withMessages(['services' => 'Первоначальная оплата не покрывает целое число этапов оплаты.']);
+                        }
+                        $toRecord[] = [$installment, $due];
+                        $remainingToApply = bcsub($remainingToApply, $due, 2);
+                    }
+                    if (bccomp($remainingToApply, '0.00', 2) > 0) {
+                        // Cannot happen given upstream per-line paid_now
+                        // caps (never exceeds a line's own amount, and
+                        // lines sum to the invoice total) — guarded
+                        // defensively rather than silently over-applying.
+                        throw ValidationException::withMessages(['services' => 'Первоначальная оплата превышает сумму счёта.']);
+                    }
+                }
+
+                $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
+                foreach ($toRecord as $index => [$installment, $amount]) {
+                    $this->payments->record(
+                        invoiceId: $invoice->id,
+                        cashAccountId: $cashAccountId,
+                        amount: $amount,
+                        paymentMethod: $data['payment_method'],
+                        idempotencyKey: (string) Str::uuid(),
+                        actor: $actor,
+                        reference: "Быстрая регистрация {$invoice->invoice_number}",
+                        notes: $data['payment_note'] ?? null,
+                        installmentId: $installment->id,
+                        // Service-level attribution ($allocations) was built
+                        // from each service's own individually-entered
+                        // paid_now amount, summing to the FULL $paidNow —
+                        // it can only be attached to a record() call whose
+                        // own amount is that same full total (Phase 1A/1C's
+                        // SUM(allocations) === payment.amount invariant), so
+                        // it is only ever passed when this whole payment
+                        // settles in exactly one installment. Whenever it
+                        // spans more than one (count($toRecord) > 1),
+                        // splitting per-item attribution across installment
+                        // slices would require guessing which item's money
+                        // landed in which period — never done here; the
+                        // whole payment is honestly recorded as Unallocated
+                        // (Phase 2A's existing "Не распределено" bucket)
+                        // instead. NOTE: null (not []) is what actually
+                        // means "no explicit allocation" to record() — an
+                        // empty array is itself a validation error there
+                        // (Phase 1A/1C: "specify the allocation").
+                        allocations: (count($toRecord) === 1 && $index === 0) ? $allocations : null,
+                    );
+                }
             }
 
             return compact('student', 'enrollment', 'invoice');

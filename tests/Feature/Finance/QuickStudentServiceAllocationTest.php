@@ -181,6 +181,12 @@ class QuickStudentServiceAllocationTest extends TestCase
         $paymentPlan = PaymentPlan::create(['name_ru' => 'План', 'is_active' => true]);
         $paymentPlan->installments()->create(['name_ru' => 'Первый', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '10']);
         $paymentPlan->installments()->create(['name_ru' => 'Второй', 'sequence' => 2, 'offset_days' => 30, 'percentage' => '90']);
+        // Finance V2, Phase 2B: the plan must be explicitly assigned to the
+        // fee (and the fee must allow 'custom_plan') so this test still
+        // reaches the LATE, in-transaction rollback it's designed to
+        // exercise, rather than an early request-validation rejection.
+        $meal->billingPeriods()->create(['billing_period' => 'custom_plan']);
+        $meal->assignedPaymentPlans()->attach($paymentPlan->id);
 
         $response = $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'plan', 'payment_plan_id' => $paymentPlan->id,

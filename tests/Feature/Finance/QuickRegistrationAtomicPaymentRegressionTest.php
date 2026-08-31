@@ -217,6 +217,10 @@ class QuickRegistrationAtomicPaymentRegressionTest extends QuickRegistrationUxTe
         $plan = PaymentPlan::create(['name_ru' => 'Два взноса', 'is_active' => true]);
         $plan->installments()->create(['name_ru' => 'Первый взнос', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '40']);
         $plan->installments()->create(['name_ru' => 'Второй взнос', 'sequence' => 2, 'offset_days' => 60, 'percentage' => '60']);
+        // Finance V2, Phase 2B: PaymentPlan must be explicitly assigned to
+        // the Fee (and the Fee must allow 'custom_plan') to be usable.
+        $fee->billingPeriods()->create(['billing_period' => 'custom_plan']);
+        $fee->assignedPaymentPlans()->attach($plan->id);
         $account = CashAccount::operating();
         app(CashSessionService::class)->open($account, $this->accountant);
 

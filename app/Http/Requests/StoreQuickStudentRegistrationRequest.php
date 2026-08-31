@@ -70,8 +70,10 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
             'payment_method' => ['nullable', Rule::in(['cash', 'card', 'bank', 'transfer', 'instapay'])],
             'payment_note' => ['nullable', 'string', 'max:1000'],
-            'payment_type' => ['required', Rule::in(['one_time', 'plan'])],
+            'payment_type' => ['required', Rule::in(['one_time', 'plan', 'calendar'])],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
+            // Finance V2, Phase 2B — service-aware billing schedules.
+            'billing_period' => ['nullable', 'required_if:payment_type,calendar', Rule::in(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)],
             'invoice_number' => ['prohibited'],
             'currency' => ['prohibited'],
             'subtotal_amount' => ['prohibited'],
@@ -154,6 +156,34 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 }
                 if ($category === Fee::CATEGORY_FOOD && blank($item['meal_plan_id'] ?? null)) {
                     $validator->errors()->add("services.{$index}.meal_plan_id", 'Для питания выберите план питания.');
+                }
+            }
+
+            // Finance V2, Phase 2B — service-aware billing schedules: the
+            // chosen payment_type/billing_period/payment_plan_id must be
+            // valid for EVERY selected service's Fee, never assumed valid
+            // globally. This is what blocks e.g. Registration (which only
+            // ever allows 'once') from being swept into a monthly/quarterly
+            // schedule when bundled with Tuition in the same submission.
+            $paymentType = $this->input('payment_type');
+            if ($paymentType === 'calendar') {
+                $billingPeriod = $this->input('billing_period');
+                foreach ($services as $index => $item) {
+                    $fee = $fees->get((int) ($item['fee_id'] ?? 0));
+                    if ($fee && $billingPeriod && ! $fee->allowsBillingPeriod($billingPeriod)) {
+                        $validator->errors()->add('billing_period', "Услуга «{$fee->name_ru}» не поддерживает выбранный период оплаты.");
+                    }
+                }
+            } elseif ($paymentType === 'plan') {
+                $planId = $this->input('payment_plan_id');
+                foreach ($services as $index => $item) {
+                    $fee = $fees->get((int) ($item['fee_id'] ?? 0));
+                    if ($fee && $planId && (
+                        ! $fee->allowsBillingPeriod(\App\Models\FeeBillingPeriod::PERIOD_CUSTOM_PLAN)
+                        || ! $fee->assignedPaymentPlans()->where('payment_plans.id', $planId)->exists()
+                    )) {
+                        $validator->errors()->add('payment_plan_id', "Выбранный план оплаты не назначен для услуги «{$fee->name_ru}».");
+                    }
                 }
             }
 

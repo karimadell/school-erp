@@ -99,14 +99,21 @@ class InvoiceIssuanceServiceTest extends FinanceOperationsTestCase
      */
     public function test_a_failure_generating_the_installment_plan_rolls_back_the_whole_invoice(): void
     {
+        // Finance V2, Phase 2B: a nonexistent payment_plan_id is now caught
+        // by the "is this plan explicitly assigned to this fee" check
+        // (ValidationException) before the redundant PaymentPlan::findOrFail
+        // lookup is ever reached — a plan id that doesn't exist can never
+        // be "assigned" to any fee either. The scenario this test locks in
+        // (atomic rollback on ANY installment-generation failure) is
+        // unchanged; only which exception type surfaces first is different.
         try {
             app(InvoiceIssuanceService::class)->issue(
                 $this->student,
                 $this->data(['payment_type' => 'plan', 'payment_plan_id' => 999999]),
                 $this->accountant,
             );
-            $this->fail('Expected a ModelNotFoundException for the missing payment plan.');
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            $this->fail('Expected a ValidationException for the unassigned/missing payment plan.');
+        } catch (ValidationException) {
             // expected
         }
 

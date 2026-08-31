@@ -18,7 +18,7 @@ use Illuminate\Validation\ValidationException;
 
 class InvoicePaymentService
 {
-    public function __construct(private CashSessionService $sessions)
+    public function __construct(private CashSessionService $sessions, private PaymentAllocationAnalyzer $analyzer)
     {
     }
 
@@ -481,106 +481,14 @@ class InvoicePaymentService
         }
         $refunds = $refundsQuery->get();
 
-        // Every (already invoice-item-scoped) PaymentAllocation, keyed by
-        // its own id and grouped by the payment it belongs to — used below
-        // for O(1) cross-reference lookups while validating refund
-        // allocations, and for the per-payment coverage check, without a
-        // query per payment/refund line.
-        $allocationsById = $allocations->keyBy('id');
-        $allocationsByPayment = $allocations->groupBy('invoice_payment_id');
-
-        $clean = true;
-
-        foreach ($payments as $payment) {
-            if (bccomp((string) $payment->amount, '0.00', 2) <= 0) {
-                // Legacy negative/zero-amount row — record() never produces
-                // one. Phase 1E does not redesign legacy refund history;
-                // conservatively ambiguous.
-                $clean = false;
-
-                continue;
-            }
-            // Scoped to THIS invoice's own items (see $allocationsQuery
-            // above), so a payment with some allocations pointing at a
-            // foreign invoice's item necessarily under-sums here and fails
-            // the coverage check below — never needs a separate
-            // cross-invoice-item check.
-            $coverage = $this->money((string) $allocationsByPayment->get($payment->id, collect())->reduce(
-                fn (string $carry, $a) => bcadd($carry, (string) $a->amount, 2), '0.00'
-            ));
-            if (bccomp($coverage, $this->money((string) $payment->amount), 2) !== 0) {
-                // FULL coverage is required to be clean. ZERO coverage
-                // (grandfathered historical data — allowed to keep
-                // existing, never backfilled) and PARTIAL coverage
-                // (anomalous/corrupt) both poison the invoice; this single
-                // comparison catches both, since bccomp('0.00', amount)
-                // never equals 0 for a canonical positive payment.
-                $clean = false;
-            }
-        }
-
-        $refundedByAllocation = [];
-        foreach ($refunds as $refund) {
-            if (bccomp((string) $refund->amount, '0.00', 2) <= 0) {
-                $clean = false;
-
-                continue;
-            }
-            $coverage = $this->money((string) $refund->allocations->reduce(
-                fn (string $carry, $a) => bcadd($carry, (string) $a->amount, 2), '0.00'
-            ));
-            if (bccomp($coverage, $this->money((string) $refund->amount), 2) !== 0) {
-                // FULL coverage is required to be clean. ZERO coverage
-                // (historical/unattributed — allowed to keep existing) and
-                // PARTIAL coverage (anomalous) both poison the invoice.
-                $clean = false;
-
-                continue;
-            }
-            foreach ($refund->allocations as $refundAllocation) {
-                $allocation = $allocationsById->get($refundAllocation->payment_allocation_id);
-                if (! $allocation || $allocation->invoice_payment_id !== $refund->invoice_payment_id) {
-                    // Cross-payment (or dangling / cross-invoice-item)
-                    // refund allocation — never producible through
-                    // InvoiceRefundService, must still be checked at read
-                    // time.
-                    $clean = false;
-
-                    continue;
-                }
-                if (bccomp((string) $refundAllocation->amount, '0.00', 2) <= 0) {
-                    $clean = false;
-
-                    continue;
-                }
-                $refundedByAllocation[$refundAllocation->payment_allocation_id] = bcadd(
-                    $refundedByAllocation[$refundAllocation->payment_allocation_id] ?? '0.00',
-                    $this->money((string) $refundAllocation->amount),
-                    2
-                );
-            }
-        }
-
-        $netByItem = $invoiceItems->mapWithKeys(fn ($item) => [$item->id => '0.00']);
-        foreach ($allocationsById as $allocation) {
-            $refunded = $this->money($refundedByAllocation[$allocation->id] ?? '0.00');
-            if (bccomp($refunded, (string) $allocation->amount, 2) > 0) {
-                // Cumulative refunds against this one allocation exceed
-                // what was ever allocated to it.
-                $clean = false;
-            }
-            $net = bcsub((string) $allocation->amount, $refunded, 2);
-            $netByItem[$allocation->invoice_item_id] = bcadd($netByItem[$allocation->invoice_item_id], $net, 2);
-        }
-
-        foreach ($invoiceItems as $item) {
-            $net = $netByItem[$item->id];
-            if (bccomp($net, '0.00', 2) < 0 || bccomp($net, $this->money((string) $item->amount), 2) > 0) {
-                $clean = false;
-            }
-        }
-
-        return ['clean' => $clean, 'netByItem' => $netByItem];
+        // Finance V2, Phase 2A extraction — the pure arithmetic/classification
+        // that used to live inline here now lives in PaymentAllocationAnalyzer
+        // (stateless, no queries, no locking), so the Collections read model
+        // can reuse the exact same invariant. Nothing above this line moved:
+        // the fetching, the lock order, and the $forUpdate conditionals are
+        // untouched, preserving the deadlock-avoidance proof in this method's
+        // own docblock.
+        return $this->analyzer->analyzeInvoice($invoiceItems, $payments, $allocations, $refunds);
     }
 
     /**

@@ -375,6 +375,10 @@ Route::middleware(['auth', 'administrative'])
         Route::resource('fee-prices', FeePriceController::class);
         Route::prefix('finance')->name('finance.')->group(function () {
             Route::get('workspace', [FinanceOperationsController::class, 'workspace'])->name('workspace');
+            // Phase 2A — read-only Collections/«Поступления» surface over
+            // canonical confirmed student payments (permission-gated inside
+            // FinanceCollectionsController).
+            Route::get('collections', [\App\Http\Controllers\Dashboard\FinanceCollectionsController::class, 'index'])->name('collections.index');
             Route::get('installments', [PaymentPlanController::class, 'reports'])->name('installments.index');
             Route::get('subscriptions', [StudentSubscriptionController::class, 'control'])->name('subscriptions.index');
             Route::resource('payment-plans', PaymentPlanController::class)->except(['show', 'destroy']);

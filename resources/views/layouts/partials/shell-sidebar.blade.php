@@ -87,6 +87,8 @@
             'label' => 'Финансы',
             'items' => [
                 ['label' => __('finance_uat.student_finance'), 'icon' => 'landmark', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.workspace' : null, 'active' => 'dashboard.finance.workspace'],
+                // Phase 2A — read-only Collections/«Поступления» over confirmed InvoicePayment/PaymentRefund records.
+                ['label' => 'Поступления', 'icon' => 'payments', 'route' => auth()->user()?->can('view collections') ? 'dashboard.finance.collections.index' : null, 'active' => 'dashboard.finance.collections.*'],
                 ['label' => __('finance_uat.invoices'), 'icon' => 'receipt', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.invoices.index' : null, 'active' => 'dashboard.invoices.*'],
                 ['label' => 'Массовое начисление', 'icon' => 'banknote', 'route' => auth()->user()?->can('view mass billing') ? 'dashboard.finance.mass-billing.index' : null, 'active' => 'dashboard.finance.mass-billing.*'],
                 ['label' => __('finance_uat.services_and_fees'), 'icon' => 'credit_card', 'route' => auth()->user()?->can('manage fees') ? 'dashboard.finance.services.index' : null, 'active' => 'dashboard.finance.services.*'],

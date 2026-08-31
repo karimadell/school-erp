@@ -56,6 +56,11 @@ class RolesAndPermissionsSeeder extends Seeder
 
             // Finance
             'view invoices', 'manage invoices',
+            // Phase 2A — read-only Collections/«Поступления» page over
+            // confirmed InvoicePayment/PaymentRefund records. Distinct from
+            // 'view invoices' (obligations) since the sensitivity of a
+            // confirmed-cash ledger is not identical to an invoice list.
+            'view collections',
             // F4D-A Mass Billing: separated into view (read history/results),
             // manage (draft/edit/preview) and execute (issue many invoices at
             // once) so the sensitive execute step is gated independently of
@@ -153,6 +158,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'view students',
             'view enrollments',
             'view invoices', 'manage invoices',
+            // Phase 2A — accountant reads the Collections/«Поступления» page.
+            'view collections',
             'view mass billing',
             'manage mass billing',
             'execute mass billing',
@@ -195,6 +202,8 @@ class RolesAndPermissionsSeeder extends Seeder
         $cashier->syncPermissions([
             'view students',
             'view invoices', 'manage invoices',
+            // Phase 2A — cashier reads the Collections/«Поступления» page.
+            'view collections',
             'view student balances',
             // Phase 3: a cashier physically operates the drawer, so they open,
             // close and reconcile their own shift (a cash collection now

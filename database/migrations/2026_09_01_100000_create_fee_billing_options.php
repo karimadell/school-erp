@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\Fee;
+use App\Services\Finance\HistoricalBillingCompatibilityService;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -80,6 +81,16 @@ return new class extends Migration
         if ($rows !== []) {
             DB::table('fee_billing_periods')->insert($rows);
         }
+
+        // Review finding H1: the category-based seeding above only covers
+        // Registration/Tuition/Transport/Food. Any OTHER Fee that was
+        // ACTUALLY invoiced with a custom PaymentPlan historically (back
+        // when a plan was offered to every Fee unconditionally) must not
+        // silently lose that capability the moment Fee-scoped plan
+        // validation starts being enforced. Grants only pairs that were
+        // genuinely used together — never a blanket grant. See
+        // HistoricalBillingCompatibilityService's own docblock.
+        (new HistoricalBillingCompatibilityService)->grantHistoricalCustomPlanAssignments();
     }
 
     public function down(): void

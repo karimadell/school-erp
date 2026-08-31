@@ -74,6 +74,14 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
             // Finance V2, Phase 2B — service-aware billing schedules.
             'billing_period' => ['nullable', 'required_if:payment_type,calendar', Rule::in(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)],
+            // Finance V2, Phase 2B corrective pass (review finding M3): a
+            // stable per-page-render token used to derive deterministic
+            // installment-payment idempotency keys, so a retried submission
+            // of the same rendered form cannot create duplicate payments.
+            // Optional — a caller that never supplies one (e.g. a
+            // non-browser API consumer) falls back to today's behavior
+            // (QuickStudentRegistrationService generates one itself).
+            'idempotency_token' => ['nullable', 'string', 'max:100'],
             'invoice_number' => ['prohibited'],
             'currency' => ['prohibited'],
             'subtotal_amount' => ['prohibited'],
@@ -171,7 +179,8 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 foreach ($services as $index => $item) {
                     $fee = $fees->get((int) ($item['fee_id'] ?? 0));
                     if ($fee && $billingPeriod && ! $fee->allowsBillingPeriod($billingPeriod)) {
-                        $validator->errors()->add('billing_period', "Услуга «{$fee->name_ru}» не поддерживает выбранный период оплаты.");
+                        $periodLabel = \App\Models\FeeBillingPeriod::PERIOD_LABELS[$billingPeriod] ?? $billingPeriod;
+                        $validator->errors()->add('billing_period', "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}».");
                     }
                 }
             } elseif ($paymentType === 'plan') {

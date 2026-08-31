@@ -74,6 +74,12 @@ class StoreInvoiceRequest extends FormRequest
             'allocations' => ['nullable', 'array'],
             'allocations.*' => ['nullable', 'decimal:0,2', 'min:0'],
             'notes' => ['nullable', 'string', 'max:1000'],
+            // Finance V2, Phase 2B (review finding M2): deliberately NOT
+            // extended to accept 'calendar' — calendar (monthly/quarterly/
+            // yearly) billing is Quick-Registration-only in this phase.
+            // Classic Invoice (this request) supports one-time and
+            // explicit-custom-plan billing only; see StoreQuickStudentRegistrationRequest
+            // for where 'calendar' is accepted.
             'payment_type' => ['required', 'in:one_time,plan'],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
             'subtotal' => ['prohibited'],

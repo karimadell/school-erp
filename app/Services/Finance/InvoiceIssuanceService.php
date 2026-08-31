@@ -192,7 +192,7 @@ class InvoiceIssuanceService
                 foreach ($invoiceFees as $fee) {
                     if (! $fee->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN)
                         || ! $fee->assignedPaymentPlans()->where('payment_plans.id', $data['payment_plan_id'])->exists()) {
-                        throw ValidationException::withMessages(['payment_plan_id' => 'Выбранный план оплаты не назначен для одной из услуг счёта.']);
+                        throw ValidationException::withMessages(['payment_plan_id' => "Выбранный план оплаты не назначен для услуги «{$fee->name_ru}»."]);
                     }
                 }
                 $plan = PaymentPlan::active()->lockForUpdate()->findOrFail($data['payment_plan_id']);
@@ -204,7 +204,8 @@ class InvoiceIssuanceService
                 }
                 foreach ($invoiceFees as $fee) {
                     if (! $fee->allowsBillingPeriod($billingPeriod)) {
-                        throw ValidationException::withMessages(['billing_period' => 'Выбранный период оплаты недоступен для одной из услуг счёта.']);
+                        $periodLabel = FeeBillingPeriod::PERIOD_LABELS[$billingPeriod] ?? $billingPeriod;
+                        throw ValidationException::withMessages(['billing_period' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
                     }
                 }
                 $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $data['pricing_date'], $year->end_date->toDateString());

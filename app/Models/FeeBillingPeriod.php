@@ -23,6 +23,15 @@ class FeeBillingPeriod extends Model
 
     public const CALENDAR_PERIODS = [self::PERIOD_MONTHLY, self::PERIOD_QUARTERLY, self::PERIOD_YEARLY];
 
+    /** Russian display labels — used in validation messages naming the specific rejected period. */
+    public const PERIOD_LABELS = [
+        self::PERIOD_ONCE => 'разово',
+        self::PERIOD_MONTHLY => 'ежемесячно',
+        self::PERIOD_QUARTERLY => 'ежеквартально',
+        self::PERIOD_YEARLY => 'ежегодно',
+        self::PERIOD_CUSTOM_PLAN => 'индивидуальный план',
+    ];
+
     protected $fillable = ['fee_id', 'billing_period'];
 
     public function fee()

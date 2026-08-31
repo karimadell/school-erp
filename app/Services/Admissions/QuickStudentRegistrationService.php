@@ -25,6 +25,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Ramsey\Uuid\Uuid;
 
 class QuickStudentRegistrationService
 {
@@ -317,13 +318,41 @@ class QuickStudentRegistrationService
                 }
 
                 $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
+                // Finance V2, Phase 2B corrective pass (review finding M3):
+                // deterministic, per-installment-INDEX idempotency keys
+                // derived from one outer, page-render-stable token — not a
+                // fresh random UUID per call. Deliberately keyed on the
+                // POSITION within this submission's own schedule, not on
+                // invoice_id/installment_id: issue() always creates a brand
+                // new Invoice (no invoice-level dedup exists, and adding
+                // one is out of scope here), so a true retry produces a
+                // DIFFERENT invoice/installment id every time regardless —
+                // keying on those would never actually collide, silently
+                // allowing a full duplicate registration through. Keying on
+                // the stable (token, index) pair instead means a retry's
+                // first record() call reuses attempt one's exact key, finds
+                // its existing InvoicePayment, computes a hash against the
+                // RETRY's own (different) invoice/installment id, gets a
+                // hash mismatch, and throws — which rolls back the retry's
+                // entire transaction (including its just-created Invoice)
+                // via InvoicePaymentService::record()'s own idempotency-hash
+                // check. Net effect: a retried submission never leaves a
+                // second InvoicePayment/CashTransaction pair (or a second
+                // Invoice) committed — it fails cleanly instead. A caller
+                // with no idempotency_token (e.g. a non-browser API
+                // consumer) falls back to today's fresh-UUID-per-attempt
+                // behavior, unchanged.
+                $outerToken = $data['idempotency_token'] ?? null;
                 foreach ($toRecord as $index => [$installment, $amount]) {
+                    $idempotencyKey = $outerToken
+                        ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:{$index}")
+                        : (string) Str::uuid();
                     $this->payments->record(
                         invoiceId: $invoice->id,
                         cashAccountId: $cashAccountId,
                         amount: $amount,
                         paymentMethod: $data['payment_method'],
-                        idempotencyKey: (string) Str::uuid(),
+                        idempotencyKey: $idempotencyKey,
                         actor: $actor,
                         reference: "Быстрая регистрация {$invoice->invoice_number}",
                         notes: $data['payment_note'] ?? null,

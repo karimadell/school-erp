@@ -275,6 +275,52 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         $this->assertSame('1000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2));
     }
 
+    // ----- request-level idempotency for multi-installment full payment (review finding M3) -----
+
+    public function test_replaying_the_same_submission_does_not_duplicate_installment_payments(): void
+    {
+        $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1000.00', ['monthly']);
+        $payload = array_replace($this->base, ['registration_date' => '2026-08-01']) + [
+            'payment_type' => 'calendar', 'billing_period' => 'monthly',
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1000.00']],
+            'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
+            // Fixed, explicit token — simulates the SAME already-rendered
+            // form (same hidden idempotency_token field) being submitted
+            // twice: a double-click, or an automatic retry of the same POST.
+            'idempotency_token' => 'test-fixed-idempotency-token-0001',
+        ];
+
+        $first = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $payload);
+        $first->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame(1, Invoice::count());
+        $this->assertSame(11, InvoicePayment::count());
+        $firstInvoiceId = Invoice::sole()->id;
+
+        // The exact same payload, same token, submitted a second time.
+        $second = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $payload);
+
+        // The retry must fail cleanly (idempotency-key collision on the
+        // first installment) rather than silently duplicating anything —
+        // and per InvoicePaymentService::record()'s own idempotency-hash
+        // check, the collision is detected against a DIFFERENT invoice's
+        // installment (the retry always creates its own new Invoice, since
+        // invoice creation itself has no dedup), so the hash necessarily
+        // mismatches and record() rejects it. Because register()'s entire
+        // body — student, enrollment, invoice, installments, and the
+        // payment loop — runs inside one transaction, that rejection rolls
+        // back everything the retry attempted, leaving only attempt one's
+        // data behind.
+        $second->assertSessionHasErrors('idempotency_key');
+
+        // No duplication anywhere: same single invoice, same 11 payments —
+        // not 2 invoices, not 22 payments.
+        $this->assertSame(1, Invoice::count(), 'the retry\'s own Invoice must have been rolled back, not left as a second row');
+        $this->assertSame($firstInvoiceId, Invoice::sole()->id);
+        $this->assertSame(11, InvoicePayment::count(), 'no duplicate InvoicePayment rows from the retry');
+        $this->assertSame('1000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2), 'total collected must still equal exactly one full payment, not two');
+    }
+
     public function test_partial_payment_not_covering_a_whole_number_of_installments_is_rejected(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1100.00', ['monthly']);

@@ -12,6 +12,11 @@ class InstallmentQuickRegistrationTest extends QuickRegistrationUxTestCase
     {
         $structure=$this->structure(); [$year]= $structure; $fee=$this->fee('Обучение','tuition','1200.00',$year->id);
         $plan=PaymentPlan::create(['name_ru'=>'Три взноса','is_active'=>true]);
+        // Finance V2, Phase 2B: a PaymentPlan must now be explicitly
+        // assigned to the Fee (and the Fee must allow 'custom_plan') to be
+        // usable — never offered globally.
+        $fee->billingPeriods()->create(['billing_period'=>'custom_plan']);
+        $fee->assignedPaymentPlans()->attach($plan->id);
         foreach([['Первый взнос',0,'30'],['Второй взнос',30,'30'],['Третий взнос',60,'40']] as $i=>$row)$plan->installments()->create(['name_ru'=>$row[0],'sequence'=>$i+1,'offset_days'=>$row[1],'percentage'=>$row[2]]);
         $payload=$this->payload($structure,$fee,['payment_type'=>'plan','payment_plan_id'=>$plan->id,'services'=>[['fee_id'=>$fee->id,'quantity'=>1,'paid_now'=>'0.00']]]);
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'),$payload)->assertSessionHasNoErrors()->assertRedirect();
@@ -24,6 +29,8 @@ class InstallmentQuickRegistrationTest extends QuickRegistrationUxTestCase
     {
         $structure=$this->structure(); [$year]= $structure; $fee=$this->fee('Обучение','tuition','1200.00',$year->id);
         $plan=PaymentPlan::create(['name_ru'=>'План','is_active'=>true]);
+        $fee->billingPeriods()->create(['billing_period'=>'custom_plan']);
+        $fee->assignedPaymentPlans()->attach($plan->id);
         $plan->installments()->create(['name_ru'=>'Первый','sequence'=>1,'offset_days'=>0,'percentage'=>'10']);
         $plan->installments()->create(['name_ru'=>'Второй','sequence'=>2,'offset_days'=>30,'percentage'=>'90']);
         $cash=CashAccount::create(['name'=>'Касса','type'=>'cash','is_active'=>true]);

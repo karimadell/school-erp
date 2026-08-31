@@ -6,6 +6,7 @@ use App\Models\AcademicYear;
 use App\Models\AuditLog;
 use App\Models\Enrollment;
 use App\Models\Fee;
+use App\Models\FeeBillingPeriod;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\PaymentPlan;
@@ -177,9 +178,37 @@ class InvoiceIssuanceService
                 $invoice->fees()->attach($feePivotRows);
             }
 
+            // Finance V2, Phase 2B: $feesById already holds exactly the Fees
+            // on this invoice (resolved above from $data['items']) — used
+            // below to validate the chosen billing option is one every one
+            // of them actually allows, never a blanket global option.
+            $invoiceFees = $feesById;
+
             if ($data['payment_type'] === 'plan') {
+                // Phase 2B fix: a PaymentPlan is only valid for this invoice
+                // if it is explicitly assigned to EVERY Fee being invoiced
+                // (and that Fee allows 'custom_plan') — never offered
+                // globally to any Fee regardless of assignment.
+                foreach ($invoiceFees as $fee) {
+                    if (! $fee->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN)
+                        || ! $fee->assignedPaymentPlans()->where('payment_plans.id', $data['payment_plan_id'])->exists()) {
+                        throw ValidationException::withMessages(['payment_plan_id' => "Выбранный план оплаты не назначен для услуги «{$fee->name_ru}»."]);
+                    }
+                }
                 $plan = PaymentPlan::active()->lockForUpdate()->findOrFail($data['payment_plan_id']);
                 $this->plans->generate($invoice, $plan, $data['pricing_date']);
+            } elseif ($data['payment_type'] === 'calendar') {
+                $billingPeriod = $data['billing_period'] ?? null;
+                if (! in_array($billingPeriod, FeeBillingPeriod::CALENDAR_PERIODS, true)) {
+                    throw ValidationException::withMessages(['billing_period' => 'Укажите период оплаты.']);
+                }
+                foreach ($invoiceFees as $fee) {
+                    if (! $fee->allowsBillingPeriod($billingPeriod)) {
+                        $periodLabel = FeeBillingPeriod::PERIOD_LABELS[$billingPeriod] ?? $billingPeriod;
+                        throw ValidationException::withMessages(['billing_period' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
+                    }
+                }
+                $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $data['pricing_date'], $year->end_date->toDateString());
             } else {
                 $this->plans->generateSingle($invoice, $data['due_date']);
             }

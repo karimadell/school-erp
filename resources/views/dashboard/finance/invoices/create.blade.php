@@ -241,6 +241,40 @@ document.addEventListener('DOMContentLoaded', () => {
     date.addEventListener('change', update);
     form.addEventListener('submit', event => { if (!form.querySelector('.fee-check:checked') || form.dataset.pricingAvailable === 'false') event.preventDefault(); });
     update();
+
+    // Finance V2, Phase 2B corrective pass (review finding M2): narrow the
+    // "План оплаты" dropdown to only the PaymentPlan(s) explicitly assigned
+    // to EVERY currently-checked Fee (the intersection) — a plan valid for
+    // Tuition but not Transport must not appear once both are checked,
+    // matching InvoiceIssuanceService::issue()'s own server-side rule
+    // (Phase 2B / M1: every Fee on the invoice must allow the same
+    // strategy). That server-side check remains the authoritative
+    // backstop regardless of what this filter shows.
+    const planSelect = document.getElementById('modern-invoice-payment-plan-select');
+    if (planSelect) {
+        const feePlanMap = JSON.parse(planSelect.dataset.feePlanMap || '{}');
+        const filterPaymentPlans = () => {
+            const checkedFeeIds = Array.from(document.querySelectorAll('.fee-check:checked')).map(el => el.value);
+            let allowed = null;
+            if (checkedFeeIds.length > 0) {
+                allowed = checkedFeeIds.reduce((intersection, feeId) => {
+                    const plansForFee = new Set((feePlanMap[feeId] || []).map(String));
+                    return intersection === null ? plansForFee : new Set([...intersection].filter(id => plansForFee.has(id)));
+                }, null);
+            }
+            let selectedStillValid = false;
+            Array.from(planSelect.options).forEach(option => {
+                if (option.value === '') { return; }
+                const eligible = allowed !== null && allowed.has(option.value);
+                option.hidden = !eligible;
+                option.disabled = !eligible;
+                if (eligible && option.value === planSelect.value) { selectedStillValid = true; }
+            });
+            if (planSelect.value !== '' && !selectedStillValid) { planSelect.value = ''; }
+        };
+        document.querySelectorAll('.fee-check').forEach(element => element.addEventListener('change', filterPaymentPlans));
+        filterPaymentPlans();
+    }
 });
 </script>
 @endpush

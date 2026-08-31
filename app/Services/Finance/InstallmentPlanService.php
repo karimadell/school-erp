@@ -34,4 +34,97 @@ class InstallmentPlanService
         InvoiceInstallment::create(['invoice_id'=>$invoice->id,'name_ru'=>'Полная оплата','sequence'=>1,'due_date'=>$dueDate,
             'amount'=>$invoice->total_amount,'paid_amount'=>'0.00','remaining_amount'=>$invoice->total_amount,'status'=>'pending']);
     }
+
+    /**
+     * Finance V2, Phase 2B — service-aware billing schedules
+     * (docs/finance-v2-architecture.md).
+     *
+     * Calendar-period installment generation: monthly/quarterly/yearly,
+     * spaced by real calendar-month/quarter boundaries — never a fixed
+     * day-offset (that remains InstallmentPlanService::generate()'s job,
+     * for explicit custom PaymentPlans only). No proration: the starting
+     * period is always charged in full regardless of how far into it
+     * $startDate falls — any partial-period discount is a separate,
+     * explicit administrator adjustment (finance.adjustments), never
+     * automatic here.
+     *
+     * 'yearly' delegates to generateSingle() — a single full-amount
+     * installment is exactly what a yearly schedule is, so it is not
+     * duplicated as a second code path.
+     *
+     * First installment is due immediately (on $startDate itself — the
+     * starting period's charge is due now, not on a future calendar
+     * boundary). Every subsequent installment is due on the 1st of its
+     * own calendar month/quarter — a real calendar boundary, never
+     * $startDate + N days.
+     *
+     * Rounding: total ÷ period-count, each period bcmath-truncated to 2dp,
+     * with the LAST period absorbing whatever remainder is left over — the
+     * same last-segment rounding-safety pattern generate() already uses
+     * for percentage splits, applied here to a straight equal split.
+     */
+    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate): void
+    {
+        if ($billingPeriod === 'yearly') {
+            $this->generateSingle($invoice, $startDate);
+
+            return;
+        }
+
+        if (! in_array($billingPeriod, ['monthly', 'quarterly'], true)) {
+            throw ValidationException::withMessages(['billing_period' => 'Неизвестный период оплаты.']);
+        }
+
+        $start = Carbon::parse($startDate)->startOfDay();
+        $yearEnd = Carbon::parse($academicYearEndDate)->startOfDay();
+        if ($yearEnd->lt($start)) {
+            throw ValidationException::withMessages(['registration_date' => 'Дата регистрации не может быть позже окончания учебного года.']);
+        }
+
+        $monthsPerPeriod = $billingPeriod === 'quarterly' ? 3 : 1;
+
+        // Calendar-quarter boundaries (Jan/Apr/Jul/Oct), never an
+        // arbitrary 3-month window starting at the registration date —
+        // "calendar periods, not day/month offsets" applies to quarter
+        // alignment too.
+        $periodStart = $start->copy()->startOfMonth();
+        if ($billingPeriod === 'quarterly') {
+            $quarterStartMonth = (intdiv($periodStart->month - 1, 3) * 3) + 1;
+            $periodStart->month($quarterStartMonth);
+        }
+
+        $periodEndAnchor = $yearEnd->copy()->startOfMonth();
+        if ($billingPeriod === 'quarterly') {
+            $quarterStartMonth = (intdiv($periodEndAnchor->month - 1, 3) * 3) + 1;
+            $periodEndAnchor->month($quarterStartMonth);
+        }
+
+        $periodCount = $periodStart->diffInMonths($periodEndAnchor) / $monthsPerPeriod + 1;
+        $periodCount = (int) round($periodCount);
+
+        $total = bcadd((string) $invoice->total_amount, '0', 2);
+        $each = bcdiv($total, (string) $periodCount, 2);
+        $allocated = '0.00';
+
+        for ($i = 0; $i < $periodCount; $i++) {
+            $last = $i === $periodCount - 1;
+            $amount = $last ? bcsub($total, $allocated, 2) : $each;
+            $allocated = bcadd($allocated, $amount, 2);
+
+            $dueDate = $i === 0
+                ? $start->copy()
+                : $periodStart->copy()->addMonths($i * $monthsPerPeriod);
+
+            InvoiceInstallment::create([
+                'invoice_id' => $invoice->id,
+                'name_ru' => 'Период '.($i + 1),
+                'sequence' => $i + 1,
+                'due_date' => $dueDate,
+                'amount' => $amount,
+                'paid_amount' => '0.00',
+                'remaining_amount' => $amount,
+                'status' => 'pending',
+            ]);
+        }
+    }
 }

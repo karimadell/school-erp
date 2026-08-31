@@ -60,6 +60,15 @@
 
     <form method="POST" action="{{ route('dashboard.quick-registration.store') }}" id="quick-registration-form">
         @csrf
+        {{-- Finance V2, Phase 2B corrective pass (review finding M3): generated
+             ONCE per page render, never by JS on interaction, so a double-click
+             or an automatic retry of this same already-rendered form submits
+             the SAME token both times. old() preserves it across a
+             validation-error round-trip; only a genuine fresh page load gets
+             a new one. Used server-side to derive stable, deterministic
+             per-installment payment idempotency keys instead of a fresh
+             random one per attempt. --}}
+        <input type="hidden" name="idempotency_token" value="{{ old('idempotency_token', (string) \Illuminate\Support\Str::uuid()) }}">
         <section class="card shadow-sm mb-4">
             <div class="card-header fw-bold">1. Минимальные данные ученика</div>
             <div class="card-body row g-3">

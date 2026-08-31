@@ -81,6 +81,42 @@ class Fee extends Model
     }
 
     /**
+     * Finance V2, Phase 2B — which billing periods this Fee allows
+     * (once/monthly/quarterly/yearly/custom_plan). A Fee may allow several
+     * at once (e.g. Tuition: monthly, quarterly, yearly).
+     */
+    public function billingPeriods()
+    {
+        return $this->hasMany(FeeBillingPeriod::class);
+    }
+
+    /**
+     * Finance V2, Phase 2B — PaymentPlans explicitly assigned to this Fee.
+     * Only meaningful when billingPeriods() includes 'custom_plan'. A
+     * PaymentPlan is NEVER offered to a Fee it isn't explicitly assigned to
+     * here — this is the fix for the reported bug where every active
+     * PaymentPlan was offered to every Fee unconditionally.
+     */
+    public function assignedPaymentPlans()
+    {
+        return $this->belongsToMany(PaymentPlan::class, 'fee_payment_plan');
+    }
+
+    /**
+     * Whether this Fee allows the given billing period. Uses the loaded
+     * billingPeriods relation if already eager-loaded (no extra query);
+     * falls back to a query otherwise.
+     */
+    public function allowsBillingPeriod(string $period): bool
+    {
+        if ($this->relationLoaded('billingPeriods')) {
+            return $this->billingPeriods->contains('billing_period', $period);
+        }
+
+        return $this->billingPeriods()->where('billing_period', $period)->exists();
+    }
+
+    /**
      * If this Fee is a uniform bundle, the items that make it up.
      */
     public function bundleComponents()

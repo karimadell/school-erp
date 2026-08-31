@@ -9,9 +9,9 @@ use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\PaymentAllocation;
+use App\Models\PaymentRefund;
 use App\Services\Finance\CashSessionService;
 use App\Services\Finance\InvoicePaymentService;
-use App\Services\Finance\InvoiceRefundService;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -110,6 +110,45 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
         $invoice->refreshPaymentStatus();
 
         return $payment;
+    }
+
+    /**
+     * Finance V2, Phase 1D/1E fixture — a refund with ZERO
+     * PaymentRefundAllocation rows, exactly as a pre-Phase-1D refund (or a
+     * Phase 1D refund against a zero-allocation payment) would already have
+     * on disk. Never producible through InvoiceRefundService::refund()
+     * against a single-allocation payment any more — Phase 1D auto-attributes
+     * that case — so it is written directly here, mirroring
+     * insertLegacyUnallocatedPayment()'s approach, to keep exercising the
+     * genuinely-unattributed-refund ambiguity path Phase 1E still requires.
+     */
+    private function insertLegacyUnattributedRefund(InvoicePayment $payment, CashAccount $account, string $amount): PaymentRefund
+    {
+        $refund = PaymentRefund::create([
+            'invoice_payment_id' => $payment->id,
+            'invoice_id' => $payment->invoice_id,
+            'student_id' => $payment->invoice->student_id,
+            'cash_account_id' => $account->id,
+            'amount' => $amount,
+            'currency' => 'EGP',
+            'reason' => 'Legacy unattributed refund (test fixture)',
+            'refunded_at' => now(),
+            'created_by' => $this->accountant->id,
+            'idempotency_key' => (string) Str::uuid(),
+            'idempotency_hash' => hash('sha256', 'legacy-refund-'.Str::random()),
+        ]);
+        $transaction = CashTransaction::create([
+            'cash_account_id' => $account->id,
+            'created_by' => $this->accountant->id,
+            'amount' => $amount,
+            'type' => CashTransaction::TYPE_OUT,
+            'category' => CashTransaction::CATEGORY_REFUND,
+            'description' => 'Legacy unattributed refund (test fixture)',
+        ]);
+        $refund->forceFill(['cash_transaction_id' => $transaction->id])->save();
+        $payment->invoice->refreshPaymentStatus();
+
+        return $refund;
     }
 
     public function test_per_item_outstanding_cap_is_enforced_across_separate_payments(): void
@@ -262,17 +301,21 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
 
     /**
      * Refund/re-payment compatibility gate (post-Phase-1B safety
-     * correction). InvoiceRefundService::refund() never mutates or deletes
-     * PaymentAllocation rows — there is no payment_refund_allocations table
-     * yet (Phase 1D) to say which item a refund gave money back from. So
-     * once any refund exists against an invoice, its PaymentAllocation sums
-     * are gross and permanently untrustworthy for a per-item cap: an item
-     * that was fully allocated and then partially refunded still reads as
-     * fully allocated. isAllocationClean() and validateAllocations() must
-     * both treat any refund as allocation-ambiguous and fall back to Phase
-     * 1A's unallocated path — never guess which item the refund came from.
+     * correction, revised by Finance V2 Phase 1E). InvoiceRefundService::
+     * refund() never mutated or deleted PaymentAllocation rows — before
+     * Phase 1D's PaymentRefundAllocation table existed, there was no way to
+     * say which item a refund gave money back from, so any refund at all
+     * made PaymentAllocation sums gross and permanently untrustworthy. That
+     * remains true for a genuinely UNATTRIBUTED refund (this fixture,
+     * insertLegacyUnattributedRefund() — zero PaymentRefundAllocation
+     * rows): isAllocationClean() and validateAllocations() still treat it
+     * as allocation-ambiguous and fall back to Phase 1A's unallocated path.
+     * A refund Phase 1D can and does fully attribute (auto-attributed
+     * against a payment with exactly one allocation) is covered separately
+     * by the Phase 1E test suite, which proves the invoice correctly STAYS
+     * clean in that case instead.
      */
-    public function test_isAllocationClean_becomes_false_once_any_refund_exists(): void
+    public function test_isAllocationClean_becomes_false_once_an_unattributed_refund_exists(): void
     {
         [$invoice, $itemA, ] = $this->issueCleanMultiItemInvoice('RefundGateClean');
         $account = $this->cashAccount();
@@ -284,31 +327,25 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
         );
         $this->assertTrue(app(InvoicePaymentService::class)->isAllocationClean($invoice->fresh()));
 
-        app(InvoiceRefundService::class)->refund(
-            invoicePaymentId: $payment->id, amount: '100.00', reason: 'test',
-            idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
-        );
+        $this->insertLegacyUnattributedRefund($payment, $account, '100.00');
 
         $this->assertFalse(app(InvoicePaymentService::class)->isAllocationClean($invoice->fresh()));
     }
 
-    public function test_repayment_after_a_refund_falls_back_to_unallocated_instead_of_mis_capping(): void
+    public function test_repayment_after_an_unattributed_refund_falls_back_to_unallocated_instead_of_mis_capping(): void
     {
         [$invoice, $itemA, ] = $this->issueCleanMultiItemInvoice('RefundGateRepay');
         $account = $this->cashAccount();
 
-        // Fully pay item A (500.00), then refund 100.00 of that payment —
-        // item A genuinely has 100.00 outstanding again, but its gross
-        // PaymentAllocation sum still reads as 500.00 / 500.00.
+        // Fully pay item A (500.00), then refund 100.00 of that payment
+        // WITHOUT attribution — item A genuinely has 100.00 outstanding
+        // again, but which item the refund came from is unknowable.
         $payment = app(InvoicePaymentService::class)->record(
             invoiceId: $invoice->id, cashAccountId: $account->id, amount: '500.00',
             paymentMethod: 'cash', idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
             allocations: [['invoice_item_id' => $itemA->id, 'amount' => '500.00']],
         );
-        app(InvoiceRefundService::class)->refund(
-            invoicePaymentId: $payment->id, amount: '100.00', reason: 'test',
-            idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
-        );
+        $this->insertLegacyUnattributedRefund($payment, $account, '100.00');
 
         // An explicit allocation attempt must be rejected — never silently
         // mis-capped, never guessed.
@@ -320,7 +357,7 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
         );
     }
 
-    public function test_repayment_after_a_refund_succeeds_unallocated_when_no_allocations_are_supplied(): void
+    public function test_repayment_after_an_unattributed_refund_succeeds_unallocated_when_no_allocations_are_supplied(): void
     {
         [$invoice, $itemA, ] = $this->issueCleanMultiItemInvoice('RefundGateFallback');
         $account = $this->cashAccount();
@@ -330,13 +367,11 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
             paymentMethod: 'cash', idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
             allocations: [['invoice_item_id' => $itemA->id, 'amount' => '500.00']],
         );
-        app(InvoiceRefundService::class)->refund(
-            invoicePaymentId: $payment->id, amount: '100.00', reason: 'test',
-            idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
-        );
+        $this->insertLegacyUnattributedRefund($payment, $account, '100.00');
 
         // The existing-invoice payment screen must stop offering per-item
-        // allocation for this invoice once it has a refund.
+        // allocation for this invoice once it has a genuinely unattributed
+        // refund.
         $this->actingAs($this->accountant)
             ->get(route('dashboard.invoices.payments.create', $invoice))
             ->assertOk()

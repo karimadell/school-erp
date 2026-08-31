@@ -9,6 +9,7 @@ use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\PaymentAllocation;
+use App\Models\PaymentRefund;
 use App\Services\Finance\CashSessionService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InvoiceRefundService;
@@ -111,6 +112,45 @@ class FinanceV2Phase1CAllocationInvariantTest extends MassBillingTestCase
     }
 
     /**
+     * Finance V2, Phase 1D/1E fixture — a refund with ZERO
+     * PaymentRefundAllocation rows, exactly as a pre-Phase-1D refund would
+     * already have on disk. Never producible through
+     * InvoiceRefundService::refund() against a single-allocation payment
+     * any more — Phase 1D auto-attributes that case — so it is written
+     * directly here, mirroring insertLegacyUnallocatedPayment() above, to
+     * keep exercising the genuinely-unattributed-refund ambiguity path
+     * Phase 1E still requires.
+     */
+    private function insertLegacyUnattributedRefund(InvoicePayment $payment, CashAccount $account, string $amount): PaymentRefund
+    {
+        $refund = PaymentRefund::create([
+            'invoice_payment_id' => $payment->id,
+            'invoice_id' => $payment->invoice_id,
+            'student_id' => $payment->invoice->student_id,
+            'cash_account_id' => $account->id,
+            'amount' => $amount,
+            'currency' => 'EGP',
+            'reason' => 'Legacy unattributed refund (test fixture)',
+            'refunded_at' => now(),
+            'created_by' => $this->accountant->id,
+            'idempotency_key' => (string) Str::uuid(),
+            'idempotency_hash' => hash('sha256', 'legacy-refund-'.Str::random()),
+        ]);
+        $transaction = CashTransaction::create([
+            'cash_account_id' => $account->id,
+            'created_by' => $this->accountant->id,
+            'amount' => $amount,
+            'type' => CashTransaction::TYPE_OUT,
+            'category' => CashTransaction::CATEGORY_REFUND,
+            'description' => 'Legacy unattributed refund (test fixture)',
+        ]);
+        $refund->forceFill(['cash_transaction_id' => $transaction->id])->save();
+        $payment->invoice->refreshPaymentStatus();
+
+        return $refund;
+    }
+
+    /**
      * Central Phase 1C safety test. A clean multi-item invoice has no
      * excuse for an unallocated payment — record() must reject it outright,
      * and atomically: nothing written anywhere, cash balance untouched.
@@ -203,11 +243,17 @@ class FinanceV2Phase1CAllocationInvariantTest extends MassBillingTestCase
     }
 
     /**
-     * Grandfather exception B — refund-driven ambiguity. A fully allocated
-     * payment, once refunded, makes the invoice's PaymentAllocation sums
-     * gross and permanently untrustworthy (no payment_refund_allocations
-     * table — Phase 1D, out of scope). A subsequent legitimate payment with
-     * allocations omitted must still succeed unallocated.
+     * Grandfather exception B — refund-driven ambiguity. Revised by Finance
+     * V2 Phase 1E: a refund that Phase 1D can and does fully attribute (the
+     * single-allocation auto-attribution case) now keeps the invoice
+     * allocation-CLEAN instead (see the dedicated Phase 1E test suite for
+     * that behavior). What still poisons the invoice, exactly as before, is
+     * a genuinely UNATTRIBUTED refund — simulated here via
+     * insertLegacyUnattributedRefund() rather than
+     * InvoiceRefundService::refund(), since that service would now
+     * auto-attribute a refund against this payment's sole allocation. A
+     * subsequent legitimate payment with allocations omitted must still
+     * succeed unallocated.
      */
     public function test_refund_ambiguous_invoice_still_accepts_a_null_allocation_payment(): void
     {
@@ -219,10 +265,7 @@ class FinanceV2Phase1CAllocationInvariantTest extends MassBillingTestCase
             paymentMethod: 'cash', idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
             allocations: [['invoice_item_id' => $itemA->id, 'amount' => '500.00']],
         );
-        app(InvoiceRefundService::class)->refund(
-            invoicePaymentId: $payment->id, amount: '100.00', reason: 'test',
-            idempotencyKey: (string) Str::uuid(), actor: $this->accountant,
-        );
+        $this->insertLegacyUnattributedRefund($payment, $account, '100.00');
         $this->assertFalse(app(InvoicePaymentService::class)->isAllocationClean($invoice->fresh()));
 
         $repayment = app(InvoicePaymentService::class)->record(

@@ -126,33 +126,33 @@ class InvoicePaymentService
             // invoice has exactly one item (no ambiguity to guess at).
             $invoiceItems = $invoice->items()->get();
             if ($allocations !== null) {
-                $this->validateAllocations($allocations, $invoice, $invoiceItems, $amount, $paid);
+                $this->validateAllocations($allocations, $invoice, $invoiceItems, $amount);
             } elseif ($invoiceItems->count() === 1) {
                 $allocations = [[
                     'invoice_item_id' => $invoiceItems->first()->id,
                     'amount' => $amount,
                 ]];
             } elseif ($invoiceItems->count() > 1) {
-                // Finance V2, Phase 1C (docs/finance-v2-architecture.md §19
-                // Phase 1C) — omitted allocations against a multi-item
-                // invoice are only acceptable when the invoice is already
-                // allocation-ambiguous (a historical unallocated payment, or
-                // a refund, makes its true per-item remaining capacity
-                // unknowable — see isAllocationClean()). A genuinely
-                // allocation-clean multi-item invoice has no such excuse:
-                // every caller reaching this point must supply an explicit
-                // split, so omitting one is rejected instead of silently
-                // leaving the payment unallocated (Phase 1A's old,
+                // Finance V2, Phase 1C/1E (docs/finance-v2-architecture.md
+                // §19 Phase 1C, Phase 1E) — omitted allocations against a
+                // multi-item invoice are only acceptable when the invoice is
+                // allocation-ambiguous (a historical unallocated/partial
+                // payment, or an unattributed/partial/cross-referenced
+                // refund, makes its true per-item remaining capacity
+                // unknowable — see isAllocationClean()/analyzeAllocations()).
+                // A genuinely allocation-clean multi-item invoice has no
+                // such excuse: every caller reaching this point must supply
+                // an explicit split, so omitting one is rejected instead of
+                // silently leaving the payment unallocated (Phase 1A's old,
                 // now-closed, default for this case).
                 //
                 // Decided here, inside record()'s own transaction and after
                 // the invoice lock above, via isAllocationCleanLocked() —
                 // never trusting a caller's own (possibly stale,
-                // pre-lock) isAllocationClean() check. That call uses the
-                // exact same hasAnyRefunds()/allocated-vs-paid comparison
-                // validateAllocations() relies on, so "clean" means the
+                // pre-lock) isAllocationClean() check. Both call the exact
+                // same analyzeAllocations() invariant, so "clean" means the
                 // same thing on both the explicit and omitted paths.
-                if ($this->isAllocationCleanLocked($invoice, $invoiceItems, $paid)) {
+                if ($this->isAllocationCleanLocked($invoice, $invoiceItems)) {
                     throw ValidationException::withMessages(['allocations' => 'Укажите распределение платежа по услугам.']);
                 }
                 // Ambiguous multi-item invoice — Phase 1C's intentional,
@@ -297,79 +297,298 @@ class InvoicePaymentService
     }
 
     /**
-     * Finance V2, Phase 1B — whether every payment recorded so far against
-     * this invoice is fully represented in PaymentAllocation rows
-     * (SUM(payments) === SUM(allocations)) AND no refund has ever touched
-     * any of its payments. Only a "clean" invoice has a trustworthy
-     * per-item remaining-allocatable figure; callers use this to decide
-     * whether to offer/require explicit per-item allocation UI at all
-     * (docs/finance-v2-architecture.md §19 Phase 1B). A single-item
-     * invoice is always clean by construction (Phase 1A auto-allocates
-     * every payment against its one item), and a brand-new invoice is
-     * trivially clean (zero prior payments).
+     * Finance V2, Phase 1E (docs/finance-v2-architecture.md §19 Phase 1E) —
+     * whether every payment and every refund recorded so far against this
+     * invoice is fully, unambiguously attributable to specific
+     * InvoiceItems, making its per-item remaining-allocatable figure
+     * (remainingAllocatableByItem()) trustworthy. Callers use this to
+     * decide whether to offer/require explicit per-item allocation UI at
+     * all. A single-item invoice is always clean by construction (Phase 1A
+     * auto-allocates every payment against its one item), and a brand-new
+     * invoice is trivially clean (zero prior payments/refunds).
      *
-     * The refund condition exists because InvoiceRefundService::refund()
-     * never mutates or deletes PaymentAllocation rows — there is no
-     * payment_refund_allocations table yet (Phase 1D) to say which item a
-     * refund gave money back from. Without it, PaymentAllocation sums stay
-     * gross forever: an item that was fully allocated and then partially
-     * refunded still reads as fully allocated, so its true remaining
-     * capacity is unknowable, not just untrusted. Any refund against this
-     * invoice — full, partial, on a single- or multi-line payment — makes
-     * it allocation-ambiguous; never guessed at which item(s) the refund
-     * came from.
+     * Replaces Phase 1C's blunt "any refund ⇒ ambiguous" rule with the
+     * precise per-payment/per-refund invariant Phase 1D's
+     * PaymentRefundAllocation data now makes possible — see
+     * analyzeAllocations() for the exact rules.
      */
     public function isAllocationClean(Invoice $invoice): bool
     {
-        $paid = $this->money((string) InvoicePayment::query()->where('invoice_id', $invoice->id)->sum('amount'));
-
-        return $this->isAllocationCleanLocked($invoice, $invoice->items()->get(), $paid);
+        return $this->analyzeAllocations($invoice, $invoice->items()->get())['clean'];
     }
 
     /**
-     * Finance V2, Phase 1C — the single, authoritative definition of
-     * "allocation-clean" (docs/finance-v2-architecture.md §19 Phase 1C):
-     * no refund has ever touched this invoice, AND every payment recorded
-     * against it so far is fully represented in PaymentAllocation rows.
-     * Both isAllocationClean() (the advisory, outside-the-lock check UI
-     * controllers use to decide what to show) and record() itself (the
-     * authoritative, inside-the-lock check that decides whether an omitted
-     * allocation is actually legal) call this same helper so the two can
-     * never silently disagree on what "clean" means.
-     *
-     * record() passes a $paidSoFar it already computed under the invoice
-     * lock (Invoice::netPaidAmount(), taken after Invoice::lockForUpdate())
-     * — safe because a refund existing at all is caught by the
-     * hasAnyRefunds() check below regardless, so net and gross paid only
-     * ever differ in exactly the case this method already treats as
-     * unclean.
+     * Finance V2, Phase 1E — the authoritative, inside-the-lock cleanliness
+     * check record() itself uses to decide whether an omitted allocation is
+     * legal. Both this and the public, advisory isAllocationClean() call
+     * the exact same analyzeAllocations() invariant, so the two can never
+     * silently disagree on what "clean" means — isAllocationClean() may
+     * simply observe a staler view of the same underlying facts (see
+     * record()'s own comment on why that staleness is safe).
      *
      * @param  Collection<int, \App\Models\InvoiceItem>  $invoiceItems
      */
-    private function isAllocationCleanLocked(Invoice $invoice, Collection $invoiceItems, string $paidSoFar): bool
+    private function isAllocationCleanLocked(Invoice $invoice, Collection $invoiceItems): bool
     {
-        if ($this->hasAnyRefunds($invoice->id)) {
-            return false;
-        }
-
-        $allocated = $this->money((string) PaymentAllocation::query()
-            ->whereIn('invoice_item_id', $invoiceItems->pluck('id'))
-            ->sum('amount'));
-
-        return bccomp($paidSoFar, $allocated, 2) === 0;
-    }
-
-    /** Whether any PaymentRefund exists against any payment on this invoice. */
-    private function hasAnyRefunds(int $invoiceId): bool
-    {
-        return PaymentRefund::query()->where('invoice_id', $invoiceId)->exists();
+        return $this->analyzeAllocations($invoice, $invoiceItems, forUpdate: true)['clean'];
     }
 
     /**
-     * Finance V2, Phase 1B — each of this invoice's InvoiceItems mapped to
-     * its currently allocatable remaining amount (line amount minus
-     * everything already allocated against it, across all prior payments).
-     * Only meaningful on an allocation-clean invoice — check
+     * Finance V2, Phase 1E (docs/finance-v2-architecture.md §19 Phase 1E) —
+     * the single, authoritative source of both the allocation-clean verdict
+     * and the net (gross allocated minus gross refunded) per-InvoiceItem
+     * figure. Every public/private cleanliness or remaining-capacity method
+     * on this class funnels through here, so there is exactly one
+     * definition of "clean" and one definition of "net remaining" — never
+     * two competing implementations that could silently disagree.
+     *
+     * An invoice is allocation-clean iff ALL of the following hold:
+     *
+     *   1. Every InvoicePayment on this invoice is canonical — a positive
+     *      amount (a legacy negative-amount row, from before
+     *      InvoiceRefundService existed, is never clean; Phase 1E does not
+     *      redesign legacy refund history) — AND its PaymentAllocation
+     *      coverage is exactly FULL (sums to the payment's own amount).
+     *      ZERO coverage does NOT make a payment clean — it is
+     *      grandfathered historical data that is allowed to keep existing,
+     *      but its presence makes the WHOLE INVOICE allocation-ambiguous,
+     *      exactly like partial (strictly-between) coverage, which is
+     *      corruption canonical code never produces but a read-time audit
+     *      must not assume never happened. Only FULL coverage is clean;
+     *      ZERO and PARTIAL both poison the invoice.
+     *   2. Every PaymentAllocation on this invoice belongs to one of this
+     *      invoice's own InvoiceItems.
+     *   3. Every PaymentRefund against one of this invoice's payments has
+     *      PaymentRefundAllocation coverage that is exactly FULL. ZERO
+     *      coverage (historical/unattributed — allowed to exist, never
+     *      poisons only itself) and PARTIAL coverage (anomalous) both
+     *      poison the WHOLE invoice; only FULL coverage is clean.
+     *   4. Every PaymentRefundAllocation references a PaymentAllocation
+     *      belonging to the SAME InvoicePayment the refund refunds — never
+     *      a different payment.
+     *   5. No PaymentAllocation is refunded, cumulatively across every
+     *      refund against it, more than its own amount.
+     *   6. The resulting net allocation per InvoiceItem (gross allocated
+     *      minus gross refunded) is never negative and never exceeds the
+     *      item's own amount.
+     *
+     * ONE genuinely ambiguous or anomalous event anywhere on the invoice
+     * poisons the WHOLE invoice for future item-level allocation decisions
+     * — never scoped down to "clean except this one payment/item/refund".
+     * No backfill, no proportional inference, no guessing.
+     *
+     * Every rule above is checked PER PAYMENT, PER REFUND, and PER
+     * PaymentAllocation — never as an invoice-wide aggregate sum. An
+     * aggregate-only comparison (Phase 1B/1C's original approach) cannot
+     * distinguish a genuinely clean invoice from one with compensating
+     * corruption — e.g. one payment over-allocated while another is
+     * under-allocated by the same amount, summing to a false-clean total.
+     *
+     * --- $forUpdate / lock-order safety (concurrency correction) ---------
+     *
+     * true only from record()'s own authoritative, inside-the-transaction,
+     * post-Invoice::lockForUpdate() call path. MySQL's default REPEATABLE
+     * READ isolation pins a transaction's plain (non-locking) reads to the
+     * snapshot from its FIRST read of any kind — in record() that is the
+     * idempotency-key lookup, which runs before the Invoice lock — so a
+     * later plain SELECT in that same transaction can still reflect a
+     * pre-lock snapshot even once the Invoice row itself is confirmed
+     * current via its own locking read (locking reads always see the
+     * latest committed row; that guarantee is per-row, not per-snapshot,
+     * and does not "refresh" the snapshot other statements in the same
+     * transaction fall back to).
+     *
+     * An earlier revision of this method closed that gap by also taking
+     * SELECT ... FOR UPDATE on InvoicePayment (via
+     * InvoicePayment::where('invoice_id', ...)). That is unsafe: it can
+     * lock ANY existing payment row on this invoice, including the one
+     * InvoiceRefundService::refund() locks FIRST (before Invoice) via
+     * InvoicePayment::lockForUpdate()->find($invoicePaymentId). A
+     * concurrent record() (Invoice → InvoicePayment) and refund()
+     * (InvoicePayment → Invoice) on the same invoice then form a genuine
+     * wait-for cycle — InnoDB's deadlock detector kills one transaction,
+     * surfacing as a spurious failure under ordinary concurrent traffic,
+     * not a hang, but wrong to ship.
+     *
+     * The fix is to never lock InvoicePayment at all, and only take
+     * SELECT ... FOR UPDATE on tables InvoiceRefundService never
+     * independently row-locks by id: PaymentAllocation (scoped by this
+     * invoice's own InvoiceItem ids — refund() only ever reads it
+     * plainly, via $payment->allocations()) and PaymentRefund + its
+     * eager-loaded PaymentRefundAllocation rows (refund() only ever
+     * INSERTs new rows into these two tables, under its own already-held
+     * Invoice lock, never re-locks an existing row from elsewhere). Locking
+     * exactly these tables cannot deadlock against refund()'s
+     * InvoicePayment → Invoice order, because refund() never contends for
+     * a lock on them at all.
+     *
+     * This is provably sufficient, leaving InvoicePayment itself a plain
+     * (potentially stale) read purely to enumerate payments and detect
+     * ZERO/PARTIAL per-payment coverage: canonical code can NEVER
+     * manufacture fresh ambiguity from a truly clean invoice — every path
+     * that creates a zero-coverage InvoicePayment (the Phase 1C/1E
+     * omitted-allocation compatibility branch) or a zero-coverage
+     * PaymentRefund (InvoiceRefundService's Case A) only activates when
+     * THAT SAME transaction's own, freshly-locked analyzeAllocations()
+     * call already found the invoice ambiguous — so any ambiguity a
+     * concurrent transaction could add was, transitively, always already
+     * present beforehand. The one thing a stale InvoicePayment read could
+     * still misreport — the exact gross/net amounts, if a concurrent
+     * payment consumed some item's capacity — is exactly what locking
+     * PaymentAllocation (current read) directly guards against; nothing
+     * about the clean/ambiguous verdict itself depends on InvoicePayment
+     * being current.
+     *
+     * A stale read on the purely advisory, non-transactional
+     * isAllocationClean() path (forUpdate: false) needs none of this — it
+     * only ever pushes an invoice into the safe "ambiguous" fallback,
+     * never the unsafe direction, and record() always re-validates
+     * authoritatively regardless.
+     *
+     * @param  Collection<int, \App\Models\InvoiceItem>  $invoiceItems
+     * @return array{clean: bool, netByItem: Collection<int, string>}
+     */
+    private function analyzeAllocations(Invoice $invoice, Collection $invoiceItems, bool $forUpdate = false): array
+    {
+        $itemIds = $invoiceItems->pluck('id');
+
+        // Never locked — see the "$forUpdate / lock-order safety" note
+        // above for the proof that a plain read here cannot yield a false
+        // "clean" verdict, and why locking it WOULD create a deadlock
+        // against InvoiceRefundService's InvoicePayment → Invoice order.
+        $payments = InvoicePayment::query()->where('invoice_id', $invoice->id)->get();
+
+        // Locked (when $forUpdate) for a current, non-stale read of the
+        // actual capacity consumed — InvoiceRefundService never
+        // independently row-locks PaymentAllocation, so this cannot
+        // deadlock against it.
+        $allocationsQuery = PaymentAllocation::query()->whereIn('invoice_item_id', $itemIds);
+        if ($forUpdate) {
+            $allocationsQuery->lockForUpdate();
+        }
+        $allocations = $allocationsQuery->get();
+
+        // Locked (when $forUpdate) the same way, and for the same reason —
+        // InvoiceRefundService only ever INSERTs new PaymentRefund /
+        // PaymentRefundAllocation rows (under its own already-held Invoice
+        // lock), never independently row-locks an existing one, so this
+        // cannot deadlock against it either.
+        $refundsQuery = PaymentRefund::query()->where('invoice_id', $invoice->id);
+        if ($forUpdate) {
+            $refundsQuery->lockForUpdate()->with(['allocations' => fn ($q) => $q->lockForUpdate()]);
+        } else {
+            $refundsQuery->with('allocations');
+        }
+        $refunds = $refundsQuery->get();
+
+        // Every (already invoice-item-scoped) PaymentAllocation, keyed by
+        // its own id and grouped by the payment it belongs to — used below
+        // for O(1) cross-reference lookups while validating refund
+        // allocations, and for the per-payment coverage check, without a
+        // query per payment/refund line.
+        $allocationsById = $allocations->keyBy('id');
+        $allocationsByPayment = $allocations->groupBy('invoice_payment_id');
+
+        $clean = true;
+
+        foreach ($payments as $payment) {
+            if (bccomp((string) $payment->amount, '0.00', 2) <= 0) {
+                // Legacy negative/zero-amount row — record() never produces
+                // one. Phase 1E does not redesign legacy refund history;
+                // conservatively ambiguous.
+                $clean = false;
+
+                continue;
+            }
+            // Scoped to THIS invoice's own items (see $allocationsQuery
+            // above), so a payment with some allocations pointing at a
+            // foreign invoice's item necessarily under-sums here and fails
+            // the coverage check below — never needs a separate
+            // cross-invoice-item check.
+            $coverage = $this->money((string) $allocationsByPayment->get($payment->id, collect())->reduce(
+                fn (string $carry, $a) => bcadd($carry, (string) $a->amount, 2), '0.00'
+            ));
+            if (bccomp($coverage, $this->money((string) $payment->amount), 2) !== 0) {
+                // FULL coverage is required to be clean. ZERO coverage
+                // (grandfathered historical data — allowed to keep
+                // existing, never backfilled) and PARTIAL coverage
+                // (anomalous/corrupt) both poison the invoice; this single
+                // comparison catches both, since bccomp('0.00', amount)
+                // never equals 0 for a canonical positive payment.
+                $clean = false;
+            }
+        }
+
+        $refundedByAllocation = [];
+        foreach ($refunds as $refund) {
+            if (bccomp((string) $refund->amount, '0.00', 2) <= 0) {
+                $clean = false;
+
+                continue;
+            }
+            $coverage = $this->money((string) $refund->allocations->reduce(
+                fn (string $carry, $a) => bcadd($carry, (string) $a->amount, 2), '0.00'
+            ));
+            if (bccomp($coverage, $this->money((string) $refund->amount), 2) !== 0) {
+                // FULL coverage is required to be clean. ZERO coverage
+                // (historical/unattributed — allowed to keep existing) and
+                // PARTIAL coverage (anomalous) both poison the invoice.
+                $clean = false;
+
+                continue;
+            }
+            foreach ($refund->allocations as $refundAllocation) {
+                $allocation = $allocationsById->get($refundAllocation->payment_allocation_id);
+                if (! $allocation || $allocation->invoice_payment_id !== $refund->invoice_payment_id) {
+                    // Cross-payment (or dangling / cross-invoice-item)
+                    // refund allocation — never producible through
+                    // InvoiceRefundService, must still be checked at read
+                    // time.
+                    $clean = false;
+
+                    continue;
+                }
+                if (bccomp((string) $refundAllocation->amount, '0.00', 2) <= 0) {
+                    $clean = false;
+
+                    continue;
+                }
+                $refundedByAllocation[$refundAllocation->payment_allocation_id] = bcadd(
+                    $refundedByAllocation[$refundAllocation->payment_allocation_id] ?? '0.00',
+                    $this->money((string) $refundAllocation->amount),
+                    2
+                );
+            }
+        }
+
+        $netByItem = $invoiceItems->mapWithKeys(fn ($item) => [$item->id => '0.00']);
+        foreach ($allocationsById as $allocation) {
+            $refunded = $this->money($refundedByAllocation[$allocation->id] ?? '0.00');
+            if (bccomp($refunded, (string) $allocation->amount, 2) > 0) {
+                // Cumulative refunds against this one allocation exceed
+                // what was ever allocated to it.
+                $clean = false;
+            }
+            $net = bcsub((string) $allocation->amount, $refunded, 2);
+            $netByItem[$allocation->invoice_item_id] = bcadd($netByItem[$allocation->invoice_item_id], $net, 2);
+        }
+
+        foreach ($invoiceItems as $item) {
+            $net = $netByItem[$item->id];
+            if (bccomp($net, '0.00', 2) < 0 || bccomp($net, $this->money((string) $item->amount), 2) > 0) {
+                $clean = false;
+            }
+        }
+
+        return ['clean' => $clean, 'netByItem' => $netByItem];
+    }
+
+    /**
+     * Finance V2, Phase 1E — each of this invoice's InvoiceItems mapped to
+     * its currently allocatable remaining amount: line amount minus its NET
+     * allocation (everything already allocated against it, across all
+     * prior payments, minus everything already attributed back to it by a
+     * refund). Only meaningful on an allocation-clean invoice — check
      * isAllocationClean() first; the figure cannot be trusted otherwise.
      *
      * @return Collection<int, string> amount strings keyed by invoice_item_id
@@ -377,80 +596,46 @@ class InvoicePaymentService
     public function remainingAllocatableByItem(Invoice $invoice): Collection
     {
         $items = $invoice->items()->get();
-        $allocatedByItem = PaymentAllocation::query()
-            ->whereIn('invoice_item_id', $items->pluck('id'))
-            ->selectRaw('invoice_item_id, SUM(amount) as total')
-            ->groupBy('invoice_item_id')
-            ->pluck('total', 'invoice_item_id');
+        $netByItem = $this->analyzeAllocations($invoice, $items)['netByItem'];
 
-        return $items->mapWithKeys(function ($item) use ($allocatedByItem) {
-            $allocated = $this->money((string) ($allocatedByItem->get($item->id) ?? '0.00'));
-
-            return [$item->id => bcsub($this->money((string) $item->amount), $allocated, 2)];
-        });
+        return $items->mapWithKeys(fn ($item) => [
+            $item->id => bcsub($this->money((string) $item->amount), $this->money((string) $netByItem->get($item->id, '0.00')), 2),
+        ]);
     }
 
     /**
-     * Finance V2, Phase 1B — validate an explicitly-supplied allocation
+     * Finance V2, Phase 1B/1E — validate an explicitly-supplied allocation
      * split. Never inferred, never proportional: every line must belong to
      * this same invoice, be strictly positive, and the lines must sum to
      * exactly the payment amount.
      *
-     * Phase 1B additionally enforces the per-InvoiceItem outstanding cap,
-     * which requires knowing each item's already-allocated amount from
-     * existing PaymentAllocation rows. That figure is only trustworthy when
-     * this invoice is "allocation-clean" — i.e. every payment recorded
-     * against it so far is fully represented in PaymentAllocation rows
-     * (SUM(payments) === SUM(allocations)), AND no refund has ever touched
-     * any of its payments (see isAllocationClean() for why a refund alone
-     * is enough to make the per-item cap untrustworthy — PaymentAllocation
-     * rows are never adjusted by InvoiceRefundService::refund(), and there
-     * is no payment_refund_allocations table yet to say which item a
-     * refund gave money back from). A pre-Phase-1 (or Phase 1A-unallocated)
-     * invoice can have historical payments with no allocation rows at all;
-     * for those too, we cannot know which item(s) the old money actually
-     * paid down, so we refuse to guess a per-item remaining capacity and
-     * reject explicit allocation instead — the caller must fall back to
-     * Phase 1A's unallocated path for that invoice
-     * (docs/finance-v2-architecture.md §19 Phase 1B).
+     * Enforces the per-InvoiceItem outstanding cap against each item's NET
+     * remaining capacity (gross allocated minus gross refunded —
+     * analyzeAllocations()'s netByItem), which is only trustworthy when
+     * this invoice is allocation-clean under Phase 1E's invariant — see
+     * analyzeAllocations() for the exact rules an explicit split is
+     * rejected outright without.
      *
      * @param  array<int, array{invoice_item_id: int, amount: string}>  $allocations
-     * @param  string  $paidSoFar  Total InvoicePayment amount already recorded
-     *         against this invoice, before this new payment (same value the
-     *         caller used for its own remaining-balance check).
      */
-    private function validateAllocations(array $allocations, Invoice $invoice, Collection $invoiceItems, string $amount, string $paidSoFar): void
+    private function validateAllocations(array $allocations, Invoice $invoice, Collection $invoiceItems, string $amount): void
     {
         if ($allocations === []) {
             throw ValidationException::withMessages(['allocations' => 'Укажите распределение платежа по услугам.']);
         }
 
-        if ($this->hasAnyRefunds($invoice->id)) {
-            // A refund against this invoice means PaymentAllocation sums no
-            // longer reflect true outstanding capacity per item (refunds
-            // never adjust them), and we have no way to know which item(s)
-            // a refund actually returned money from. Never guess — fall
-            // back to Phase 1A's unallocated path for this invoice.
-            throw ValidationException::withMessages(['allocations' => 'По этому счёту были возвраты, поэтому распределить новый платёж по строкам счёта нельзя.']);
+        $analysis = $this->analyzeAllocations($invoice, $invoiceItems, forUpdate: true);
+        if (! $analysis['clean']) {
+            // The invoice's true per-item remaining capacity is not
+            // knowable (a historical/unattributed/partial payment or
+            // refund, or an anomalous cross-reference, exists somewhere on
+            // it). Never guess — fall back to Phase 1A's unallocated path
+            // for this invoice.
+            throw ValidationException::withMessages(['allocations' => 'По этому счёту нет однозначного распределения по строкам счёта, поэтому распределить новый платёж по строкам счёта нельзя.']);
         }
+        $netByItem = $analysis['netByItem'];
 
-        $itemIds = $invoiceItems->pluck('id');
-        $allocatedByItem = PaymentAllocation::query()
-            ->whereIn('invoice_item_id', $itemIds)
-            ->selectRaw('invoice_item_id, SUM(amount) as total')
-            ->groupBy('invoice_item_id')
-            ->pluck('total', 'invoice_item_id');
-
-        $allocatedSoFar = $this->money((string) $allocatedByItem->reduce(fn (string $carry, $value) => bcadd($carry, (string) $value, 2), '0.00'));
-        if (bccomp($paidSoFar, $allocatedSoFar, 2) !== 0) {
-            // Historical unallocated payment(s) exist on this invoice — we
-            // cannot determine each item's true remaining allocatable
-            // amount, so an explicit per-item split cannot be safely
-            // validated or enforced. Never guess.
-            throw ValidationException::withMessages(['allocations' => 'По этому счёту есть более ранние платежи без разбивки по услугам, поэтому распределить новый платёж по строкам счёта нельзя.']);
-        }
-
-        $validItemIds = $itemIds;
+        $validItemIds = $invoiceItems->pluck('id');
         $itemsById = $invoiceItems->keyBy('id');
         $sum = '0.00';
         $lineAmountsByItem = [];
@@ -475,11 +660,12 @@ class InvoicePaymentService
         }
 
         // Per-item outstanding cap — an item can never receive more than its
-        // own line amount across all payments, historical plus this one.
+        // own NET remaining capacity (line amount minus net-of-refund
+        // allocation) across all payments, historical plus this one.
         foreach ($lineAmountsByItem as $itemId => $newAmount) {
             $item = $itemsById->get($itemId);
-            $alreadyAllocated = $this->money((string) ($allocatedByItem->get($itemId) ?? '0.00'));
-            $itemRemaining = bcsub($this->money((string) $item->amount), $alreadyAllocated, 2);
+            $netAllocated = $this->money((string) $netByItem->get($itemId, '0.00'));
+            $itemRemaining = bcsub($this->money((string) $item->amount), $netAllocated, 2);
             if (bccomp($newAmount, $itemRemaining, 2) > 0) {
                 throw ValidationException::withMessages(['allocations' => 'Сумма распределения превышает остаток по выбранной строке счёта.']);
             }

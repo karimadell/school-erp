@@ -82,6 +82,14 @@ class InvoiceCalculationService
 
         $lines = [];
         $subtotal = '0.00';
+        // Corrective pass #2 (P0 Blocker 1 — partial final quarter): the
+        // shared per-GROUP installment total, summed across every line on
+        // this invoice for the same group index — consumed verbatim by
+        // InstallmentPlanService::generateCalendarSchedule() so scheduling
+        // never re-derives amounts by dividing the aggregate total (wrong
+        // the moment groups differ in size). Only populated when this is
+        // a calendar-billed submission.
+        $scheduleAmounts = $calendarPeriods !== null ? array_fill(0, $calendarPeriods['count'], '0.00') : null;
         // Perf (504 investigation, 2026-08-29): every line item in one Quick
         // Registration/invoice submission shares the same enrollment_mode_id
         // — resolvePrice() used to re-run EnrollmentMode::find() for it on
@@ -107,61 +115,72 @@ class InvoiceCalculationService
             }
 
             $resolvedPrice = $this->resolvePrice($fee, $item, $pricingDate, $academicYearId, $modeCache);
-            $amount = $resolvedPrice['amount'];
-            $quantity = (int) ($item['quantity'] ?? 1);
+            $submittedQuantity = (int) ($item['quantity'] ?? 1);
 
-            // Phase 2D corrective pass (P0 Blocker 1): for a calendar-billed
-            // line, the number of UNITS is the covered period count, a
-            // system-computed fact — never a client-submitted quantity.
-            // filled($item['quantity']) with anything other than the
-            // (unremarkable, always-default) 1 is treated as a caller
-            // asserting something this billing mode cannot express and is
-            // rejected loudly rather than silently overridden or silently
-            // honoured (which would either mask a real client bug or
-            // double-count periods).
-            //
-            // Deliberately excludes a 'daily'-denominated resolved price
-            // (Food's own genuine per-day tariff) — multiplying a daily
-            // rate by a MONTH/quarter count would be exactly the invented,
-            // unsupported monthly-to-daily conversion explicitly forbidden
-            // for this phase; a daily-priced line keeps its pre-existing,
-            // untouched quantity semantics (whatever day-count, if any,
-            // the caller submits) — its coverage/adjustment tracking is
-            // handled entirely separately, in InvoiceIssuanceService's
-            // automatic-coverage step, independent of this line's own
-            // charged amount.
-            $isDailyPriced = ($resolvedPrice['metadata']['payment_period'] ?? null) === 'daily';
-            if ($calendarPeriods !== null && ! $isDailyPriced) {
-                $submittedQuantity = (int) ($item['quantity'] ?? 1);
-                if ($submittedQuantity !== 1 && $submittedQuantity !== $calendarPeriods['count']) {
-                    throw ValidationException::withMessages([
-                        'services' => "Количество для услуги «{$fee->name_ru}» определяется периодом оплаты и не может быть указано вручную.",
-                    ]);
-                }
-                $quantity = $calendarPeriods['count'];
-            }
-
-            if ($quantity < 1) {
-                throw ValidationException::withMessages([
-                    'services' => 'Количество услуги должно быть не меньше 1.',
-                ]);
-            }
-
-            if (bccomp($amount, '0.00', 2) <= 0) {
+            if (bccomp($resolvedPrice['amount'], '0.00', 2) <= 0) {
                 throw ValidationException::withMessages([
                     'fees' => "Для услуги «{$fee->name_ru}» не установлена положительная цена.",
                 ]);
             }
 
+            $baseAmount = $resolvedPrice['amount'];
             if (($item['first_last_month'] ?? false) === true) {
-                $amount = bcmul($amount, '2.00', 2);
+                $baseAmount = bcmul($baseAmount, '2.00', 2);
             }
 
-            $unitPrice = $amount;
-            $amount = bcmul($unitPrice, (string) $quantity, 2);
-
+            // Deliberately excludes a 'daily'-denominated resolved price
+            // (Food's own genuine per-day tariff) from the multi-period
+            // UNIT-pricing logic below — multiplying a daily rate by a
+            // MONTH/quarter count would be exactly the invented,
+            // unsupported monthly-to-daily conversion explicitly
+            // forbidden for this phase. A daily-priced line's own charge
+            // stays untouched (whatever the caller submits), but — since
+            // it still rides the SAME shared installment schedule as
+            // every other Fee on this invoice (M1) — its amount is still
+            // spread evenly across that schedule's groups below, exactly
+            // like every line did before this corrective pass (an
+            // unrelated, pre-existing scheduling behavior for Food this
+            // pass does not change).
+            $isDailyPriced = ($resolvedPrice['metadata']['payment_period'] ?? null) === 'daily';
             $lineMetadata = $resolvedPrice['metadata'];
+            $groupAmounts = null;
+
             if ($calendarPeriods !== null && ! $isDailyPriced) {
+                if ($calendarBillingPeriod === 'quarterly') {
+                    $priced = $this->priceQuarterlyLine($fee, $item, $resolvedPrice, $baseAmount, $calendarPeriods, $pricingDate, $academicYearId);
+                } else {
+                    // Monthly/yearly: every group is uniform (1 month, or
+                    // the single yearly span), so a flat unit x count is
+                    // both correct and identical to the per-group
+                    // breakdown collapsed to one number.
+                    $count = $calendarPeriods['count'];
+                    $priced = [
+                        'unit_price' => $baseAmount,
+                        'quantity' => $count,
+                        'amount' => bcmul($baseAmount, (string) $count, 2),
+                        'group_amounts' => array_fill(0, count($calendarPeriods['periods']), $baseAmount),
+                        'metadata' => [],
+                    ];
+                }
+
+                $unitPrice = $priced['unit_price'];
+                $quantity = $priced['quantity'];
+                $amount = $priced['amount'];
+                $groupAmounts = $priced['group_amounts'];
+                $lineMetadata = array_merge($lineMetadata, $priced['metadata']);
+
+                // A caller asserting a quantity this billing mode cannot
+                // express (anything other than the unremarkable default
+                // of 1, or — harmlessly — the value the system itself
+                // just computed) is rejected loudly rather than silently
+                // overridden or silently honoured, which would either
+                // mask a real client bug or double-count periods.
+                if ($submittedQuantity !== 1 && $submittedQuantity !== $quantity) {
+                    throw ValidationException::withMessages([
+                        'services' => "Количество для услуги «{$fee->name_ru}» определяется периодом оплаты и не может быть указано вручную.",
+                    ]);
+                }
+
                 // Auditable trace of the multi-period pricing computation,
                 // same storage convention as the quarterly-derivation
                 // metadata keys (derived/derived_period/etc) already
@@ -172,6 +191,42 @@ class InvoiceCalculationService
                 $lineMetadata['coverage_start'] = $calendarPeriods['periods'][0]['start'];
                 $lineMetadata['coverage_end'] = $calendarPeriods['periods'][array_key_last($calendarPeriods['periods'])]['end'];
                 $lineMetadata['line_total'] = $amount;
+            } elseif ($calendarPeriods !== null) {
+                // Food (daily-priced) on a calendar-billed invoice: charge
+                // amount is untouched (no period multiplication), but its
+                // contribution to the SHARED installment schedule is
+                // still spread evenly across every group — the same
+                // even-split-with-last-absorbing-remainder rule the whole
+                // invoice used to apply globally, now scoped to just this
+                // line's own contribution.
+                $quantity = max(1, $submittedQuantity);
+                $unitPrice = $baseAmount;
+                $amount = bcmul($unitPrice, (string) $quantity, 2);
+
+                $groupCount = count($calendarPeriods['periods']);
+                $each = bcdiv($amount, (string) $groupCount, 2);
+                $allocated = '0.00';
+                $groupAmounts = [];
+                foreach (range(0, $groupCount - 1) as $i) {
+                    $g = $i === $groupCount - 1 ? bcsub($amount, $allocated, 2) : $each;
+                    $allocated = bcadd($allocated, $g, 2);
+                    $groupAmounts[] = $g;
+                }
+            } else {
+                $quantity = $submittedQuantity;
+                if ($quantity < 1) {
+                    throw ValidationException::withMessages([
+                        'services' => 'Количество услуги должно быть не меньше 1.',
+                    ]);
+                }
+                $unitPrice = $baseAmount;
+                $amount = bcmul($unitPrice, (string) $quantity, 2);
+            }
+
+            if ($groupAmounts !== null) {
+                foreach ($groupAmounts as $i => $groupAmount) {
+                    $scheduleAmounts[$i] = bcadd($scheduleAmounts[$i], $groupAmount, 2);
+                }
             }
 
             $subtotal = bcadd($subtotal, $amount, 2);
@@ -190,6 +245,16 @@ class InvoiceCalculationService
                 'tariff_valid_from' => $resolvedPrice['valid_from'],
                 'tariff_valid_to' => $resolvedPrice['valid_to'],
                 'metadata' => $lineMetadata,
+                // Corrective pass #2 (P0 Blocker 2 — payment-to-coverage-
+                // period allocation): this line's OWN amount for each
+                // group/period, same order as $calendarPeriods['periods']
+                // — InvoiceIssuanceService stores this per-item, per-
+                // period figure on each InstallmentCoveragePeriod row so
+                // later payment allocations can be compared against the
+                // correct "full settlement" amount for THAT specific
+                // service/period, never a shared-installment aggregate.
+                // Null for a non-calendar-billed line (nothing to persist).
+                'period_amounts' => $groupAmounts,
             ];
         }
 
@@ -225,6 +290,106 @@ class InvoiceCalculationService
             'status' => $status,
             'currency' => self::CURRENCY,
             'line_items' => $lines,
+            // Corrective pass #2 (P0 Blocker 1): the shared per-group
+            // installment totals (summed across every line), consumed
+            // verbatim by InstallmentPlanService::generateCalendarSchedule()
+            // — null for every non-calendar-billed call.
+            'schedule_amounts' => $scheduleAmounts,
+        ];
+    }
+
+    /**
+     * Corrective pass #2 (P0 Blocker 1 — partial final quarter). Prices a
+     * single quarterly-billed line across CalendarPeriodCalculator's own
+     * per-group ('months') breakdown:
+     *
+     *  - DERIVED quarterly (no explicit quarterly FeePrice; resolvePrice()
+     *    already derived monthly x 3): every group — full 3-month or a
+     *    trailing 1-2 month partial — is simply monthly_unit x that
+     *    group's own month-count. The line collapses to a MONTHLY-unit
+     *    representation (unit_price=monthly rate, quantity=total months
+     *    covered), since that is the one uniform rate the whole span
+     *    actually uses — algebraically identical to (monthly x 3) applied
+     *    per full quarter plus (monthly x remainder) for the partial one.
+     *
+     *  - EXPLICIT quarterly package price (a real quarterly FeePrice
+     *    resolved): every FULL 3-month group uses that package price
+     *    as-is. A trailing partial group (1-2 months) never gets a
+     *    prorated slice of the package price — it uses a SEPARATELY
+     *    resolved monthly basis tariff x its own month-count instead
+     *    (same "never derive by dividing the package price" rule already
+     *    established for yearly). If a partial group exists and no
+     *    monthly basis is resolvable, the entire issuance fails loudly.
+     *
+     * @param  array<string, mixed>  $item  The raw submitted line selection (same shape resolvePrice() receives).
+     * @param  array<string, mixed>  $resolvedPrice  resolvePrice()'s own return value for this line.
+     * @param  string  $baseAmount  resolvedPrice()'s amount, after first_last_month doubling (if any) — the per-unit tariff (quarterly package price, or the already-doubled derived amount).
+     * @param  array{count:int, periods: array<int, array{start:string,end:string,months:int}>}  $calendarPeriods
+     * @return array{unit_price:string, quantity:int, amount:string, group_amounts: array<int,string>, metadata: array<string,mixed>}
+     */
+    private function priceQuarterlyLine(Fee $fee, array $item, array $resolvedPrice, string $baseAmount, array $calendarPeriods, string $pricingDate, ?int $academicYearId): array
+    {
+        $groups = $calendarPeriods['periods'];
+        $isDerived = ($resolvedPrice['metadata']['derived'] ?? false) === true;
+
+        if ($isDerived) {
+            $monthlyUnit = $resolvedPrice['metadata']['monthly_unit_amount'];
+            $groupAmounts = [];
+            $totalMonths = 0;
+            foreach ($groups as $group) {
+                $totalMonths += $group['months'];
+                $groupAmounts[] = bcmul($monthlyUnit, (string) $group['months'], 2);
+            }
+            $amount = array_reduce($groupAmounts, fn ($carry, $g) => bcadd($carry, $g, 2), '0.00');
+
+            return [
+                'unit_price' => $monthlyUnit,
+                'quantity' => $totalMonths,
+                'amount' => $amount,
+                'group_amounts' => $groupAmounts,
+                'metadata' => [],
+            ];
+        }
+
+        $hasPartialGroup = collect($groups)->contains(fn ($g) => $g['months'] < 3);
+        $monthlyBasis = null;
+        if ($hasPartialGroup) {
+            $basisPrice = $this->resolveCoverageBasisPrice($fee, $item, $pricingDate, $academicYearId, 'monthly');
+            if (! $basisPrice) {
+                throw ValidationException::withMessages([
+                    'fees' => "Для услуги «{$fee->name_ru}» отсутствует базовый месячный тариф для неполного квартала — настройте его перед оформлением.",
+                ]);
+            }
+            $monthlyBasis = $this->money($basisPrice->getRawOriginal('amount'));
+        }
+
+        $groupAmounts = [];
+        $fullGroupCount = 0;
+        foreach ($groups as $group) {
+            if ($group['months'] === 3) {
+                $groupAmounts[] = $baseAmount;
+                $fullGroupCount++;
+            } else {
+                $groupAmounts[] = bcmul($monthlyBasis, (string) $group['months'], 2);
+            }
+        }
+        $amount = array_reduce($groupAmounts, fn ($carry, $g) => bcadd($carry, $g, 2), '0.00');
+
+        $lastGroup = $groups[array_key_last($groups)];
+        $metadata = $hasPartialGroup ? [
+            'partial_group_months' => (string) $lastGroup['months'],
+            'partial_group_unit_price' => $monthlyBasis,
+            'partial_group_amount' => end($groupAmounts),
+            'partial_group_start' => $lastGroup['start'],
+            'partial_group_end' => $lastGroup['end'],
+        ] : [];
+
+        return [
+            'unit_price' => $baseAmount,
+            'quantity' => $fullGroupCount,
+            'amount' => $amount,
+            'group_amounts' => $groupAmounts,
+            'metadata' => $metadata,
         ];
     }
 
@@ -245,11 +410,22 @@ class InvoiceCalculationService
      * reuses) — never a division/conversion of the charged price, never
      * invented.
      *
-     * @param  array<string, mixed>  $dimensions  grade_group/option_type/option_value/size/item, from the invoiced line's own metadata
+     * Corrective pass #2 (HIGH 5 — complete, shared canonical tariff
+     * dimension set): $selection must be the FULL selection/metadata
+     * array (the same shape resolvePrice() itself receives — grade_id,
+     * grade_group, payment_period, option_type, option_value, size, item,
+     * enrollment_mode_id — whatever the invoiced line actually carries),
+     * never a hand-picked subset. dimensionalCandidates() already knows
+     * how to use every one of those fields; passing a curated subset here
+     * (as this method used to require of its callers) silently dropped
+     * grade_id/enrollment_mode_id matching for basis-price resolution
+     * even though primary price resolution uses them — this is now the
+     * SAME matching call, on the SAME input shape, for both.
+     *
+     * @param  array<string, mixed>  $selection  The full selection/metadata array — see above.
      */
-    public function resolveCoverageBasisPrice(Fee $fee, array $dimensions, string $date, ?int $academicYearId, string $targetPeriod): ?FeePrice
+    public function resolveCoverageBasisPrice(Fee $fee, array $selection, string $date, ?int $academicYearId, string $targetPeriod): ?FeePrice
     {
-        $selection = $dimensions;
         $selection['payment_period'] = $targetPeriod;
         $cache = [];
         $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $cache);

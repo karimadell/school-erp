@@ -8,8 +8,11 @@ use App\Models\CashTransaction;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\InvoiceInstallment;
+use App\Models\InstallmentCoveragePeriod;
 use App\Models\PaymentAllocation;
+use App\Models\PaymentAllocationCoveragePeriod;
 use App\Models\PaymentRefund;
+use App\Models\ServiceCoverage;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -237,11 +240,40 @@ class InvoicePaymentService
             // together. $allocations is null whenever Phase 1A leaves this
             // payment intentionally unallocated (see above).
             foreach ($allocations ?? [] as $allocation) {
-                PaymentAllocation::create([
+                $itemId = (int) $allocation['invoice_item_id'];
+                $allocationAmount = $this->money((string) $allocation['amount']);
+                $paymentAllocation = PaymentAllocation::create([
                     'invoice_payment_id' => $payment->id,
-                    'invoice_item_id' => (int) $allocation['invoice_item_id'],
-                    'amount' => $this->money((string) $allocation['amount']),
+                    'invoice_item_id' => $itemId,
+                    'amount' => $allocationAmount,
                 ]);
+
+                // Finance V2, Phase 2D corrective pass #2 (P0 Blocker 2 —
+                // explicit payment-to-coverage-period allocation). This
+                // installment always settles exactly one period per Fee
+                // (installment_coverage_periods is unique on (installment,
+                // coverage)), so this is a genuine 1:1 mapping, never an
+                // arbitrary split of one allocation across several
+                // periods — reuses the SAME allocation amount, tied to
+                // whichever specific period THIS installment represents
+                // for THIS item's own coverage. Silently skipped (not an
+                // error) when the item has no automatic coverage at all
+                // (e.g. Registration, or any non-calendar-billed Fee) —
+                // there is nothing to link.
+                if ($installment) {
+                    $coverage = ServiceCoverage::where('invoice_item_id', $itemId)->first();
+                    $period = $coverage
+                        ? InstallmentCoveragePeriod::where('invoice_installment_id', $installment->id)
+                            ->where('service_coverage_id', $coverage->id)->first()
+                        : null;
+                    if ($period) {
+                        PaymentAllocationCoveragePeriod::create([
+                            'payment_allocation_id' => $paymentAllocation->id,
+                            'installment_coverage_period_id' => $period->id,
+                            'amount' => $allocationAmount,
+                        ]);
+                    }
+                }
             }
 
             CashTransaction::create([

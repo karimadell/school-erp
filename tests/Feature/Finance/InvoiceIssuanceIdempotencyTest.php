@@ -78,15 +78,23 @@ class InvoiceIssuanceIdempotencyTest extends FinanceOperationsTestCase
         app(InvoiceIssuanceService::class)->issue($this->student, $this->payload($otherFee, $key), $this->accountant, idempotencyKey: $key);
     }
 
-    public function test_concurrent_duplicate_key_race_is_handled_gracefully_not_as_a_raw_500(): void
+    /**
+     * Corrective pass #2 (HIGH 1): renamed/re-scoped from its pass-#1 name
+     * ("...race is handled gracefully...") to be explicit about exactly
+     * what this proves and what it does NOT — this is SEQUENTIAL
+     * duplicate-key handling on SQLite (single-process, single
+     * connection, one statement at a time), not real concurrency. SQLite
+     * has no "aborted transaction" failure mode at all, so this test
+     * cannot exercise — and never claimed to exercise — the actual
+     * PostgreSQL-specific bug HIGH 1 fixed (a unique-violation inside a
+     * transaction poisoning every subsequent statement in that same
+     * transaction). That real concurrency scenario is covered separately
+     * by InvoiceIssuancePostgresConcurrencyTest, gated to skip when no
+     * real PostgreSQL server is reachable (see that file's own docblock
+     * for exactly how to run it for real).
+     */
+    public function test_sequential_duplicate_key_insert_is_handled_gracefully_not_as_a_raw_500(): void
     {
-        // A true multi-process race isn't reproducible in this single-
-        // process sqlite test run — this instead directly exercises the
-        // duplicate-key-exception-catch path by pre-inserting a row with
-        // the colliding key (simulating "the other concurrent request won
-        // the race and committed first"), then confirming issue() catches
-        // the resulting UniqueConstraintViolationException and returns the
-        // winner's row instead of letting the exception surface raw.
         $fee = $this->periodicFee();
         $key = (string) Str::uuid();
         $winner = app(InvoiceIssuanceService::class)->issue($this->student, $this->payload($fee, $key), $this->accountant, idempotencyKey: $key);

@@ -346,5 +346,11 @@ class PaymentAllocationTest extends FinanceOperationsTestCase
 
         $this->assertSame(0, PaymentAllocation::count());
         $this->assertSame(0, InvoicePayment::count());
+        // Corrective pass #2 (P0 Blocker 2): since credit application
+        // creates zero PaymentAllocation rows, it structurally cannot
+        // create any PaymentAllocationCoveragePeriod rows either — that
+        // layer only ever fires inside InvoicePaymentService::record()'s
+        // own allocation-writing step, which apply() never calls.
+        $this->assertSame(0, \App\Models\PaymentAllocationCoveragePeriod::count());
     }
 }

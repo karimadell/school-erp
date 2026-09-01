@@ -9,8 +9,10 @@ use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\Grade;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\MealPlan;
 use App\Models\MealSubscription;
+use App\Models\QuickRegistrationOperation;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
@@ -39,17 +41,70 @@ class QuickStudentRegistrationService
     {
     }
 
-    /** @return array{student: Student, enrollment: Enrollment, invoice: Invoice} */
+    /**
+     * @return array{student: Student, enrollment: Enrollment, invoice: Invoice}
+     *
+     * Corrective pass #2 (HIGH 2 — Quick Registration operation-level
+     * idempotency). Pass #1's invoice-level idempotency is too late: it
+     * cannot prevent a retried submission from creating a SECOND Student/
+     * Enrollment before invoice issuance is ever reached, since Student
+     * creation itself has no dedup. The real idempotency unit for Quick
+     * Registration is the WHOLE operation graph (Student + Enrollment +
+     * Invoice + Payments + Coverage), tracked via a dedicated
+     * quick_registration_operations row — see that migration's own
+     * docblock. Same PostgreSQL-safe recovery pattern as HIGH 1
+     * (InvoiceIssuanceService::issue()): the unique-violation on a
+     * genuine concurrent race is never caught INSIDE the transaction —
+     * it propagates, the transaction rolls back cleanly, and only then,
+     * in this outer scope, is the winning operation looked up fresh.
+     */
     public function register(array $data, User $actor): array
     {
-        return DB::transaction(function () use ($data, $actor) {
+        $outerToken = $data['idempotency_token'] ?? null;
+        $operationKey = $outerToken
+            ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration-operation:{$outerToken}")
+            : null;
+        $payloadHash = $this->operationPayloadHash($data);
+
+        // Checked before opening the transaction too — the overwhelming
+        // common case (a genuine first submission) never even opens one
+        // for this specific check.
+        if ($operationKey !== null) {
+            $existing = QuickRegistrationOperation::query()->where('idempotency_key', $operationKey)->first();
+            if ($existing) {
+                return $this->replayOperation($existing, $payloadHash);
+            }
+        }
+
+        try {
+            return DB::transaction(function () use ($data, $actor, $operationKey, $payloadHash, $outerToken) {
+            // Re-checked once more, now inside the transaction — closes
+            // the race window between the pre-transaction check above and
+            // this transaction's own locks.
+            if ($operationKey !== null) {
+                $existing = QuickRegistrationOperation::query()->where('idempotency_key', $operationKey)->lockForUpdate()->first();
+                if ($existing) {
+                    return $this->replayOperation($existing, $payloadHash);
+                }
+            }
+
+            // Created BEFORE Student — the whole point of this
+            // corrective-pass item — inside the same transaction as
+            // everything else, so a rollback anywhere below removes this
+            // row too (never a falsely-completed, or a stale orphaned
+            // 'pending', row surviving a failed attempt).
+            $operation = $operationKey !== null ? QuickRegistrationOperation::create([
+                'idempotency_key' => $operationKey,
+                'payload_hash' => $payloadHash,
+                'status' => QuickRegistrationOperation::STATUS_PENDING,
+            ]) : null;
+
             // Finance V2, Phase 2D corrective pass (P0/HIGH — invoice
             // issuance idempotency): the SAME per-page-render outer token
             // already used to derive deterministic per-installment payment
             // keys below is reused here for the INVOICE itself, so a
             // retried submission (same token) returns the original
             // invoice directly rather than creating a second one.
-            $outerToken = $data['idempotency_token'] ?? null;
             $invoiceIdempotencyKey = $outerToken
                 ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration-invoice:{$outerToken}")
                 : null;
@@ -257,11 +312,25 @@ class QuickStudentRegistrationService
                     $allocations[] = ['invoice_item_id' => $item->id, 'amount' => $linePaid];
                 }
 
+                // Corrective pass #2 (HIGH 4 — Finance metadata
+                // preservation, confirmed real): InvoiceIssuanceService::
+                // issue() (called above, before this loop) already wrote
+                // this item's own pricing/coverage audit metadata —
+                // unit_tariff, billing_unit, coverage_start/end,
+                // derived_*, adjustment_basis_* (the last written even
+                // later still, inside issue()'s own createAutomaticCoverage()
+                // step). A plain 'metadata' => $metadata here would
+                // silently REPLACE all of that with only this line's own
+                // curated Admissions-domain fields — an explicit merge,
+                // protecting InvoiceItem::FINANCE_METADATA_KEYS, is
+                // required so Admissions enrichment and Finance audit
+                // data coexist correctly, neither ever clobbering the
+                // other.
                 $item->update([
                     'description' => $this->description($item->description, $metadata),
                     'paid_amount' => $linePaid,
                     'remaining_amount' => $lineRemaining,
-                    'metadata' => $metadata,
+                    'metadata' => array_merge($metadata, collect($item->metadata ?? [])->only(InvoiceItem::FINANCE_METADATA_KEYS)->all()),
                 ]);
 
                 if ($fee->category === Fee::CATEGORY_REGISTRATION) {
@@ -395,8 +464,108 @@ class QuickStudentRegistrationService
                 }
             }
 
+            // Only reached on a genuine, about-to-commit success — the
+            // operation row transitions to 'completed' with the resulting
+            // ids in the SAME transaction as everything else, so a
+            // rollback anywhere above (including this update itself
+            // failing) leaves it at its pre-existing state, never
+            // falsely marked complete.
+            $operation?->update([
+                'status' => QuickRegistrationOperation::STATUS_COMPLETED,
+                'student_id' => $student->id,
+                'enrollment_id' => $enrollment->id,
+                'invoice_id' => $invoice->id,
+                'completed_at' => now(),
+            ]);
+
             return compact('student', 'enrollment', 'invoice');
-        });
+            });
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $exception) {
+            // HIGH 1's same pattern, applied one level up: the
+            // transaction above has already rolled back cleanly by the
+            // time this runs — never inside the now-dead transaction.
+            if ($operationKey === null) {
+                throw $exception;
+            }
+
+            return $this->replayOperation(QuickRegistrationOperation::query()->where('idempotency_key', $operationKey)->firstOrFail(), $payloadHash);
+        }
+    }
+
+    /**
+     * Corrective pass #2 (HIGH 2). $hash !== null && ... mirrors
+     * InvoiceIssuanceService::replayInvoice()'s own convention: a key
+     * reused for a genuinely different submission is rejected, never
+     * silently replayed as if it were the same one. A 'pending' row
+     * (another request currently mid-flight for this exact key) is also
+     * rejected rather than blocked or guessed at — SERIALIZABLE row
+     * locking means this should be structurally rare to ever observe.
+     */
+    private function replayOperation(QuickRegistrationOperation $operation, string $payloadHash): array
+    {
+        if (! hash_equals($operation->payload_hash, $payloadHash)) {
+            throw ValidationException::withMessages(['idempotency_key' => 'Ключ повторного запроса уже использован для другой регистрации.']);
+        }
+        if ($operation->status !== QuickRegistrationOperation::STATUS_COMPLETED) {
+            throw ValidationException::withMessages(['idempotency_key' => 'Регистрация с этим ключом ещё обрабатывается — повторите попытку позже.']);
+        }
+
+        return [
+            'student' => Student::findOrFail($operation->student_id),
+            'enrollment' => Enrollment::findOrFail($operation->enrollment_id),
+            'invoice' => Invoice::findOrFail($operation->invoice_id),
+        ];
+    }
+
+    /**
+     * Corrective pass #2 (HIGH 3 — complete idempotency hash coverage).
+     * Every field that can change the resulting Student/Enrollment/
+     * Invoice/Payment/Coverage graph is covered — student identity/
+     * placement, every service line's every canonical dimension, and
+     * every payment-affecting field. Deliberately EXCLUDES idempotency_token
+     * itself (that's the key, not the payload) and free-text notes
+     * (notes/payment_note) — a submission differing only in a descriptive
+     * comment is still the same financial transaction, not a different
+     * one; this codebase already treats notes as non-material everywhere
+     * else idempotency hashing exists (InvoicePaymentService::record()'s
+     * own hash — invoice/installment/cash_account/amount/method — never
+     * includes its own $notes parameter either).
+     *
+     * Canonicalized so semantically-identical payloads always hash
+     * identically: array keys sorted deterministically at every level,
+     * and any numeric-looking scalar normalized to a fixed bcmath-style
+     * decimal string (never PHP's own float-to-string formatting) so
+     * "1500" and "1500.00" — or a services array submitted with keys in
+     * a different order — never produce a false "different submission"
+     * rejection for what is genuinely the same retry.
+     */
+    private function operationPayloadHash(array $data): string
+    {
+        $material = collect($data)->except(['idempotency_token', 'notes', 'payment_note'])->all();
+
+        return hash('sha256', json_encode($this->canonicalizeForHash($material)));
+    }
+
+    private function canonicalizeForHash(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $isList = array_is_list($value);
+            $canonicalized = collect($value)->map(fn ($v) => $this->canonicalizeForHash($v));
+
+            // A list (e.g. the services array) keeps its own submission
+            // order — line order is not assumed to be economically
+            // irrelevant (repeating the identical fee_id on two separate
+            // lines is a real, different, doubled charge from submitting
+            // it once), only each line's OWN internal key order is
+            // normalized. An associative array's keys are sorted so key
+            // order alone never changes the hash.
+            return $isList ? $canonicalized->values()->all() : $canonicalized->sortKeys()->all();
+        }
+        if (is_string($value) && is_numeric($value) && str_contains($value, '.')) {
+            return bcadd($value, '0', 2);
+        }
+
+        return $value;
     }
 
     private function metadata(Fee $fee, array $selection): array

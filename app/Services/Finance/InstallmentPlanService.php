@@ -69,15 +69,30 @@ class InstallmentPlanService
      * own calendar month/quarter — a real calendar boundary, never
      * $startDate + N days.
      *
-     * Rounding: total ÷ period-count, each period bcmath-truncated to 2dp,
-     * with the LAST period absorbing whatever remainder is left over — the
-     * same last-segment rounding-safety pattern generate() already uses
-     * for percentage splits, applied here to a straight equal split. This
-     * remains correct now that $invoice->total_amount is itself already
-     * unit-price x count (see InvoiceCalculationService) — dividing that
-     * correct total back down by the same count reproduces exactly the
-     * per-period unit price (up to the last-period rounding remainder),
-     * confirmed algebraically and by test (unit x count / count = unit).
+     * Rounding: when the caller does not supply $scheduleAmounts, total ÷
+     * period-count, each period bcmath-truncated to 2dp, with the LAST
+     * period absorbing whatever remainder is left over — the same
+     * last-segment rounding-safety pattern generate() already uses for
+     * percentage splits, applied here to a straight equal split. This is
+     * only correct for a UNIFORM per-period price (monthly, or a
+     * quarterly span with no partial trailing group) — see
+     * $scheduleAmounts below for the general case.
+     *
+     * Corrective pass #2 (P0 Blocker 1 — partial final quarter): a
+     * quarterly span whose covered months aren't an exact multiple of 3
+     * has a trailing partial group (1-2 months) priced DIFFERENTLY from
+     * the full 3-month groups (see InvoiceCalculationService's per-group
+     * pricing) — an even division of the invoice total across N
+     * installments would be WRONG the moment groups differ in size.
+     * $scheduleAmounts, when provided, is the caller's own per-group
+     * amount breakdown (same order/count as CalendarPeriodCalculator's
+     * own periods array — the identical shared calculator both this
+     * method and InvoiceCalculationService call), used VERBATIM per
+     * installment instead of any division — pricing and scheduling can
+     * therefore never disagree, by construction. Null (the default)
+     * preserves the even-split fallback for every caller that has no
+     * per-group pricing context of its own (e.g. a directly-constructed
+     * test invoice, or any future non-priced caller).
      *
      * Finance V2, Phase 2D: returns the exact {installment, period_start,
      * period_end} tuple for every installment created — the CALENDAR
@@ -90,9 +105,10 @@ class InstallmentPlanService
      * purely about the invoice TOTAL and its installment amounts, never
      * about individual Fees/items.
      *
+     * @param  ?array<int, string>  $scheduleAmounts  See above.
      * @return array<int, array{installment: InvoiceInstallment, period_start: string, period_end: string}>
      */
-    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate): array
+    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate, ?array $scheduleAmounts = null): array
     {
         if ($billingPeriod === 'yearly') {
             $this->generateSingle($invoice, $startDate);
@@ -112,15 +128,23 @@ class InstallmentPlanService
         $periodCount = $resolved['count'];
         $start = Carbon::parse($startDate)->startOfDay();
 
+        if ($scheduleAmounts !== null && count($scheduleAmounts) !== $periodCount) {
+            throw ValidationException::withMessages(['services' => 'Количество сумм по периодам не совпадает с количеством периодов.']);
+        }
+
         $total = bcadd((string) $invoice->total_amount, '0', 2);
         $each = bcdiv($total, (string) $periodCount, 2);
         $allocated = '0.00';
         $created = [];
 
         foreach ($resolved['periods'] as $i => $period) {
-            $last = $i === $periodCount - 1;
-            $amount = $last ? bcsub($total, $allocated, 2) : $each;
-            $allocated = bcadd($allocated, $amount, 2);
+            if ($scheduleAmounts !== null) {
+                $amount = $scheduleAmounts[$i];
+            } else {
+                $last = $i === $periodCount - 1;
+                $amount = $last ? bcsub($total, $allocated, 2) : $each;
+                $allocated = bcadd($allocated, $amount, 2);
+            }
 
             $dueDate = $i === 0 ? $start->copy() : Carbon::parse($period['start']);
 

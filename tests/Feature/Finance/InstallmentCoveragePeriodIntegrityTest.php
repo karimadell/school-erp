@@ -94,6 +94,36 @@ class InstallmentCoveragePeriodIntegrityTest extends FinanceOperationsTestCase
         ]);
     }
 
+    /**
+     * Corrective pass #2 (HIGH 6 — coverage-period integrity and
+     * concurrency). Bypasses the Eloquent model layer entirely (a raw
+     * insert via the query builder, never touching
+     * InstallmentCoveragePeriod::validateIntegrity()) — proves the
+     * invariant is ALSO enforced at the actual database level (via the
+     * SQLite trigger this migration installs on this test's own driver),
+     * not solely by application code that a raw query or a future bug
+     * could bypass.
+     */
+    public function test_the_database_itself_rejects_an_out_of_order_period_bypassing_the_model_layer(): void
+    {
+        if (\Illuminate\Support\Facades\DB::connection()->getDriverName() !== 'sqlite') {
+            $this->markTestSkipped('This test exercises the SQLite-specific trigger; MySQL/PostgreSQL get a native CHECK constraint instead (same migration, different branch) — not re-verified here since this suite only runs against sqlite.');
+        }
+
+        [, $invoice] = $this->issuedFee();
+        $coverage = ServiceCoverage::sole();
+        $installment = $invoice->installments()->first();
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        \Illuminate\Support\Facades\DB::table('installment_coverage_periods')->insert([
+            'invoice_installment_id' => $installment->id,
+            'service_coverage_id' => $coverage->id,
+            'period_start' => '2026-09-30',
+            'period_end' => '2026-09-01',
+            'created_at' => now(),
+        ]);
+    }
+
     public function test_cross_student_or_cross_invoice_mapping_is_structurally_impossible_through_the_application(): void
     {
         // Coverage-period creation only ever happens internally within

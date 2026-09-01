@@ -101,7 +101,28 @@ class InvoiceIssuanceService
             }
         }
 
-        return DB::transaction(function () use ($data, $student, $actor, $ip, $userAgent, $subscriptionResolver, $origin, $idempotencyKey, $idempotencyHash) {
+        // Corrective pass #2 (HIGH 1 — PostgreSQL-safe concurrent
+        // idempotency). On PostgreSQL, once ANY statement inside a
+        // transaction raises an error (a unique-violation on the
+        // idempotency_key insert below included), the WHOLE transaction
+        // enters an aborted state — every subsequent statement in that
+        // same transaction fails with "current transaction is aborted,
+        // commands ignored until end of transaction block," even a
+        // harmless SELECT. SQLite has no such failure mode, which is
+        // exactly why catching the violation and querying again INSIDE
+        // the same DB::transaction() closure (this method's own pass #1
+        // shape) passed every test here without ever exposing the bug.
+        //
+        // Fix: the unique-violation is never caught inside the closure —
+        // it propagates out, Laravel's DB::transaction() rolls back
+        // cleanly (a normal, non-aborted rollback), and ONLY THEN, in
+        // this outer, non-transactional scope, do we catch it and query
+        // for the winning row — a fresh query, on a fresh connection
+        // state, never inside the now-dead transaction. The database's
+        // own unique constraint remains the final arbiter of who won the
+        // race; this only changes WHERE the recovery query runs.
+        try {
+            return DB::transaction(function () use ($data, $student, $actor, $ip, $userAgent, $subscriptionResolver, $origin, $idempotencyKey, $idempotencyHash) {
             // Re-checked once more, now serialized by the student row lock
             // immediately below — closes the race window between the
             // pre-transaction check above and this transaction acquiring
@@ -196,21 +217,13 @@ class InvoiceIssuanceService
             }
             $invoice = new Invoice($invoiceData);
             $invoice->created_at = Carbon::parse($data['pricing_date'])->startOfDay();
-            try {
-                $invoice->save();
-            } catch (\Illuminate\Database\UniqueConstraintViolationException $exception) {
-                // Genuine concurrent race: two simultaneous requests with
-                // the same idempotency_key both passed the checks above
-                // before either committed. The database's own unique
-                // constraint on idempotency_key is the final arbiter — one
-                // wins, this one observes the loser and returns the
-                // winner's row instead of surfacing a raw 500.
-                if ($idempotencyKey === null) {
-                    throw $exception;
-                }
-
-                return $this->replayInvoice(Invoice::query()->where('idempotency_key', $idempotencyKey)->firstOrFail(), $idempotencyHash);
-            }
+            // HIGH 1: no try/catch here — a genuine concurrent race (two
+            // simultaneous requests with the same idempotency_key both
+            // passing the checks above before either committed) is
+            // recovered OUTSIDE this transaction, once it has already
+            // rolled back cleanly. See this method's own top-level
+            // try/catch below.
+            $invoice->save();
             $invoice->invoice_number = Invoice::numberFor($invoice->id, $invoice->created_at->format('Y'));
             $invoice->save();
 
@@ -236,8 +249,14 @@ class InvoiceIssuanceService
             // ever fires for Quick-Registration-shaped submissions, which
             // cannot repeat a fee_id — see the guard where it's consumed).
             $itemsByFeeId = [];
+            // Corrective pass #2 (P0 Blocker 2): this Fee's own amount per
+            // schedule group/period — same order as the schedule created
+            // below — so each InstallmentCoveragePeriod row can carry its
+            // OWN "full settlement" amount for THAT specific service.
+            $periodAmountsByFeeId = [];
 
             foreach ($calculation['line_items'] as $line) {
+                $periodAmountsByFeeId[$line['fee_id']] = $line['period_amounts'] ?? null;
                 $selection = collect($items)->firstWhere('fee_id', $line['fee_id']);
                 $fee = $resolveFee((int) $line['fee_id']);
                 $subscriptionId = $activeSubscriptionsByFee->get($line['fee_id'])?->id;
@@ -278,6 +297,16 @@ class InvoiceIssuanceService
                         'coverage_start'=>$line['metadata']['coverage_start'] ?? null,
                         'coverage_end'=>$line['metadata']['coverage_end'] ?? null,
                         'line_total'=>$line['metadata']['line_total'] ?? null,
+                        // Corrective pass #2 (P0 Blocker 1) — partial
+                        // trailing quarterly group audit trace, only
+                        // present when an explicit quarterly package
+                        // price covers a span that isn't an exact
+                        // multiple of 3 months.
+                        'partial_group_months'=>$line['metadata']['partial_group_months'] ?? null,
+                        'partial_group_unit_price'=>$line['metadata']['partial_group_unit_price'] ?? null,
+                        'partial_group_amount'=>$line['metadata']['partial_group_amount'] ?? null,
+                        'partial_group_start'=>$line['metadata']['partial_group_start'] ?? null,
+                        'partial_group_end'=>$line['metadata']['partial_group_end'] ?? null,
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
                 $pivotData = [
@@ -324,7 +353,12 @@ class InvoiceIssuanceService
                         throw ValidationException::withMessages(['billing_period' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
                     }
                 }
-                $schedule = $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $data['pricing_date'], $year->end_date->toDateString());
+                // Corrective pass #2 (P0 Blocker 1 — partial final
+                // quarter): the shared per-group amounts calculate()
+                // already computed (unit price x each group's own
+                // month-count, never an even division) — passed straight
+                // through so scheduling can never disagree with pricing.
+                $schedule = $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $data['pricing_date'], $year->end_date->toDateString(), $calculation['schedule_amounts'] ?? null);
 
                 // Finance V2, Phase 2D corrective pass (P0 Blocker 2):
                 // coverage is now created for EVERY calendar billing
@@ -333,7 +367,7 @@ class InvoiceIssuanceService
                 // concerns; ServiceCoverage always uses billing_unit=
                 // 'monthly' (or 'daily' for Food) regardless of how often
                 // the invoice actually collects money.
-                $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
+                $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
             } else {
                 $this->plans->generateSingle($invoice, $data['due_date']);
             }
@@ -341,7 +375,20 @@ class InvoiceIssuanceService
             AuditLog::create(['user_id'=>$actor->id,'action'=>'created','model'=>'Invoice','model_id'=>$invoice->id,'new_values'=>['invoice_number'=>$invoice->invoice_number,'total_amount'=>$invoice->total_amount],'ip'=>$ip,'user_agent'=>$userAgent]);
 
             return $invoice;
-        });
+            });
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $exception) {
+            // HIGH 1: the transaction above has already rolled back
+            // cleanly by the time this runs (Laravel rolls back
+            // automatically when the closure throws) — this query runs
+            // in a genuinely fresh transaction/connection state, never
+            // inside the now-dead one, which is exactly what PostgreSQL
+            // requires (see this method's own docblock note above).
+            if ($idempotencyKey === null) {
+                throw $exception;
+            }
+
+            return $this->replayInvoice(Invoice::query()->where('idempotency_key', $idempotencyKey)->firstOrFail(), $idempotencyHash);
+        }
     }
 
     /**
@@ -387,7 +434,7 @@ class InvoiceIssuanceService
      * @param  array<int, InvoiceItem>  $itemsByFeeId
      * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees
      */
-    private function createAutomaticCoverage(string $billingPeriod, array $schedule, array $itemsByFeeId, \Illuminate\Support\Collection $invoiceFees, User $actor, int $academicYearId, string $pricingDate): void
+    private function createAutomaticCoverage(string $billingPeriod, array $schedule, array $itemsByFeeId, array $periodAmountsByFeeId, \Illuminate\Support\Collection $invoiceFees, User $actor, int $academicYearId, string $pricingDate): void
     {
         if ($schedule === []) {
             return;
@@ -414,8 +461,14 @@ class InvoiceIssuanceService
                     'billing_unit' => $billingUnit,
                 ], $actor);
             } else {
-                $dimensions = collect($item->metadata ?? [])->only(['grade_group', 'option_type', 'option_value', 'size', 'item'])->all();
-                $basisPrice = $this->calculator->resolveCoverageBasisPrice($fee, $dimensions, $pricingDate, $academicYearId, $billingUnit);
+                // Corrective pass #2 (HIGH 5): the FULL selection/metadata
+                // — grade_id, enrollment_mode_id and every other canonical
+                // dimension the item actually carries, not a hand-picked
+                // subset — so basis-price resolution can never disagree
+                // with primary price resolution about which dimensions
+                // matter.
+                $selection = $item->metadata ?? [];
+                $basisPrice = $this->calculator->resolveCoverageBasisPrice($fee, $selection, $pricingDate, $academicYearId, $billingUnit);
                 if (! $basisPrice) {
                     $unitLabel = $billingUnit === 'daily' ? 'дневной' : 'месячный';
                     throw ValidationException::withMessages([
@@ -423,10 +476,13 @@ class InvoiceIssuanceService
                     ]);
                 }
 
+                $matchedDimensions = collect(['grade_id', 'grade_group', 'option_type', 'option_value', 'size', 'item', 'enrollment_mode_id'])
+                    ->filter(fn ($field) => filled($selection[$field] ?? null))->values()->all();
                 $item->forceFill(['metadata' => array_merge($item->metadata ?? [], [
                     'adjustment_basis_period' => $billingUnit,
                     'adjustment_basis_fee_price_id' => $basisPrice->id,
                     'adjustment_basis_unit_amount' => (string) $basisPrice->amount,
+                    'adjustment_basis_matched_dimensions' => $matchedDimensions,
                 ])])->save();
 
                 $coverage = $this->coverage->recordWithBasisPrice($item, $basisPrice, [
@@ -436,12 +492,19 @@ class InvoiceIssuanceService
                 ], $actor);
             }
 
-            foreach ($schedule as $period) {
+            $periodAmounts = $periodAmountsByFeeId[$fee->id] ?? null;
+            foreach ($schedule as $index => $period) {
                 InstallmentCoveragePeriod::create([
                     'invoice_installment_id' => $period['installment']->id,
                     'service_coverage_id' => $coverage->id,
                     'period_start' => $period['period_start'],
                     'period_end' => $period['period_end'],
+                    // Corrective pass #2 (P0 Blocker 2): this Fee's OWN
+                    // charge for this specific period — never the shared
+                    // installment total — so a later payment allocation
+                    // can be compared against the correct "full
+                    // settlement" figure for exactly this service/period.
+                    'amount' => $periodAmounts[$index] ?? null,
                 ]);
             }
         }

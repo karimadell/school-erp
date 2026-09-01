@@ -38,11 +38,13 @@ class InstallmentCoveragePeriod extends Model
         'service_coverage_id',
         'period_start',
         'period_end',
+        'amount',
     ];
 
     protected $casts = [
         'period_start' => 'date',
         'period_end' => 'date',
+        'amount' => 'decimal:2',
     ];
 
     protected static function booted(): void
@@ -66,7 +68,14 @@ class InstallmentCoveragePeriod extends Model
             throw ValidationException::withMessages(['period_end' => 'Окончание периода не может быть раньше его начала.']);
         }
 
-        $coverage = ServiceCoverage::with('invoiceItem.invoice')->findOrFail($this->service_coverage_id);
+        // Corrective pass #2 (HIGH 6 — coverage-period integrity and
+        // concurrency): the coverage row is locked before the overlap
+        // check below runs, inside whatever transaction the caller
+        // opened (InvoiceIssuanceService::issue() always does) — two
+        // concurrent inserts for the SAME coverage now serialize on this
+        // lock instead of both reading "no overlap yet" and racing each
+        // other into the table.
+        $coverage = ServiceCoverage::with('invoiceItem.invoice')->lockForUpdate()->findOrFail($this->service_coverage_id);
         if ($start->lt($coverage->coverage_start) || $end->gt($coverage->coverage_end)) {
             throw ValidationException::withMessages(['period_start' => 'Период выходит за границы покрытия услуги.']);
         }
@@ -95,24 +104,77 @@ class InstallmentCoveragePeriod extends Model
         return $this->belongsTo(ServiceCoverage::class, 'service_coverage_id');
     }
 
+    /** Corrective pass #2 (P0 Blocker 2) — every explicit payment-to-period allocation for this specific period. */
+    public function paymentAllocationCoveragePeriods()
+    {
+        return $this->hasMany(PaymentAllocationCoveragePeriod::class, 'installment_coverage_period_id');
+    }
+
     /**
-     * Finance V2, Phase 2D corrective pass (HIGH — payment<->coverage
-     * explicitness). Investigated directly rather than assumed:
-     * StudentCreditService::apply() (read in full) only ever mutates
-     * Invoice.remaining_amount/StudentCredit/StudentCreditApplication —
-     * it never touches InvoiceInstallment at all (confirmed by an explicit
-     * test: applying a credit leaves installment_coverage_periods rows,
-     * and by extension the mapped installment's own state, completely
-     * unaffected). Combined with Phase 2B's own multi-installment payment
-     * rule (an installment is only ever fully settled or fully rejected,
-     * never partially) — a mapped installment's own remaining_amount is
-     * already an unambiguous, driftless "is this period paid" signal. A
-     * small DERIVED accessor here, not a second competing stored-state
-     * table, per the explicit "no redundant competing source of truth"
-     * instruction.
+     * Finance V2, Phase 2D corrective pass #1 (HIGH — payment<->coverage
+     * explicitness) investigated StudentCreditService::apply() directly:
+     * it never touches InvoiceInstallment, so a bundled installment's own
+     * remaining_amount reflects only genuine InvoicePayment activity.
+     *
+     * Corrective pass #2 (P0 Blocker 2): that investigation also
+     * surfaced the real remaining gap — a SHARED installment's own
+     * remaining_amount is an INSTALLMENT-level fact, not a per-service
+     * one, so it cannot by itself distinguish "Transport's own period
+     * settled, Tuition's own period didn't" when the two Fees share one
+     * installment and only one of them was explicitly paid. This method
+     * now answers that at the correct granularity, using the explicit
+     * PaymentAllocation -> PaymentAllocationCoveragePeriod chain instead:
+     *
+     *  - 'unpaid': no InvoicePayment at all against this period's own
+     *    installment.
+     *  - 'unallocated': at least one payment against this installment has
+     *    NO PaymentAllocation at all for this period's own InvoiceItem
+     *    (Phase 1C's legacy/ambiguous multi-item exception) — this
+     *    period's true settlement is genuinely unknowable from the data,
+     *    and is NEVER guessed or backfilled; every validated allocation
+     *    always sums to exactly its payment's own amount (validateAllocations()),
+     *    so a payment is either fully allocated or not allocated at all —
+     *    never partially, which keeps this a clean binary per payment.
+     *  - 'unknown': this row predates the 'amount' column (a legacy
+     *    installment_coverage_periods row with no recorded full amount to
+     *    compare against) — distinct from every other state, never
+     *    reported as settled or partial without a real reference amount.
+     *  - 'settled' / 'partial' / 'unpaid': every payment against this
+     *    installment IS explicitly allocated, and the sum of this
+     *    period's own PaymentAllocationCoveragePeriod rows is compared
+     *    directly against this period's own recorded 'amount' — the
+     *    correct per-service, per-period reference, never the shared
+     *    installment total.
      */
+    public function settlementStatus(): string
+    {
+        $payments = InvoicePayment::where('invoice_installment_id', $this->invoice_installment_id)->get(['id']);
+        if ($payments->isEmpty()) {
+            return 'unpaid';
+        }
+
+        $paymentIds = $payments->pluck('id');
+        $hasUnallocatedPayment = $paymentIds->contains(
+            fn ($paymentId) => ! PaymentAllocation::where('invoice_payment_id', $paymentId)->exists()
+        );
+        if ($hasUnallocatedPayment) {
+            return 'unallocated';
+        }
+
+        if ($this->amount === null) {
+            return 'unknown';
+        }
+
+        $settled = bcadd((string) $this->paymentAllocationCoveragePeriods()->sum('amount'), '0', 2);
+        if (bccomp($settled, '0.00', 2) <= 0) {
+            return 'unpaid';
+        }
+
+        return bccomp($settled, (string) $this->amount, 2) >= 0 ? 'settled' : 'partial';
+    }
+
     public function isSettled(): bool
     {
-        return bccomp((string) $this->installment->remaining_amount, '0.00', 2) === 0;
+        return $this->settlementStatus() === 'settled';
     }
 }

@@ -463,24 +463,29 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
             'payment_type' => 'calendar', 'billing_period' => 'quarterly',
         ], $this->accountant);
 
-        // Default year end_date (FinanceOperationsTestCase) is 2027-06-30 —
-        // calendar quarters covering Sep 2026 through Jun 2027 are
-        // Jul-Sep 2026, Oct-Dec 2026, Jan-Mar 2027, Apr-Jun 2027 (4 whole
-        // calendar quarters, no proration to the actual registration date).
+        // Default year end_date (FinanceOperationsTestCase) is 2027-06-30
+        // — Sep 2026 through Jun 2027 is 10 months. Corrective pass #2
+        // (P0 Blocker 1): quarters are anchored to the ACTUAL service
+        // start month (September), never civil calendar quarters — the
+        // groups are Sep-Nov / Dec-Feb / Mar-May (3 full quarters) plus a
+        // trailing 1-month partial group (June), never Jul-Sep..Apr-Jun
+        // (which would bill for July-August before the student enrolled).
+        // Derived pricing collapses to the one uniform monthly rate
+        // (1000/month x 10 months = 10000), the exact same total as
+        // 3x(1000x3) + (1000x1) — see priceQuarterlyLine()'s own docblock.
         $item = $invoice->items->sole();
-        $this->assertSame('3000.00', $item->unit_price, 'derived quarterly unit price = monthly (1000) x 3');
-        $this->assertSame(4, $item->quantity);
-        $this->assertSame('12000.00', $item->amount, '3000 x 4 quarters');
-        $this->assertSame('12000.00', $invoice->total_amount);
+        $this->assertSame('1000.00', $item->unit_price, 'derived quarterly pricing collapses to its one uniform monthly rate');
+        $this->assertSame(10, $item->quantity, 'total months covered (Sep..Jun), not the number of quarterly groups');
+        $this->assertSame('10000.00', $item->amount, '1000 x 10 months = 3000+3000+3000+1000, never 3000 x 4 (which would overbill for Jul-Aug)');
+        $this->assertSame('10000.00', $invoice->total_amount);
         $this->assertTrue($item->metadata['derived']);
         $this->assertSame('quarterly', $item->metadata['derived_period']);
         $this->assertSame($monthly->id, $item->metadata['derived_from_fee_price_id']);
 
         $installments = $invoice->installments()->orderBy('sequence')->get();
         $this->assertCount(4, $installments);
-        foreach ($installments as $installment) {
-            $this->assertSame('3000.00', $installment->amount);
-        }
+        $this->assertSame(['3000.00', '3000.00', '3000.00', '1000.00'], $installments->pluck('amount')->all(), 'each full quarter is 3000, the trailing partial June group is exactly 1000 (1 month), never an even 2500 split');
+        $this->assertSame('10000.00', $installments->reduce(fn ($c, $i) => bcadd($c, $i->amount, 2), '0.00'));
 
         // Coverage: quarterly billing takes the adjustment-basis path
         // (record()/sourceTariff() cannot be reused — the charged tariff is
@@ -488,15 +493,45 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
         // is resolved as the basis, coverage itself is always
         // billing_unit='monthly' regardless of the quarterly collection
         // cadence, and spans the FULL schedule (first quarter start through
-        // last quarter end), never just one quarter.
+        // last quarter end), never just one quarter — and never before the
+        // actual service start (2026-09-01, not the old, wrong 2026-07-01).
         $coverage = ServiceCoverage::where('fee_id', $fee->id)->sole();
         $this->assertSame('monthly', $coverage->billing_unit);
-        $this->assertSame('2026-07-01', $coverage->coverage_start->toDateString());
+        $this->assertSame('2026-09-01', $coverage->coverage_start->toDateString());
         $this->assertSame('2027-06-30', $coverage->coverage_end->toDateString());
         $this->assertSame($monthly->id, $item->fresh()->metadata['adjustment_basis_fee_price_id']);
         $this->assertSame('1000.00', $item->fresh()->metadata['adjustment_basis_unit_amount']);
 
         $this->assertSame(4, InstallmentCoveragePeriod::where('service_coverage_id', $coverage->id)->count(), 'one coverage-period row per quarterly installment');
+    }
+
+    public function test_quarterly_calendar_invoice_over_an_exact_multiple_of_three_months_has_no_partial_group(): void
+    {
+        // Worked example (B): 9 months (Sep-May) = exactly 3 full
+        // quarters, no trailing partial group at all.
+        $this->year->forceFill(['end_date' => '2027-05-31'])->save();
+        $fee = Fee::create(['name_ru' => 'Обучение (квартал, 9 месяцев)', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1.00', 'is_active' => true]);
+        $fee->billingPeriods()->create(['billing_period' => 'quarterly']);
+        $fee->billingPeriods()->create(['billing_period' => 'monthly']);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'monthly', 'grade_id' => $this->enrollment->grade_id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-05-31', 'is_active' => true]);
+
+        $invoice = app(InvoiceIssuanceService::class)->issue($this->student, [
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'due_date' => '2027-05-31', 'pricing_date' => '2026-09-01',
+            'items' => [['fee_id' => $fee->id, 'grade_group' => null, 'payment_period' => 'quarterly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null]],
+            'payment_type' => 'calendar', 'billing_period' => 'quarterly',
+        ], $this->accountant);
+
+        $item = $invoice->items->sole();
+        $this->assertSame('1000.00', $item->unit_price);
+        $this->assertSame(9, $item->quantity);
+        $this->assertSame('9000.00', $item->amount, '3 x (1000 x 3) = 9000, exactly 3 x 3000');
+        $installments = $invoice->installments()->orderBy('sequence')->get();
+        $this->assertSame(['3000.00', '3000.00', '3000.00'], $installments->pluck('amount')->all());
+
+        $coverage = ServiceCoverage::where('fee_id', $fee->id)->sole();
+        $this->assertSame('2026-09-01', $coverage->coverage_start->toDateString());
+        $this->assertSame('2027-05-31', $coverage->coverage_end->toDateString(), 'coverage never extends beyond the actual service span');
     }
 
     public function test_quarterly_calendar_invoice_with_no_monthly_basis_blocks_the_entire_issuance(): void
@@ -533,5 +568,100 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
 
         $this->assertSame($invoicesBefore, Invoice::count());
         $this->assertSame(0, ServiceCoverage::where('fee_id', $fee->id)->count());
+    }
+
+    public function test_quarterly_derived_pricing_with_eleven_months_produces_three_full_quarters_plus_a_two_month_trailing_group(): void
+    {
+        // Worked example: 11 months (Sep-Jul) = 3 full quarters + 2 final
+        // months, trailing installment = monthly x 2.
+        $this->year->forceFill(['end_date' => '2027-07-31'])->save();
+        $fee = Fee::create(['name_ru' => 'Обучение (квартал, 11 месяцев)', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1.00', 'is_active' => true]);
+        $fee->billingPeriods()->create(['billing_period' => 'quarterly']);
+        $fee->billingPeriods()->create(['billing_period' => 'monthly']);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'monthly', 'grade_id' => $this->enrollment->grade_id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-07-31', 'is_active' => true]);
+
+        $invoice = app(InvoiceIssuanceService::class)->issue($this->student, [
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'due_date' => '2027-07-31', 'pricing_date' => '2026-09-01',
+            'items' => [['fee_id' => $fee->id, 'grade_group' => null, 'payment_period' => 'quarterly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null]],
+            'payment_type' => 'calendar', 'billing_period' => 'quarterly',
+        ], $this->accountant);
+
+        $item = $invoice->items->sole();
+        $this->assertSame(11, $item->quantity);
+        $this->assertSame('11000.00', $item->amount, '1000 x 11 = 3000+3000+3000+2000');
+        $installments = $invoice->installments()->orderBy('sequence')->get();
+        $this->assertSame(['3000.00', '3000.00', '3000.00', '2000.00'], $installments->pluck('amount')->all(), 'the trailing partial group is 2 months (1000 x 2), not an even split');
+    }
+
+    public function test_explicit_quarterly_package_price_with_a_trailing_partial_group_uses_a_monthly_basis_for_the_remainder(): void
+    {
+        // P0 Blocker 1 (explicit package pricing): full 3-month groups use
+        // the real quarterly PACKAGE price as-is; the trailing partial
+        // group never gets a prorated slice of that package — it uses a
+        // SEPARATELY resolved monthly basis tariff x its own month-count.
+        $fee = Fee::create(['name_ru' => 'Обучение (квартальный пакет)', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1.00', 'is_active' => true]);
+        $fee->billingPeriods()->create(['billing_period' => 'quarterly']);
+        $fee->billingPeriods()->create(['billing_period' => 'monthly']);
+        // Explicit quarterly PACKAGE price — deliberately NOT 3x the
+        // monthly rate (2800 vs 1000x3=3000), proving the package price
+        // is used as-is for full groups, never re-derived from monthly.
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'quarterly', 'grade_id' => $this->enrollment->grade_id, 'amount' => '2800.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        $monthlyBasis = FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'monthly', 'grade_id' => $this->enrollment->grade_id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+
+        // Sep 2026 -> Jun 2027 = 10 months -> 3 full quarters + 1 trailing
+        // June month.
+        $invoice = app(InvoiceIssuanceService::class)->issue($this->student, [
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
+            'items' => [['fee_id' => $fee->id, 'grade_group' => null, 'payment_period' => 'quarterly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null]],
+            'payment_type' => 'calendar', 'billing_period' => 'quarterly',
+        ], $this->accountant);
+
+        $item = $invoice->items->sole();
+        $this->assertSame('2800.00', $item->unit_price, 'the explicit quarterly package price, used as-is for full groups');
+        $this->assertSame(3, $item->quantity, 'quantity is the number of FULL quarterly groups, not total months');
+        $this->assertSame('9400.00', $item->amount, '3 x 2800 (full quarters) + 1 x 1000 (trailing June, monthly basis) = 8400 + 1000');
+        $this->assertFalse($item->metadata['derived'] ?? false, 'this is an explicit package price, not a derived one');
+        $this->assertSame('1', $item->metadata['partial_group_months']);
+        $this->assertSame('1000.00', $item->metadata['partial_group_unit_price']);
+        $this->assertSame('1000.00', $item->metadata['partial_group_amount']);
+
+        $installments = $invoice->installments()->orderBy('sequence')->get();
+        $this->assertSame(['2800.00', '2800.00', '2800.00', '1000.00'], $installments->pluck('amount')->all());
+
+        // Coverage still resolves its own monthly basis independently
+        // (same monthly FeePrice, reused correctly).
+        $coverage = ServiceCoverage::where('fee_id', $fee->id)->sole();
+        $this->assertSame($monthlyBasis->id, $item->fresh()->metadata['adjustment_basis_fee_price_id']);
+    }
+
+    public function test_explicit_quarterly_package_price_with_a_trailing_partial_group_and_no_monthly_basis_blocks_issuance(): void
+    {
+        // Same fail-loud rule, at the PRICING stage this time (not just
+        // coverage): an explicit quarterly package price covers the full
+        // groups, but with no monthly basis for the trailing partial
+        // group, the whole issuance must fail before any rows are
+        // persisted — never silently omit or prorate the partial group.
+        $fee = Fee::create(['name_ru' => 'Обучение (пакет без базы)', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1.00', 'is_active' => true]);
+        $fee->billingPeriods()->create(['billing_period' => 'quarterly']);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'quarterly', 'grade_id' => $this->enrollment->grade_id, 'amount' => '2800.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        // Deliberately NO monthly FeePrice — the trailing partial (June)
+        // group has no basis to be priced from.
+
+        $invoicesBefore = Invoice::count();
+        try {
+            app(InvoiceIssuanceService::class)->issue($this->student, [
+                'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+                'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
+                'items' => [['fee_id' => $fee->id, 'grade_group' => null, 'payment_period' => 'quarterly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null]],
+                'payment_type' => 'calendar', 'billing_period' => 'quarterly',
+            ], $this->accountant);
+            $this->fail('Expected ValidationException — no monthly basis for the trailing partial quarterly group.');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        $this->assertSame($invoicesBefore, Invoice::count());
     }
 }

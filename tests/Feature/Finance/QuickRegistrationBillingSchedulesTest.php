@@ -357,25 +357,59 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         // The exact same payload, same token, submitted a second time.
         $second = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $payload);
 
-        // The retry must fail cleanly (idempotency-key collision on the
-        // first installment) rather than silently duplicating anything —
-        // and per InvoicePaymentService::record()'s own idempotency-hash
-        // check, the collision is detected against a DIFFERENT invoice's
-        // installment (the retry always creates its own new Invoice, since
-        // invoice creation itself has no dedup), so the hash necessarily
-        // mismatches and record() rejects it. Because register()'s entire
-        // body — student, enrollment, invoice, installments, and the
-        // payment loop — runs inside one transaction, that rejection rolls
-        // back everything the retry attempted, leaving only attempt one's
-        // data behind.
-        $second->assertSessionHasErrors('idempotency_key');
+        // Corrective pass #2 (HIGH 2 — Quick Registration operation-level
+        // idempotency): a genuine retry (same token, same payload) now
+        // succeeds as a TRUE replay — register() itself recognizes the
+        // exact same operation via quick_registration_operations before
+        // Student creation is ever reached, and returns the ORIGINAL
+        // Student/Enrollment/Invoice directly, never attempting a second
+        // Student/Invoice/payment at all. This closes the exact gap pass
+        // #1's invoice-level-only idempotency left open (invoice-level
+        // idempotency alone could never prevent a duplicate Student, since
+        // it only ever engaged after Student creation had already
+        // happened) — a retry is no longer merely "rejected without
+        // duplicating," it now genuinely does nothing new at all.
+        $second->assertSessionHasNoErrors()->assertRedirect();
 
         // No duplication anywhere: same single invoice, same 11 payments —
-        // not 2 invoices, not 22 payments.
-        $this->assertSame(1, Invoice::count(), 'the retry\'s own Invoice must have been rolled back, not left as a second row');
+        // not 2 invoices, not 22 payments, not 2 students.
+        $this->assertSame(1, Invoice::count(), 'the retry must create nothing new at all');
+        $this->assertSame(1, \App\Models\Student::count());
         $this->assertSame($firstInvoiceId, Invoice::sole()->id);
         $this->assertSame(11, InvoicePayment::count(), 'no duplicate InvoicePayment rows from the retry');
         $this->assertSame('11000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2), 'total collected must still equal exactly one full payment, not two');
+    }
+
+    public function test_replaying_with_a_genuinely_different_payload_under_the_same_token_is_rejected(): void
+    {
+        // Corrective pass #2 (HIGH 2/HIGH 3): the SAME idempotency_token
+        // reused for a MATERIALLY different submission (a different fee
+        // this time) must be rejected outright — never silently treated
+        // as a replay of the first, and never silently accepted as an
+        // unrelated second registration under the same key either.
+        $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1000.00', ['monthly']);
+        $this->tuitionPrice($fee, '1000.00');
+        $otherFee = $this->fee('Обучение (другая)', Fee::CATEGORY_TUITION, '1000.00', ['monthly']);
+        $this->tuitionPrice($otherFee, '2000.00');
+
+        $basePayload = array_replace($this->base, ['registration_date' => '2026-08-01']) + [
+            'payment_type' => 'calendar', 'billing_period' => 'monthly',
+            'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
+            'idempotency_token' => 'test-fixed-idempotency-token-0002',
+        ];
+
+        $first = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $basePayload + [
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+        ]);
+        $first->assertSessionHasNoErrors()->assertRedirect();
+        $this->assertSame(1, Invoice::count());
+
+        $second = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $basePayload + [
+            'services' => [['fee_id' => $otherFee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+        ]);
+        $second->assertSessionHasErrors('idempotency_key');
+        $this->assertSame(1, Invoice::count(), 'the rejected retry must create nothing new');
+        $this->assertSame(1, \App\Models\Student::count());
     }
 
     public function test_partial_payment_not_covering_a_whole_number_of_installments_is_rejected(): void
@@ -440,5 +474,97 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         ]);
 
         return (object) ['id' => $id];
+    }
+
+    // ----- Finance metadata preservation (corrective pass #2, HIGH 4) -----
+
+    public function test_quick_registration_preserves_finance_pricing_metadata_alongside_its_own_admissions_metadata_monthly(): void
+    {
+        // Real end-to-end through register() (the HTTP endpoint), not
+        // InvoiceIssuanceService::issue() directly — this is exactly the
+        // path that previously overwrote the Finance audit metadata.
+        $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1000.00', ['monthly']);
+        $this->tuitionPrice($fee, '1000.00');
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'calendar', 'billing_period' => 'monthly',
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'grade_group' => null]],
+        ]);
+        $response->assertSessionHasNoErrors()->assertRedirect();
+
+        $item = Invoice::sole()->items->sole();
+        // Finance pricing/coverage audit metadata — must survive.
+        $this->assertSame('1000.00', $item->metadata['unit_tariff'] ?? null);
+        $this->assertSame('monthly', $item->metadata['billing_unit'] ?? null);
+        $this->assertArrayHasKey('coverage_start', $item->metadata);
+        $this->assertArrayHasKey('coverage_end', $item->metadata);
+        $this->assertArrayHasKey('fee_price_id', $item->metadata);
+        // Admissions-domain metadata this same write step adds — must
+        // ALSO survive, alongside the Finance fields above, neither
+        // clobbering the other.
+        $this->assertArrayHasKey('first_last_month', $item->metadata);
+    }
+
+    public function test_quick_registration_preserves_finance_pricing_metadata_alongside_its_own_admissions_metadata_transport(): void
+    {
+        $transport = $this->fee('Транспорт', Fee::CATEGORY_TRANSPORT, '600.00', ['monthly']);
+        FeePrice::create([
+            'fee_id' => $transport->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '600.00', 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+            'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly',
+        ]);
+        $route = $this->transportRoute();
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'calendar', 'billing_period' => 'monthly',
+            'services' => [['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $route->id, 'payment_period' => 'monthly']],
+        ]);
+        $response->assertSessionHasNoErrors()->assertRedirect();
+
+        $item = Invoice::sole()->items->sole();
+        $this->assertSame('600.00', $item->metadata['unit_tariff'] ?? null);
+        $this->assertSame('monthly', $item->metadata['billing_unit'] ?? null);
+        $this->assertArrayHasKey('coverage_start', $item->metadata);
+        // Admissions-domain (Transport-specific) metadata — must ALSO
+        // survive alongside the Finance fields above.
+        $this->assertSame((string) $route->id, (string) ($item->metadata['route_id'] ?? null));
+        $this->assertSame('Зона 1', $item->metadata['area'] ?? null);
+    }
+
+    public function test_quick_registration_preserves_finance_pricing_metadata_for_quarterly_billing(): void
+    {
+        $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1200.00', ['quarterly']);
+        $this->tuitionPrice($fee, '400.00');
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'calendar', 'billing_period' => 'quarterly',
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'payment_period' => 'quarterly']],
+        ]);
+        $response->assertSessionHasNoErrors()->assertRedirect();
+
+        $item = Invoice::sole()->items->sole();
+        $this->assertSame('quarterly', $item->metadata['billing_unit'] ?? null);
+        $this->assertTrue($item->metadata['derived'] ?? false);
+        $this->assertArrayHasKey('derived_from_fee_price_id', $item->metadata);
+        // Coverage for quarterly billing takes the adjustment-basis path
+        // — this metadata is written by createAutomaticCoverage(), even
+        // later than the pricing metadata above, and must ALSO survive
+        // this same overwrite-prone update() call.
+        $this->assertArrayHasKey('adjustment_basis_fee_price_id', $item->metadata);
+        $this->assertSame('monthly', $item->metadata['adjustment_basis_period'] ?? null);
+    }
+
+    public function test_quick_registration_preserves_finance_pricing_metadata_for_yearly_billing(): void
+    {
+        $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1500.00', ['yearly']);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->base['academic_year_id'], 'payment_period' => 'yearly', 'grade_id' => $this->grade->id, 'amount' => '1500.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        $this->tuitionPrice($fee, '150.00');
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'calendar', 'billing_period' => 'yearly',
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'payment_period' => 'yearly']],
+        ]);
+        $response->assertSessionHasNoErrors()->assertRedirect();
+
+        $item = Invoice::sole()->items->sole();
+        $this->assertSame('yearly', $item->metadata['billing_unit'] ?? null);
+        $this->assertArrayHasKey('adjustment_basis_fee_price_id', $item->metadata);
+        $this->assertSame('150.00', $item->metadata['adjustment_basis_unit_amount'] ?? null);
     }
 }

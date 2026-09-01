@@ -6,8 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class PaymentPlan extends Model
 {
-    protected $fillable = ['name_ru', 'description', 'is_active', 'sort_order'];
-    protected $casts = ['is_active' => 'boolean', 'sort_order' => 'integer'];
+    protected $fillable = ['name_ru', 'description', 'is_active', 'sort_order', 'is_test_data'];
+    protected $casts = ['is_active' => 'boolean', 'sort_order' => 'integer', 'is_test_data' => 'boolean'];
 
     public function installments()
     {

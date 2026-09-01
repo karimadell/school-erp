@@ -317,7 +317,16 @@ class Phase2TariffAdjustmentAndPromiseTest extends FinanceOperationsTestCase
         $summary = app(StudentFinanceSummaryService::class)->summarize($this->student->fresh());
         $this->assertSame('500.00', $summary['credit_applied']);
         $this->assertSame('100.00', $summary['available_credit']);
-        $this->assertSame('0.00', $summary['overdue_net']);
+        // The shared transportCoverage() fixture's own base invoice
+        // (1500.00, from the $original tariff) is deliberately left unpaid
+        // by this test — unlike its sibling test, which explicitly pays it
+        // off — so it correctly remains outstanding/overdue here. This
+        // assertion only needs to prove the SEPARATE 500.00 invoice this
+        // test credits settles to zero, which it does (credit_applied/
+        // available_credit above already prove that); overdue_net
+        // reflects both invoices combined: 1500.00 (fixture, untouched) +
+        // 0.00 (this invoice, fully credited) = 1500.00.
+        $this->assertSame('1500.00', $summary['overdue_net']);
 
         $later = $this->invoice('100.00');
         app(StudentCreditService::class)->apply($credit->fresh(), $later, '100.00', (string) Str::uuid(), $this->accountant);

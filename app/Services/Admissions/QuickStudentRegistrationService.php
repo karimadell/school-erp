@@ -43,6 +43,17 @@ class QuickStudentRegistrationService
     public function register(array $data, User $actor): array
     {
         return DB::transaction(function () use ($data, $actor) {
+            // Finance V2, Phase 2D corrective pass (P0/HIGH — invoice
+            // issuance idempotency): the SAME per-page-render outer token
+            // already used to derive deterministic per-installment payment
+            // keys below is reused here for the INVOICE itself, so a
+            // retried submission (same token) returns the original
+            // invoice directly rather than creating a second one.
+            $outerToken = $data['idempotency_token'] ?? null;
+            $invoiceIdempotencyKey = $outerToken
+                ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration-invoice:{$outerToken}")
+                : null;
+
             $year = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
             if (! $year->is_active) {
                 throw ValidationException::withMessages(['academic_year_id' => 'Выбранный учебный год больше не активен.']);
@@ -188,7 +199,7 @@ class QuickStudentRegistrationService
                 'payment_type' => $data['payment_type'] ?? 'one_time',
                 'payment_plan_id' => $data['payment_plan_id'] ?? null,
                 'billing_period' => $data['billing_period'] ?? null,
-            ], $actor, subscriptionResolver: $subscriptionResolver, origin: Invoice::ORIGIN_QUICK_REGISTRATION);
+            ], $actor, subscriptionResolver: $subscriptionResolver, origin: Invoice::ORIGIN_QUICK_REGISTRATION, idempotencyKey: $invoiceIdempotencyKey);
 
             // Quick Registration's own per-line concerns — the initial
             // paid/remaining split per service, the enriched description,
@@ -327,22 +338,26 @@ class QuickStudentRegistrationService
                 // new Invoice (no invoice-level dedup exists, and adding
                 // one is out of scope here), so a true retry produces a
                 // DIFFERENT invoice/installment id every time regardless —
-                // keying on those would never actually collide, silently
-                // allowing a full duplicate registration through. Keying on
+                // keying on those would never actually collide. Keying on
                 // the stable (token, index) pair instead means a retry's
-                // first record() call reuses attempt one's exact key, finds
-                // its existing InvoicePayment, computes a hash against the
-                // RETRY's own (different) invoice/installment id, gets a
-                // hash mismatch, and throws — which rolls back the retry's
-                // entire transaction (including its just-created Invoice)
-                // via InvoicePaymentService::record()'s own idempotency-hash
-                // check. Net effect: a retried submission never leaves a
-                // second InvoicePayment/CashTransaction pair (or a second
-                // Invoice) committed — it fails cleanly instead. A caller
-                // with no idempotency_token (e.g. a non-browser API
+                // record() calls reuse attempt one's exact keys.
+                //
+                // Finance V2, Phase 2D corrective pass: $issue() above is
+                // now ALSO keyed on $invoiceIdempotencyKey (derived from
+                // this same $outerToken), so a genuine retry with the same
+                // token returns the ORIGINAL invoice/installments directly
+                // — $installment/$invoice here are already the first
+                // attempt's own rows, and each record() call below simply
+                // replays its own already-recorded payment (same
+                // idempotency-hash check InvoicePaymentService::record()
+                // already performs). Net effect: a retried submission
+                // creates nothing new at any level — invoice, installments,
+                // coverage, or payments — it observes and returns exactly
+                // what the first successful attempt already produced. A
+                // caller with no idempotency_token (e.g. a non-browser API
                 // consumer) falls back to today's fresh-UUID-per-attempt
-                // behavior, unchanged.
-                $outerToken = $data['idempotency_token'] ?? null;
+                // behavior, unchanged (and to always-fresh invoice
+                // issuance, also unchanged).
                 foreach ($toRecord as $index => [$installment, $amount]) {
                     $idempotencyKey = $outerToken
                         ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:{$index}")

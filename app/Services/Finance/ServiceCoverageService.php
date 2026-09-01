@@ -83,6 +83,92 @@ class ServiceCoverageService
         );
     }
 
+    /**
+     * Finance V2, Phase 2D corrective pass (P0 Blocker 2 / yearly & Food
+     * adjustment basis). record()/sourceTariff() above hard-require the
+     * coverage's tariff to be exactly the price the item was actually
+     * charged at (payment_period AND unit_price must match) — correct for
+     * the original manual-form use case, but structurally incompatible
+     * with a Fee billed quarterly/yearly or Food charged at a non-daily
+     * rate, whose coverage/tariff-adjustment BASIS must legitimately be a
+     * DIFFERENT (monthly or daily) tariff than the one actually charged —
+     * see InvoiceCalculationService::resolveCoverageBasisPrice(). This is
+     * a narrower, separate entry point for exactly that case — it does
+     * NOT touch record()/sourceTariff(), which remain unchanged and still
+     * govern the existing manual-form path exactly as before, still fully
+     * validated, still requiring an exact charged-price match there.
+     *
+     * Reuses every structural validation record() applies EXCEPT the
+     * charged-price-must-match check: item/fee validity, coverage date
+     * ordering, billing_unit validity, subscription consistency, the
+     * full-calendar-month rule for monthly, and food-only for daily.
+     * $basisPrice itself is validated directly (fee, currency, academic
+     * year, and payment_period must equal $data['billing_unit']) instead
+     * of being sourced from the item's own charge.
+     */
+    public function recordWithBasisPrice(InvoiceItem $item, FeePrice $basisPrice, array $data, User $actor): ServiceCoverage
+    {
+        $item->loadMissing(['invoice', 'fee', 'subscription.enrollment']);
+        if (! $item->fee_id || $item->fee?->id !== $item->fee_id) {
+            throw ValidationException::withMessages(['invoice_item_id' => 'Услуга позиции счёта не определена.']);
+        }
+        $start = Carbon::parse($data['coverage_start']);
+        $end = Carbon::parse($data['coverage_end']);
+        if ($end->lt($start)) {
+            throw ValidationException::withMessages(['coverage_end' => 'Дата окончания покрытия не может быть раньше даты начала.']);
+        }
+        if (! in_array($data['billing_unit'], ['monthly', 'daily'], true)) {
+            throw ValidationException::withMessages(['billing_unit' => 'Поддерживаются месячные и дневные единицы покрытия.']);
+        }
+        if ($basisPrice->fee_id !== $item->fee_id) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Базовый тариф не относится к услуге позиции счёта.']);
+        }
+        if ($basisPrice->currency !== 'EGP' || ! $basisPrice->is_active) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Базовый тариф недействителен.']);
+        }
+        if ($item->invoice?->academic_year_id && $basisPrice->academic_year_id !== $item->invoice->academic_year_id) {
+            throw ValidationException::withMessages(['fee_price_id' => 'Базовый тариф относится к другому учебному году.']);
+        }
+        if ($basisPrice->payment_period !== $data['billing_unit']) {
+            throw ValidationException::withMessages(['billing_unit' => 'Базовый тариф не соответствует единице покрытия.']);
+        }
+        $metadata = $item->metadata ?? [];
+        if ($item->subscription_id) {
+            $subscription = $item->subscription;
+            if (! $subscription || $subscription->fee_id !== $item->fee_id || $subscription->enrollment?->student_id !== $item->invoice->student_id) {
+                throw ValidationException::withMessages(['invoice_item_id' => 'Подписка позиции не соответствует ученику или услуге.']);
+            }
+        }
+        if ($data['billing_unit'] === 'monthly' && (! $start->isStartOfMonth() || ! $end->isLastOfMonth())) {
+            throw ValidationException::withMessages(['coverage_start' => 'Месячное покрытие должно состоять из полных календарных месяцев.']);
+        }
+        if ($data['billing_unit'] === 'daily' && $item->fee->category !== \App\Models\Fee::CATEGORY_FOOD) {
+            throw ValidationException::withMessages(['billing_unit' => 'Дневное покрытие поддерживается только для питания.']);
+        }
+
+        return ServiceCoverage::firstOrCreate(
+            ['invoice_item_id' => $item->id],
+            [
+                'student_id' => $item->invoice->student_id,
+                'fee_id' => $item->fee_id,
+                'subscription_id' => $item->subscription_id,
+                'fee_price_id' => $basisPrice->id,
+                'coverage_start' => $start->toDateString(),
+                'coverage_end' => $end->toDateString(),
+                'billing_unit' => $data['billing_unit'],
+                'payment_period' => $basisPrice->payment_period,
+                'option_type' => $metadata['option_type'] ?? $basisPrice->option_type,
+                'option_value' => $metadata['option_value'] ?? $basisPrice->option_value,
+                'grade_group' => $metadata['grade_group'] ?? $basisPrice->grade_group,
+                'item' => $metadata['item'] ?? $basisPrice->item,
+                'size' => $metadata['size'] ?? $basisPrice->size,
+                'original_unit_price' => $basisPrice->amount,
+                'metadata' => $data['metadata'] ?? null,
+                'created_by' => $actor->id,
+            ],
+        );
+    }
+
     public function sourceTariff(InvoiceItem $item): FeePrice
     {
         $item->loadMissing(['invoice', 'fee']);

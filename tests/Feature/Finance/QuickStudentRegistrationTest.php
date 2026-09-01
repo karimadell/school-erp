@@ -195,8 +195,8 @@ class QuickStudentRegistrationTest extends TestCase
 
     public function test_everything_rolls_back_when_calculation_fails(): void
     {
-        $this->app->instance(InvoiceCalculationService::class, new class extends InvoiceCalculationService {
-            public function calculate(array $items, ?string $discountType = null, string|int|float|null $discountValue = null, string|int|float|null $initialPaymentAmount = null, ?string $pricingDate = null, ?int $academicYearId = null): array
+        $this->app->instance(InvoiceCalculationService::class, new class(app(\App\Services\Finance\CalendarPeriodCalculator::class)) extends InvoiceCalculationService {
+            public function calculate(array $items, ?string $discountType = null, string|int|float|null $discountValue = null, string|int|float|null $initialPaymentAmount = null, ?string $pricingDate = null, ?int $academicYearId = null, ?string $calendarBillingPeriod = null, ?string $academicYearEndDate = null): array
             {
                 throw ValidationException::withMessages(['services' => 'Ошибка расчёта.']);
             }

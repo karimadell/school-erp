@@ -20,6 +20,8 @@ class Invoice extends Model
     public const ORIGIN_QUICK_REGISTRATION = 'quick_registration';
 
     protected $fillable = [
+        'idempotency_key',
+        'idempotency_hash',
         'student_id',
         'invoice_number',
         'currency',

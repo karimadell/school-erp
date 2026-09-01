@@ -48,6 +48,10 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
 
     protected CashAccount $account;
 
+    protected AcademicYear $year;
+
+    protected Grade $grade;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -60,6 +64,8 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         $grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'A', 'is_active' => true]);
         $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $this->year = $year;
+        $this->grade = $grade;
 
         $this->account = CashAccount::operating();
         app(CashSessionService::class)->open($this->account, $this->accountant);
@@ -82,11 +88,33 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         return $fee;
     }
 
+    /**
+     * Finance V2, Phase 2D corrective pass — automatic ServiceCoverage
+     * creation is now a hard financial invariant for every calendar-billed
+     * Fee (P0 Blocker 3: no catch-log-and-skip), which correctly requires
+     * a REAL, dimensionally-matching, payment_period-tagged monthly
+     * FeePrice to exist — the flat Fee.amount fallback these fixtures
+     * originally relied on (pre-dating ServiceCoverage entirely) can no
+     * longer carry a periodic invoice on its own, since there would be no
+     * real tariff to build coverage or future tariff adjustments from.
+     * This helper gives each Tuition fixture that real tariff instead of
+     * silently depending on the legacy flat-amount fallback.
+     */
+    private function tuitionPrice(Fee $fee, string $amount): FeePrice
+    {
+        return FeePrice::create([
+            'fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'monthly',
+            'grade_id' => $this->grade->id, 'amount' => $amount, 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+        ]);
+    }
+
     // ----- Tuition: monthly/quarterly/yearly ----------------------------------
 
     public function test_tuition_monthly_schedule_via_quick_registration(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1100.00', ['monthly']);
+        $this->tuitionPrice($fee, '1100.00');
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
@@ -101,9 +129,14 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
     public function test_tuition_quarterly_schedule_via_quick_registration(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1200.00', ['quarterly']);
+        // Quarterly pricing is always DERIVED from a real monthly tariff
+        // (Phase 2D item 1) — never a flat Fee.amount fallback — and the
+        // same monthly tariff also serves as automatic coverage's
+        // adjustment basis (Phase 2D corrective pass, P0 Blocker 2).
+        $this->tuitionPrice($fee, '400.00');
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'quarterly',
-            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'payment_period' => 'quarterly']],
         ]);
 
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -114,9 +147,15 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
     public function test_tuition_yearly_schedule_via_quick_registration(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1500.00', ['yearly']);
+        // The actual yearly-collected package price (charged tariff).
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'yearly', 'grade_id' => $this->grade->id, 'amount' => '1500.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        // A SEPARATE monthly tariff as automatic coverage's adjustment
+        // basis (Phase 2D corrective pass, P0 Blocker 2 — never derived
+        // by dividing the yearly package price).
+        $this->tuitionPrice($fee, '150.00');
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'yearly',
-            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'payment_period' => 'yearly']],
         ]);
 
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -185,11 +224,11 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         FeePrice::create([
             'fee_id' => $transport->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '600.00', 'currency' => 'EGP',
             'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
-            'option_type' => 'zone', 'option_value' => 'Зона 1',
+            'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly',
         ]);
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
-            'services' => [['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $this->transportRoute()->id]],
+            'services' => [['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $this->transportRoute()->id, 'payment_period' => 'monthly']],
         ]);
 
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -200,14 +239,24 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
     {
         $mealPlan = MealPlan::create(['name_ru' => 'Полный день', 'meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '900.00', 'is_active' => true]);
         $food = $this->fee('Питание', Fee::CATEGORY_FOOD, '900.00', ['yearly']);
+        // The actual yearly-collected package price (charged tariff).
         FeePrice::create([
             'fee_id' => $food->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '900.00', 'currency' => 'EGP',
             'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
-            'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id,
+            'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id, 'payment_period' => 'yearly',
+        ]);
+        // A SEPARATE daily tariff as automatic coverage's adjustment basis
+        // (Phase 2D corrective pass, P0 Blocker 2/3 — Food's coverage
+        // granularity is always daily, independent of collection cadence,
+        // and must never be invented by dividing the yearly package price).
+        FeePrice::create([
+            'fee_id' => $food->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '45.00', 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+            'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id, 'payment_period' => 'daily',
         ]);
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'yearly',
-            'services' => [['fee_id' => $food->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $mealPlan->id]],
+            'services' => [['fee_id' => $food->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $mealPlan->id, 'payment_period' => 'yearly']],
         ]);
 
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -236,6 +285,7 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
     public function test_zero_payment_still_generates_the_full_future_schedule(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1100.00', ['monthly']);
+        $this->tuitionPrice($fee, '1100.00');
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
@@ -253,12 +303,16 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
     public function test_full_payment_settles_every_generated_installment(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1000.00', ['monthly']);
-        // Registering right at year-start keeps the month count small and
-        // the per-period amount a clean number: Aug..Jun = 11 months,
-        // 1000.00 / 11 = 90.90 * 10 + 91.00.
+        // Registering right at year-start keeps the month count small:
+        // Aug..Jun = 11 months. Phase 2D corrective pass (P0 Blocker 1):
+        // pricing is now unit x period-count, so the FeePrice IS the
+        // per-month unit (1000.00), giving a clean total of 11000.00 (no
+        // remainder-absorption needed — each installment is exactly the
+        // unit price).
+        $this->tuitionPrice($fee, '1000.00');
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), array_replace($this->base, ['registration_date' => '2026-08-01']) + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
-            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1000.00']],
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '11000.00']],
             'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
         ]);
 
@@ -272,7 +326,7 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         // §4 note: each installment needs its own invoice_installment_id-
         // tied InvoicePayment row).
         $this->assertSame(11, InvoicePayment::count());
-        $this->assertSame('1000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2));
+        $this->assertSame('11000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2));
     }
 
     // ----- request-level idempotency for multi-installment full payment (review finding M3) -----
@@ -280,9 +334,12 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
     public function test_replaying_the_same_submission_does_not_duplicate_installment_payments(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1000.00', ['monthly']);
+        $this->tuitionPrice($fee, '1000.00');
+        // Aug..Jun = 11 months x 1000.00/month = 11000.00 total (Phase 2D
+        // corrective pass, P0 Blocker 1 — see test above).
         $payload = array_replace($this->base, ['registration_date' => '2026-08-01']) + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
-            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1000.00']],
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '11000.00']],
             'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
             // Fixed, explicit token — simulates the SAME already-rendered
             // form (same hidden idempotency_token field) being submitted
@@ -318,15 +375,17 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         $this->assertSame(1, Invoice::count(), 'the retry\'s own Invoice must have been rolled back, not left as a second row');
         $this->assertSame($firstInvoiceId, Invoice::sole()->id);
         $this->assertSame(11, InvoicePayment::count(), 'no duplicate InvoicePayment rows from the retry');
-        $this->assertSame('1000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2), 'total collected must still equal exactly one full payment, not two');
+        $this->assertSame('11000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2), 'total collected must still equal exactly one full payment, not two');
     }
 
     public function test_partial_payment_not_covering_a_whole_number_of_installments_is_rejected(): void
     {
         $fee = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1100.00', ['monthly']);
-        // First installment is 100.00 (1100/11); pay 150.00 — covers the
-        // first fully but only partially covers the second. Must reject,
-        // not silently apply a partial second-installment payment.
+        // First installment is 100.00/month x 11 months = 1100.00 total;
+        // pay 150.00 — covers the first fully but only partially covers
+        // the second. Must reject, not silently apply a partial
+        // second-installment payment.
+        $this->tuitionPrice($fee, '100.00');
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), array_replace($this->base, ['registration_date' => '2026-08-01']) + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '150.00']],

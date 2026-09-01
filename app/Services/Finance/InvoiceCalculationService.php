@@ -15,6 +15,10 @@ class InvoiceCalculationService
 {
     public const CURRENCY = 'EGP';
 
+    public function __construct(private CalendarPeriodCalculator $periods)
+    {
+    }
+
     /**
      * The tariff-variant dimension fields (Phase 4A.2 canonical pricing
      * rule): two FeePrice rows sharing every one of these, plus fee_id and
@@ -28,6 +32,22 @@ class InvoiceCalculationService
 
     /**
      * @param  array<int, array<string, mixed>>  $items
+     * @param  ?string  $calendarBillingPeriod  Finance V2, Phase 2D corrective
+     *         pass (P0 Blocker 1): when the invoice is being issued under
+     *         Phase 2B's calendar payment_type (monthly/quarterly/yearly),
+     *         every line's resolved UNIT price must be multiplied by the
+     *         number of covered periods before it becomes the invoice
+     *         total — previously this multiplication never happened
+     *         anywhere, so a 1500/month Transport line billed for 9 months
+     *         was invoiced at 1500 total instead of 13500. Null for every
+     *         non-calendar caller (one_time, custom plan), preserving their
+     *         existing behaviour exactly (quantity stays whatever the
+     *         caller submits, default 1).
+     * @param  ?string  $academicYearEndDate  Required together with
+     *         $calendarBillingPeriod — the same academic-year end date
+     *         InstallmentPlanService::generateCalendarSchedule() uses, so
+     *         pricing and scheduling count the exact same number of
+     *         periods via the same CalendarPeriodCalculator.
      * @return array<string, mixed>
      */
     public function calculate(
@@ -37,9 +57,25 @@ class InvoiceCalculationService
         string|int|float|null $initialPaymentAmount = null,
         ?string $pricingDate = null,
         ?int $academicYearId = null,
+        ?string $calendarBillingPeriod = null,
+        ?string $academicYearEndDate = null,
     ): array {
         $pricingDate ??= now()->toDateString();
         $feeIds = collect($items)->pluck('fee_id')->map(fn ($id) => (int) $id)->all();
+
+        // Phase 2D corrective pass: resolved ONCE for the whole submission
+        // (every line on a calendar-billed invoice shares the same
+        // registration date and billing period — M1's own rule already
+        // requires every Fee on one invoice to share one billing strategy,
+        // so there is exactly one period count for the whole calculate()
+        // call, never a per-line count).
+        $calendarPeriods = null;
+        if ($calendarBillingPeriod !== null) {
+            if ($academicYearEndDate === null) {
+                throw ValidationException::withMessages(['billing_period' => 'Не указана дата окончания учебного года для расчёта периодов.']);
+            }
+            $calendarPeriods = $this->periods->resolve($calendarBillingPeriod, $pricingDate, $academicYearEndDate);
+        }
 
         /** @var Collection<int, Fee> $fees */
         $fees = Fee::query()->whereIn('id', $feeIds)->lockForUpdate()->get()->keyBy('id');
@@ -74,6 +110,37 @@ class InvoiceCalculationService
             $amount = $resolvedPrice['amount'];
             $quantity = (int) ($item['quantity'] ?? 1);
 
+            // Phase 2D corrective pass (P0 Blocker 1): for a calendar-billed
+            // line, the number of UNITS is the covered period count, a
+            // system-computed fact — never a client-submitted quantity.
+            // filled($item['quantity']) with anything other than the
+            // (unremarkable, always-default) 1 is treated as a caller
+            // asserting something this billing mode cannot express and is
+            // rejected loudly rather than silently overridden or silently
+            // honoured (which would either mask a real client bug or
+            // double-count periods).
+            //
+            // Deliberately excludes a 'daily'-denominated resolved price
+            // (Food's own genuine per-day tariff) — multiplying a daily
+            // rate by a MONTH/quarter count would be exactly the invented,
+            // unsupported monthly-to-daily conversion explicitly forbidden
+            // for this phase; a daily-priced line keeps its pre-existing,
+            // untouched quantity semantics (whatever day-count, if any,
+            // the caller submits) — its coverage/adjustment tracking is
+            // handled entirely separately, in InvoiceIssuanceService's
+            // automatic-coverage step, independent of this line's own
+            // charged amount.
+            $isDailyPriced = ($resolvedPrice['metadata']['payment_period'] ?? null) === 'daily';
+            if ($calendarPeriods !== null && ! $isDailyPriced) {
+                $submittedQuantity = (int) ($item['quantity'] ?? 1);
+                if ($submittedQuantity !== 1 && $submittedQuantity !== $calendarPeriods['count']) {
+                    throw ValidationException::withMessages([
+                        'services' => "Количество для услуги «{$fee->name_ru}» определяется периодом оплаты и не может быть указано вручную.",
+                    ]);
+                }
+                $quantity = $calendarPeriods['count'];
+            }
+
             if ($quantity < 1) {
                 throw ValidationException::withMessages([
                     'services' => 'Количество услуги должно быть не меньше 1.',
@@ -93,6 +160,20 @@ class InvoiceCalculationService
             $unitPrice = $amount;
             $amount = bcmul($unitPrice, (string) $quantity, 2);
 
+            $lineMetadata = $resolvedPrice['metadata'];
+            if ($calendarPeriods !== null && ! $isDailyPriced) {
+                // Auditable trace of the multi-period pricing computation,
+                // same storage convention as the quarterly-derivation
+                // metadata keys (derived/derived_period/etc) already
+                // established earlier in this same phase.
+                $lineMetadata['unit_tariff'] = $unitPrice;
+                $lineMetadata['billing_unit'] = $calendarBillingPeriod;
+                $lineMetadata['unit_count'] = (string) $quantity;
+                $lineMetadata['coverage_start'] = $calendarPeriods['periods'][0]['start'];
+                $lineMetadata['coverage_end'] = $calendarPeriods['periods'][array_key_last($calendarPeriods['periods'])]['end'];
+                $lineMetadata['line_total'] = $amount;
+            }
+
             $subtotal = bcadd($subtotal, $amount, 2);
             $lines[] = [
                 'fee_id' => $fee->id,
@@ -108,7 +189,7 @@ class InvoiceCalculationService
                 'option_value' => $resolvedPrice['metadata']['option_value'] ?? null,
                 'tariff_valid_from' => $resolvedPrice['valid_from'],
                 'tariff_valid_to' => $resolvedPrice['valid_to'],
-                'metadata' => $resolvedPrice['metadata'],
+                'metadata' => $lineMetadata,
             ];
         }
 
@@ -145,6 +226,35 @@ class InvoiceCalculationService
             'currency' => self::CURRENCY,
             'line_items' => $lines,
         ];
+    }
+
+    /**
+     * Finance V2, Phase 2D corrective pass (P0 Blocker 2 / yearly & Food
+     * adjustment basis). ServiceCoverage only ever accepts a FeePrice
+     * whose payment_period is 'monthly' or 'daily' (ServiceCoverageService::
+     * sourceTariff()'s own hard constraint, unchanged) — so a Fee billed
+     * quarterly/yearly (basis 'monthly' needed) or a Food Fee charged at a
+     * monthly/quarterly/yearly rate but tracked at daily coverage
+     * granularity (basis 'daily' needed) cannot use its own resolved,
+     * differently-denominated FeePrice as the coverage's tariff. This
+     * resolves a SEPARATE $targetPeriod tariff for the exact same
+     * Fee/dimensions, valid as of the same pricing date, using the
+     * identical dimensional matching + effective-date rules every other
+     * price lookup in this class uses (same dimensionalCandidates()/
+     * selectAmongCandidates() pair the quarterly-derivation logic already
+     * reuses) — never a division/conversion of the charged price, never
+     * invented.
+     *
+     * @param  array<string, mixed>  $dimensions  grade_group/option_type/option_value/size/item, from the invoiced line's own metadata
+     */
+    public function resolveCoverageBasisPrice(Fee $fee, array $dimensions, string $date, ?int $academicYearId, string $targetPeriod): ?FeePrice
+    {
+        $selection = $dimensions;
+        $selection['payment_period'] = $targetPeriod;
+        $cache = [];
+        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $cache);
+
+        return $this->selectAmongCandidates($candidates, $date);
     }
 
     /**

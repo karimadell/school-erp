@@ -3,6 +3,7 @@
 namespace App\Services\Finance;
 
 use App\Models\Fee;
+use App\Models\FeeBillingPeriod;
 use App\Models\FeePrice;
 use App\Models\EnrollmentMode;
 use App\Models\Grade;
@@ -200,6 +201,94 @@ class InvoiceCalculationService
             }
         }
 
+        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $modeCache);
+        $price = $this->selectAmongCandidates($candidates, $date);
+        $derived = null;
+
+        // Finance V2, Phase 2D — quarterly derived pricing. Only when no
+        // explicit quarterly tariff resolved above, and only when this Fee
+        // is actually configured to allow quarterly billing at all
+        // (defense-in-depth: Phase 2B's request/service-level validation
+        // should already prevent 'quarterly' being requested for a Fee
+        // that doesn't allow it, but the resolver itself must never derive
+        // a price the Fee isn't even eligible to be billed under).
+        if (! $price && ($selection['payment_period'] ?? null) === 'quarterly'
+            && $fee->allowsBillingPeriod(FeeBillingPeriod::PERIOD_QUARTERLY)) {
+            $monthlySelection = array_merge($selection, ['payment_period' => 'monthly']);
+            $monthlyCandidates = $this->dimensionalCandidates($fee, $monthlySelection, $academicYearId, $modeCache);
+            $monthlyPrice = $this->selectAmongCandidates($monthlyCandidates, $date);
+            if ($monthlyPrice) {
+                $monthlyAmount = $this->money($monthlyPrice->getRawOriginal('amount'));
+                $derived = [
+                    'amount' => bcmul($monthlyAmount, '3', 2),
+                    'monthly_price' => $monthlyPrice,
+                    'monthly_amount' => $monthlyAmount,
+                ];
+            }
+        }
+
+        // Transport/food/uniform pricing is structurally dimensional (zone /
+        // meal plan / item+size) — a flat Fee.amount/base_price fallback
+        // would silently create a phantom, unpriced-in-reality line the
+        // moment the fee has zero FeePrice rows at all (as opposed to some
+        // rows that simply don't match this selection). These categories
+        // must always resolve through a real dimensional tariff or fail
+        // loudly, even when the fee has never had a single price configured.
+        $requiresDimensionalTariff = in_array($fee->category, [
+            Fee::CATEGORY_TRANSPORT, Fee::CATEGORY_FOOD, Fee::CATEGORY_UNIFORM,
+        ], true);
+        // Phase 2D: an explicit quarterly request that resolved neither a
+        // real quarterly tariff nor a derivable monthly one must always
+        // fail loud — never silently fall through to the flat
+        // Fee.amount/base_price fallback that non-dimensional categories
+        // (e.g. Tuition with zero configured FeePrice rows) would
+        // otherwise use for every other period.
+        $quarterlyRequested = ($selection['payment_period'] ?? null) === 'quarterly';
+        if (! $price && ! $derived && $academicYearId && ($fee->prices()->exists() || $requiresDimensionalTariff || $quarterlyRequested)) {
+            throw ValidationException::withMessages([
+                'fees' => 'На выбранную дату тариф не настроен.',
+            ]);
+        }
+
+        if ($derived) {
+            $metadata = $this->priceMetadata($derived['monthly_price'], $date);
+            $metadata['payment_period'] = 'quarterly';
+            $metadata['derived'] = true;
+            $metadata['derived_period'] = 'quarterly';
+            $metadata['derived_from_period'] = 'monthly';
+            $metadata['derived_from_fee_price_id'] = $derived['monthly_price']->id;
+            $metadata['monthly_unit_amount'] = $derived['monthly_amount'];
+            $metadata['multiplier'] = '3';
+
+            return [
+                'amount' => $derived['amount'],
+                'valid_from' => $derived['monthly_price']->start_date?->toDateString(),
+                'valid_to' => $derived['monthly_price']->end_date?->toDateString(),
+                'metadata' => $metadata,
+            ];
+        }
+
+        return [
+            'amount' => $this->money($price?->getRawOriginal('amount') ?? $fee->getRawOriginal('amount') ?? $fee->getRawOriginal('base_price') ?? '0'),
+            'valid_from' => $price?->start_date?->toDateString(),
+            'valid_to' => $price?->end_date?->toDateString(),
+            'metadata' => $price ? $this->priceMetadata($price, $date) : ['pricing_date' => $date],
+        ];
+    }
+
+    /**
+     * The dimensional (non-explicit-fee_price_id) candidate query, factored
+     * out of resolvePrice() so Phase 2D's quarterly-derivation fallback can
+     * re-run the identical dimensional filtering with only payment_period
+     * substituted — same effective-date rules, same grade/zone/item/size
+     * matching, never a looser or different query for the derived path.
+     *
+     * @param  array<string, mixed>  $selection
+     * @param  array<int, ?EnrollmentMode>  $modeCache
+     * @return Collection<int, FeePrice>
+     */
+    private function dimensionalCandidates(Fee $fee, array $selection, ?int $academicYearId, array &$modeCache = []): Collection
+    {
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
             ->active()->where('currency', self::CURRENCY)
@@ -249,34 +338,10 @@ class InvoiceCalculationService
         // bird / staged increases / promotions) does the date range
         // disambiguate between them; a date matching none of them fails
         // loudly rather than guessing (see selectAmongCandidates()).
-        $candidates = $query
+        return $query
             ->when(filled($selection['grade_id'] ?? null), fn ($query) => $query
                 ->orderByRaw('CASE WHEN grade_id = ? THEN 0 WHEN grade_group IS NOT NULL THEN 1 ELSE 2 END', [(int) $selection['grade_id']]))
             ->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->get();
-        $price = $this->selectAmongCandidates($candidates, $date);
-
-        // Transport/food/uniform pricing is structurally dimensional (zone /
-        // meal plan / item+size) — a flat Fee.amount/base_price fallback
-        // would silently create a phantom, unpriced-in-reality line the
-        // moment the fee has zero FeePrice rows at all (as opposed to some
-        // rows that simply don't match this selection). These categories
-        // must always resolve through a real dimensional tariff or fail
-        // loudly, even when the fee has never had a single price configured.
-        $requiresDimensionalTariff = in_array($fee->category, [
-            Fee::CATEGORY_TRANSPORT, Fee::CATEGORY_FOOD, Fee::CATEGORY_UNIFORM,
-        ], true);
-        if (! $price && $academicYearId && ($fee->prices()->exists() || $requiresDimensionalTariff)) {
-            throw ValidationException::withMessages([
-                'fees' => 'На выбранную дату тариф не настроен.',
-            ]);
-        }
-
-        return [
-            'amount' => $this->money($price?->getRawOriginal('amount') ?? $fee->getRawOriginal('amount') ?? $fee->getRawOriginal('base_price') ?? '0'),
-            'valid_from' => $price?->start_date?->toDateString(),
-            'valid_to' => $price?->end_date?->toDateString(),
-            'metadata' => $price ? $this->priceMetadata($price, $date) : ['pricing_date' => $date],
-        ];
     }
 
     /**

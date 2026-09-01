@@ -7,6 +7,7 @@ use App\Models\AuditLog;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FeeBillingPeriod;
+use App\Models\InstallmentCoveragePeriod;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\PaymentPlan;
@@ -16,6 +17,7 @@ use Closure;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
@@ -40,6 +42,7 @@ class InvoiceIssuanceService
     public function __construct(
         private InvoiceCalculationService $calculator,
         private InstallmentPlanService $plans,
+        private ServiceCoverageService $coverage,
     ) {
     }
 
@@ -146,6 +149,13 @@ class InvoiceIssuanceService
             // silently collapsed.
             $feePivotRows = [];
             $hasDuplicateFeeLines = collect($calculation['line_items'])->pluck('fee_id')->duplicates()->isNotEmpty();
+            // Finance V2, Phase 2D: the just-created InvoiceItem per Fee,
+            // needed below to wire automatic ServiceCoverage creation for
+            // calendar-billed invoices. Only meaningful when fee_id isn't
+            // duplicated across lines (the automatic-coverage feature only
+            // ever fires for Quick-Registration-shaped submissions, which
+            // cannot repeat a fee_id — see the guard where it's consumed).
+            $itemsByFeeId = [];
 
             foreach ($calculation['line_items'] as $line) {
                 $selection = collect($items)->firstWhere('fee_id', $line['fee_id']);
@@ -155,13 +165,30 @@ class InvoiceIssuanceService
                     $subscriptionId = $subscriptionResolver($fee, $selection, $enrollment);
                     $activeSubscriptionsByFee->put($line['fee_id'], (object) ['id' => $subscriptionId]);
                 }
-                InvoiceItem::create([
+                $itemsByFeeId[$line['fee_id']] = InvoiceItem::create([
                     'invoice_id'=>$invoice->id, 'fee_id'=>$line['fee_id'], 'subscription_id'=>$subscriptionId,
                     'description'=>$line['description'], 'unit_price'=>$line['unit_price'], 'quantity'=>$line['quantity'],
                     'amount'=>$line['amount'], 'paid_amount'=>'0.00', 'remaining_amount'=>$line['amount'],
                     'is_non_refundable'=>$fee->is_non_refundable,
+                    // Phase 2D: fee_price_id (needed by ServiceCoverageService::
+                    // sourceTariff() for automatic coverage creation below) and
+                    // the quarterly-derivation flags resolvePrice() may have set
+                    // are carried on $line['metadata'] but were never previously
+                    // pulled into the persisted InvoiceItem.metadata — only
+                    // $selection (the raw submitted line) plus two specific
+                    // calculation outputs were. Pulled explicitly here, same
+                    // style as the existing tariff_valid_from/to pulls, rather
+                    // than merging the whole $line['metadata'] blob (which could
+                    // reintroduce keys $selection already sets differently).
                     'metadata'=>collect($selection)->except(['fee_id','quantity'])->merge([
                         'pricing_date'=>$data['pricing_date'], 'tariff_valid_from'=>$line['tariff_valid_from'], 'tariff_valid_to'=>$line['tariff_valid_to'],
+                        'fee_price_id'=>$line['metadata']['fee_price_id'] ?? null,
+                        'derived'=>$line['metadata']['derived'] ?? null,
+                        'derived_period'=>$line['metadata']['derived_period'] ?? null,
+                        'derived_from_period'=>$line['metadata']['derived_from_period'] ?? null,
+                        'derived_from_fee_price_id'=>$line['metadata']['derived_from_fee_price_id'] ?? null,
+                        'monthly_unit_amount'=>$line['metadata']['monthly_unit_amount'] ?? null,
+                        'multiplier'=>$line['metadata']['multiplier'] ?? null,
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
                 $pivotData = [
@@ -208,7 +235,19 @@ class InvoiceIssuanceService
                         throw ValidationException::withMessages(['billing_period' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
                     }
                 }
-                $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $data['pricing_date'], $year->end_date->toDateString());
+                $schedule = $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $data['pricing_date'], $year->end_date->toDateString());
+
+                // Finance V2, Phase 2D item 2: automatic ServiceCoverage for
+                // calendar-billed invoices. Scoped to 'monthly' only —
+                // ServiceCoverage/TariffAdjustmentService's own billing_unit
+                // constraint (monthly/daily only, confirmed by reading both)
+                // means quarterly/yearly calendar schedules structurally
+                // cannot get coverage without redesigning TariffAdjustmentService
+                // itself, explicitly out of scope for this phase. This is an
+                // honest, reported scope boundary, not an oversight.
+                if ($billingPeriod === FeeBillingPeriod::PERIOD_MONTHLY) {
+                    $this->createAutomaticCoverage($schedule, $itemsByFeeId, $invoiceFees, $actor);
+                }
             } else {
                 $this->plans->generateSingle($invoice, $data['due_date']);
             }
@@ -217,5 +256,87 @@ class InvoiceIssuanceService
 
             return $invoice;
         });
+    }
+
+    /**
+     * Finance V2, Phase 2D item 2 — automatic ServiceCoverage creation for
+     * a monthly calendar-billed invoice. Runs inside issue()'s own
+     * DB::transaction() (no second transaction opened here), so an
+     * issuance rollback rolls this back too, and a retried submission
+     * that hits the M3 idempotency fail-safe never leaves an orphan
+     * coverage row (confirmed by the retry regression test).
+     *
+     * One ServiceCoverage per periodic Fee on the invoice, spanning the
+     * FULL generated schedule (first period's start through last period's
+     * end) — matching how ServiceCoverage already supports multi-month
+     * spans and how TariffAdjustmentService already expects to consume
+     * it. One InstallmentCoveragePeriod per (installment, coverage) pair
+     * — every Fee sharing this invoice's one schedule sees the same
+     * period boundaries per installment (M1: all Fees on one invoice
+     * share one billing strategy).
+     *
+     * Coverage creation is best-effort and must never block real invoice
+     * issuance over an audit/reporting gap: ServiceCoverageService::record()
+     * is reused verbatim (its existing validation is NOT weakened), and a
+     * ValidationException from it — most commonly a Fee whose resolved
+     * FeePrice doesn't carry a payment_period dimension matching the
+     * billing_unit being requested (see the Phase 2D report for exactly
+     * when this happens, e.g. Food priced with a monthly-only tariff when
+     * daily coverage was attempted) — is caught and logged, skipping
+     * coverage for that one Fee only. The invoice/payment itself is
+     * unaffected either way.
+     *
+     * @param  array<int, array{installment: \App\Models\InvoiceInstallment, period_start: string, period_end: string}>  $schedule
+     * @param  array<int, InvoiceItem>  $itemsByFeeId
+     * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees
+     */
+    private function createAutomaticCoverage(array $schedule, array $itemsByFeeId, \Illuminate\Support\Collection $invoiceFees, User $actor): void
+    {
+        if ($schedule === []) {
+            return;
+        }
+        $coverageStart = $schedule[0]['period_start'];
+        $coverageEnd = end($schedule)['period_end'];
+
+        foreach ($invoiceFees as $fee) {
+            $item = $itemsByFeeId[$fee->id] ?? null;
+            if (! $item) {
+                continue;
+            }
+            $billingUnit = $fee->category === Fee::CATEGORY_FOOD ? 'daily' : 'monthly';
+            $feePriceId = $item->metadata['fee_price_id'] ?? null;
+            if (! $feePriceId) {
+                // Nothing to snapshot a coverage tariff against — the
+                // resolved price for this line was never traced into
+                // metadata (e.g. an item priced through the flat
+                // Fee.amount/base_price fallback, with no real FeePrice
+                // row at all). Skip, don't guess a tariff.
+                continue;
+            }
+
+            try {
+                $coverage = $this->coverage->record($item, [
+                    'fee_price_id' => $feePriceId,
+                    'coverage_start' => $coverageStart,
+                    'coverage_end' => $coverageEnd,
+                    'billing_unit' => $billingUnit,
+                ], $actor);
+            } catch (ValidationException $exception) {
+                Log::warning(
+                    "Finance V2 Phase 2D: automatic ServiceCoverage skipped for fee_id={$fee->id} on invoice_item_id={$item->id} — {$exception->getMessage()}",
+                );
+
+                continue;
+            }
+
+            foreach ($schedule as $period) {
+                InstallmentCoveragePeriod::create([
+                    'invoice_installment_id' => $period['installment']->id,
+                    'service_coverage_id' => $coverage->id,
+                    'period_start' => $period['period_start'],
+                    'period_end' => $period['period_end'],
+                ]);
+            }
+        }
     }
 }

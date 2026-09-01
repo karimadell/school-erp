@@ -19,6 +19,8 @@ class InvoiceInstallment extends Model
     public function plan() { return $this->belongsTo(PaymentPlan::class, 'payment_plan_id'); }
     public function payments() { return $this->hasMany(InvoicePayment::class); }
     public function refunds() { return $this->hasMany(PaymentRefund::class); }
+    /** Finance V2, Phase 2D — which calendar period(s)/Fee coverage(s) this installment represents, if any (calendar billing only; one row per bundled periodic Fee sharing this installment). */
+    public function coveragePeriods() { return $this->hasMany(InstallmentCoveragePeriod::class); }
 
     public function derivedStatus($asOf = null): string
     {

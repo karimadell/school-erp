@@ -62,13 +62,30 @@ class InstallmentPlanService
      * with the LAST period absorbing whatever remainder is left over — the
      * same last-segment rounding-safety pattern generate() already uses
      * for percentage splits, applied here to a straight equal split.
+     *
+     * Finance V2, Phase 2D: returns the exact {installment, period_start,
+     * period_end} tuple for every installment created — the CALENDAR
+     * period each installment represents, deliberately independent of its
+     * due_date (the first period's due_date is the registration date
+     * itself — no proration — but its period_start is always that
+     * calendar month/quarter's real 1st). The caller (InvoiceIssuanceService)
+     * uses this to create ServiceCoverage + installment_coverage_periods
+     * rows; this method itself has no knowledge of either — it is still
+     * purely about the invoice TOTAL and its installment amounts, never
+     * about individual Fees/items.
+     *
+     * @return array<int, array{installment: InvoiceInstallment, period_start: string, period_end: string}>
      */
-    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate): void
+    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate): array
     {
         if ($billingPeriod === 'yearly') {
             $this->generateSingle($invoice, $startDate);
 
-            return;
+            return [[
+                'installment' => $invoice->installments()->sole(),
+                'period_start' => Carbon::parse($startDate)->toDateString(),
+                'period_end' => Carbon::parse($academicYearEndDate)->toDateString(),
+            ]];
         }
 
         if (! in_array($billingPeriod, ['monthly', 'quarterly'], true)) {
@@ -105,17 +122,26 @@ class InstallmentPlanService
         $total = bcadd((string) $invoice->total_amount, '0', 2);
         $each = bcdiv($total, (string) $periodCount, 2);
         $allocated = '0.00';
+        $created = [];
 
         for ($i = 0; $i < $periodCount; $i++) {
             $last = $i === $periodCount - 1;
             $amount = $last ? bcsub($total, $allocated, 2) : $each;
             $allocated = bcadd($allocated, $amount, 2);
 
+            // The calendar period this installment represents — always
+            // the real month/quarter boundary, even for the first period
+            // (whose due_date, computed separately below, is deliberately
+            // the registration date instead — due date and coverage period
+            // are two different facts, never derived from one another).
+            $periodBoundaryStart = $periodStart->copy()->addMonths($i * $monthsPerPeriod);
+            $periodBoundaryEnd = $periodBoundaryStart->copy()->addMonths($monthsPerPeriod)->subDay();
+
             $dueDate = $i === 0
                 ? $start->copy()
-                : $periodStart->copy()->addMonths($i * $monthsPerPeriod);
+                : $periodBoundaryStart->copy();
 
-            InvoiceInstallment::create([
+            $installment = InvoiceInstallment::create([
                 'invoice_id' => $invoice->id,
                 'name_ru' => 'Период '.($i + 1),
                 'sequence' => $i + 1,
@@ -125,6 +151,14 @@ class InstallmentPlanService
                 'remaining_amount' => $amount,
                 'status' => 'pending',
             ]);
+
+            $created[] = [
+                'installment' => $installment,
+                'period_start' => $periodBoundaryStart->toDateString(),
+                'period_end' => $periodBoundaryEnd->toDateString(),
+            ];
         }
+
+        return $created;
     }
 }

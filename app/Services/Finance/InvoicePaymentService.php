@@ -328,12 +328,15 @@ class InvoicePaymentService
         }
 
         // Legacy rows have no allocation material in their stored hash.
-        // Null remains the same explicit legacy/automatic instruction;
-        // allocation-bearing replay is allowed only when the immutable
-        // persisted allocation graph proves exact equality.
+        // Replay is allowed only when an allocation-bearing retry can be
+        // proven exactly equal from the immutable persisted period graph.
         $legacyMatches = hash_equals((string) $payment->idempotency_hash, $legacyHash);
-        $actual = $this->canonicalStoredPaymentAllocations($payment);
-        if (! $legacyMatches || ($requestedAllocations !== null && $actual !== $requestedAllocations)) {
+        // A legacy hash never recorded whether allocation instructions were
+        // supplied. A null retry therefore cannot prove identical settlement
+        // meaning and must fail closed just like a missing period graph.
+        $legacyExact = $requestedAllocations !== null
+            && $this->legacyAllocationGraphExactlyMatches($payment, $requestedAllocations);
+        if (! $legacyMatches || ! $legacyExact) {
             throw ValidationException::withMessages(['idempotency_key' => 'Ключ повторного запроса уже использован для другого платежа.']);
         }
 
@@ -355,17 +358,70 @@ class InvoicePaymentService
         return $canonical;
     }
 
-    private function canonicalStoredPaymentAllocations(InvoicePayment $payment): array
+    /**
+     * A pre-allocation-hash replay is safe only when the immutable persisted
+     * item-to-period graph proves the exact requested meaning. Item totals,
+     * due dates, or inferred coverage dates are deliberately insufficient.
+     */
+    private function legacyAllocationGraphExactlyMatches(InvoicePayment $payment, array $requestedAllocations): bool
     {
-        return PaymentAllocation::query()->where('invoice_payment_id', $payment->id)->get()->map(function (PaymentAllocation $allocation) use ($payment) {
-            $period = PaymentAllocationCoveragePeriod::query()->where('payment_allocation_id', $allocation->id)->first();
+        if ($payment->invoice_installment_id === null) {
+            return false;
+        }
+
+        $expected = collect($requestedAllocations)->map(function (array $line) use ($payment) {
+            $periodIds = InstallmentCoveragePeriod::query()
+                ->where('invoice_installment_id', $payment->invoice_installment_id)
+                ->whereHas('coverage', fn ($query) => $query->where('invoice_item_id', $line['invoice_item_id']))
+                ->pluck('id');
+
+            if ($periodIds->count() !== 1) {
+                return null;
+            }
 
             return [
-                'invoice_item_id' => (int) $allocation->invoice_item_id,
-                'installment_id' => $payment->invoice_installment_id,
-                'amount' => $this->money((string) $allocation->amount),
+                'invoice_item_id' => (int) $line['invoice_item_id'],
+                'installment_coverage_period_id' => (int) $periodIds->sole(),
+                'amount' => $this->money((string) $line['amount']),
             ];
-        })->sortBy(fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_id'] ?? 0, $line['amount']))->values()->all();
+        });
+        if ($expected->contains(null)) {
+            return false;
+        }
+
+        $allocations = PaymentAllocation::query()
+            ->where('invoice_payment_id', $payment->id)
+            ->get();
+        $actual = collect();
+        foreach ($allocations as $allocation) {
+            $periodLinks = PaymentAllocationCoveragePeriod::query()
+                ->where('payment_allocation_id', $allocation->id)
+                ->get();
+            if ($periodLinks->isEmpty()
+                || bccomp((string) $periodLinks->sum('amount'), (string) $allocation->amount, 2) !== 0) {
+                return false;
+            }
+            foreach ($periodLinks as $periodLink) {
+                $period = InstallmentCoveragePeriod::query()->find($periodLink->installment_coverage_period_id);
+                if (! $period
+                    || $period->invoice_installment_id !== $payment->invoice_installment_id
+                    || $period->coverage()->value('invoice_item_id') !== $allocation->invoice_item_id) {
+                    return false;
+                }
+                $actual->push([
+                    'invoice_item_id' => (int) $allocation->invoice_item_id,
+                    'installment_coverage_period_id' => (int) $period->id,
+                    'amount' => $this->money((string) $periodLink->amount),
+                ]);
+            }
+        }
+
+        $sort = fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_coverage_period_id'], $line['amount']);
+        $expected = $expected->sortBy($sort)->values()->all();
+        $actual = $actual->sortBy($sort)->values()->all();
+
+        return $actual === $expected
+            && bccomp((string) collect($actual)->sum('amount'), (string) $payment->amount, 2) === 0;
     }
 
     /**

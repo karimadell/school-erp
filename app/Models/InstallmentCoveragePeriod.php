@@ -200,6 +200,12 @@ class InstallmentCoveragePeriod extends Model
      */
     public function settlementStatus(): string
     {
+        // Zero capacity represents a fully waived receivable period. It is
+        // settled without a payment allocation, never unpaid or ambiguous.
+        if ($this->amount !== null && bccomp((string) $this->amount, '0.00', 2) === 0) {
+            return 'settled';
+        }
+
         $paymentIds = InvoicePayment::where('invoice_installment_id', $this->invoice_installment_id)->pluck('id');
         $hasUnallocatedPayment = $paymentIds->contains(
             fn ($paymentId) => ! PaymentAllocation::where('invoice_payment_id', $paymentId)->exists()

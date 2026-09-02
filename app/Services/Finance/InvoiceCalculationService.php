@@ -345,6 +345,9 @@ class InvoiceCalculationService
 
         $remaining = bcsub($total, $paid, 2);
         $status = match (true) {
+            // A discount equal to the subtotal is a fully waived receivable:
+            // nothing is outstanding and no synthetic payment is required.
+            bccomp($remaining, '0.00', 2) <= 0 => Invoice::STATUS_PAID,
             bccomp($paid, '0.00', 2) === 0 => Invoice::STATUS_UNPAID,
             bccomp($remaining, '0.00', 2) > 0 => Invoice::STATUS_PARTIAL,
             default => Invoice::STATUS_PAID,

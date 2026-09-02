@@ -35,8 +35,10 @@ class InstallmentPlanService
 
     public function generateSingle(Invoice $invoice, string $dueDate): void
     {
+        $settled = bccomp((string) $invoice->total_amount, '0.00', 2) <= 0;
         InvoiceInstallment::create(['invoice_id'=>$invoice->id,'name_ru'=>'Полная оплата','sequence'=>1,'due_date'=>$dueDate,
-            'amount'=>$invoice->total_amount,'paid_amount'=>'0.00','remaining_amount'=>$invoice->total_amount,'status'=>'pending']);
+            'amount'=>$invoice->total_amount,'paid_amount'=>'0.00','remaining_amount'=>$invoice->total_amount,
+            'status'=>$settled ? InvoiceInstallment::STATUS_PAID : InvoiceInstallment::STATUS_PENDING]);
     }
 
     /**
@@ -162,7 +164,9 @@ class InstallmentPlanService
                 'amount' => $amount,
                 'paid_amount' => '0.00',
                 'remaining_amount' => $amount,
-                'status' => 'pending',
+                'status' => bccomp((string) $amount, '0.00', 2) <= 0
+                    ? InvoiceInstallment::STATUS_PAID
+                    : InvoiceInstallment::STATUS_PENDING,
             ]);
 
             $created[] = [

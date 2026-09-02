@@ -8,6 +8,7 @@ use App\Models\FeePrice;
 use App\Models\InstallmentCoveragePeriod;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\InvoicePayment;
 use App\Models\PaymentAllocation;
 use App\Models\ServiceCoverage;
 use App\Models\StudentCredit;
@@ -17,6 +18,7 @@ use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InvoiceRefundService;
 use App\Services\Finance\StudentCreditService;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -450,6 +452,91 @@ class PaymentCoverageNetSettlementTest extends FinanceOperationsTestCase
             }
         }
         $this->assertSame(2, PaymentAllocation::where('invoice_payment_id', $original->id)->count());
+    }
+
+    public function test_legacy_payment_replay_requires_exact_immutable_period_graph(): void
+    {
+        $invoice = $this->bundledInvoice();
+        $tuition = $this->tuitionItem($invoice);
+        $transport = $this->transportItem($invoice);
+        $first = $invoice->installments()->orderBy('sequence')->first();
+        $second = $invoice->installments()->orderBy('sequence')->skip(1)->first();
+        $key = (string) Str::uuid();
+        $service = app(InvoicePaymentService::class);
+        $allocation = [
+            ['invoice_item_id' => $transport->id, 'amount' => '400.00'],
+            ['invoice_item_id' => $tuition->id, 'amount' => '300.00'],
+        ];
+        $payment = $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $first->id, allocations: $allocation);
+        $legacyHash = hash('sha256', implode('|', [$invoice->id, $first->id, $this->cash->id, '700.00', 'cash']));
+        DB::table('invoice_payments')->where('id', $payment->id)->update(['idempotency_hash' => $legacyHash]);
+
+        $beforePayment = DB::table('invoice_payments')->where('id', $payment->id)->first();
+        $beforeAllocations = DB::table('payment_allocations')->where('invoice_payment_id', $payment->id)->orderBy('id')->get()->map(fn ($row) => (array) $row)->all();
+        $allocationIds = collect($beforeAllocations)->pluck('id');
+        $beforePeriods = DB::table('payment_allocation_coverage_periods')->whereIn('payment_allocation_id', $allocationIds)->orderBy('id')->get()->map(fn ($row) => (array) $row)->all();
+
+        $this->assertSame($payment->id, $service->record($invoice->id, $this->cash->id, '700', 'cash', $key, $this->accountant, installmentId: $first->id, allocations: $allocation)->id);
+        $this->assertSame($payment->id, $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $first->id, allocations: array_reverse($allocation))->id);
+
+        try {
+            $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $first->id, allocations: null);
+            $this->fail('Expected allocation-meaning-free legacy replay to fail closed.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('idempotency_key', $exception->errors());
+        }
+
+        $conflicts = [
+            [$first->id, [['invoice_item_id' => $transport->id, 'amount' => '300.00'], ['invoice_item_id' => $tuition->id, 'amount' => '400.00']]],
+            [$first->id, [['invoice_item_id' => $tuition->id, 'amount' => '700.00']]],
+            [$second->id, $allocation],
+        ];
+        foreach ($conflicts as [$installmentId, $conflict]) {
+            try {
+                $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $installmentId, allocations: $conflict);
+                $this->fail('Expected legacy allocation identity conflict.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('idempotency_key', $exception->errors());
+            }
+        }
+
+        $this->assertEquals($beforePayment, DB::table('invoice_payments')->where('id', $payment->id)->first());
+        $this->assertSame($beforeAllocations, DB::table('payment_allocations')->where('invoice_payment_id', $payment->id)->orderBy('id')->get()->map(fn ($row) => (array) $row)->all());
+        $this->assertSame($beforePeriods, DB::table('payment_allocation_coverage_periods')->whereIn('payment_allocation_id', $allocationIds)->orderBy('id')->get()->map(fn ($row) => (array) $row)->all());
+    }
+
+    public function test_legacy_payment_with_missing_or_partial_period_attribution_fails_closed(): void
+    {
+        foreach (['missing', 'partial'] as $shape) {
+            $invoice = $this->bundledInvoice();
+            $tuition = $this->tuitionItem($invoice);
+            $transport = $this->transportItem($invoice);
+            $installment = $invoice->installments()->orderBy('sequence')->first();
+            $key = (string) Str::uuid();
+            $allocation = [
+                ['invoice_item_id' => $transport->id, 'amount' => '400.00'],
+                ['invoice_item_id' => $tuition->id, 'amount' => '300.00'],
+            ];
+            $service = app(InvoicePaymentService::class);
+            $payment = $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $installment->id, allocations: $allocation);
+            $legacyHash = hash('sha256', implode('|', [$invoice->id, $installment->id, $this->cash->id, '700.00', 'cash']));
+            DB::table('invoice_payments')->where('id', $payment->id)->update(['idempotency_hash' => $legacyHash]);
+            $allocationIds = PaymentAllocation::where('invoice_payment_id', $payment->id)->orderBy('id')->pluck('id');
+            $deleteIds = $shape === 'missing' ? $allocationIds : $allocationIds->take(1);
+            DB::table('payment_allocation_coverage_periods')->whereIn('payment_allocation_id', $deleteIds)->delete();
+            $rowsBefore = DB::table('payment_allocation_coverage_periods')->whereIn('payment_allocation_id', $allocationIds)->orderBy('id')->get()->map(fn ($row) => (array) $row)->all();
+
+            try {
+                $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $installment->id, allocations: array_reverse($allocation));
+                $this->fail('Expected ambiguous legacy allocation replay to fail closed.');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('idempotency_key', $exception->errors());
+            }
+
+            $this->assertSame(1, InvoicePayment::whereKey($payment->id)->count());
+            $this->assertSame(2, PaymentAllocation::where('invoice_payment_id', $payment->id)->count());
+            $this->assertSame($rowsBefore, DB::table('payment_allocation_coverage_periods')->whereIn('payment_allocation_id', $allocationIds)->orderBy('id')->get()->map(fn ($row) => (array) $row)->all());
+        }
     }
 
     public function test_credit_idempotency_binds_canonical_item_period_and_distribution(): void

@@ -209,7 +209,7 @@ class InvoiceIssuanceService
                 'currency'=>'EGP', 'subtotal_amount'=>$calculation['subtotal'], 'total_amount'=>$calculation['total_amount'],
                 'discount_type'=>$data['discount_type'] ?? null, 'discount_value'=>$data['discount_value'] ?? '0.00',
                 'discount_amount'=>$calculation['discount_amount'], 'paid_amount'=>'0.00', 'remaining_amount'=>$calculation['total_amount'],
-                'status'=>Invoice::STATUS_UNPAID, 'due_date'=>$data['due_date'],
+                'status'=>$calculation['status'], 'due_date'=>$data['due_date'],
                 'created_by'=>$actor->id,
             ];
             if (Schema::hasColumn('invoices', 'note')) {

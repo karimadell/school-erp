@@ -80,7 +80,17 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
     protected function tearDown(): void
     {
         if ($this->migrated) {
-            Artisan::call('migrate:rollback', ['--database' => $this->connectionName, '--force' => true, '--step' => 1000]);
+            // See InvoiceIssuancePostgresConcurrencyTest::tearDown()'s own
+            // comment — 2026_08_09_110100_add_session_and_actor_to_cash_transactions.php's
+            // down() can throw on this Laravel version; unrelated to
+            // Phase 2D, out of scope to fix here. Caught and reported so
+            // it never masks this test's own already-completed real
+            // result.
+            try {
+                Artisan::call('migrate:rollback', ['--database' => $this->connectionName, '--force' => true, '--step' => 1000]);
+            } catch (\Throwable $e) {
+                fwrite(STDERR, "\n[".static::class."::tearDown] migrate:rollback failed (pre-existing, unrelated migration bug): {$e->getMessage()}\n");
+            }
         }
         parent::tearDown();
     }
@@ -94,9 +104,24 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $stage = Stage::create(['name' => 'Test Stage', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => 'Test Grade', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'A', 'name_ru' => 'A', 'name_ar' => 'A', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Test Mode', 'is_active' => true]);
+        // Coordinator-supplied fix (real PostgreSQL run surfaced this):
+        // a fixed code='regular' created via plain create() collides on
+        // a real, strictly-enforced Postgres unique constraint the
+        // moment any residual/repeated state exists — firstOrCreate()
+        // is idempotent regardless.
+        $mode = EnrollmentMode::firstOrCreate(['code' => 'regular'], ['name_ru' => 'Test Mode', 'is_active' => true]);
         $fee = Fee::create(['name_ru' => 'Test Fee', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
         FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+
+        // Real-server run note: migrate:rollback's teardown is best-
+        // effort (see tearDown()'s own comment) — residual rows from
+        // earlier runs against this same live server can persist, so
+        // this test asserts DELTAS (before -> after), never a bare
+        // absolute table count, which would be wrong the moment more
+        // than one run has ever touched this database.
+        $studentsBefore = DB::connection($this->connectionName)->table('students')->count();
+        $enrollmentsBefore = DB::connection($this->connectionName)->table('enrollments')->count();
+        $invoicesBefore = DB::connection($this->connectionName)->table('invoices')->count();
 
         $token = 'pg-race-token-'.uniqid();
         $data = [
@@ -157,10 +182,18 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $this->assertStringStartsWith('student:', (string) $resultB);
         $this->assertSame($resultA, $resultB, 'both racers must resolve to the exact same Student+Invoice graph, never a duplicate Student');
 
-        $this->assertSame(1, DB::connection($this->connectionName)->table('students')->count(), 'exactly one Student created, never two');
-        $this->assertSame(1, DB::connection($this->connectionName)->table('enrollments')->count());
-        $this->assertSame(1, DB::connection($this->connectionName)->table('invoices')->count());
-        $this->assertSame(1, QuickRegistrationOperation::on($this->connectionName)->count());
-        $this->assertSame('completed', QuickRegistrationOperation::on($this->connectionName)->sole()->status);
+        $this->assertSame($studentsBefore + 1, DB::connection($this->connectionName)->table('students')->count(), 'exactly one NEW Student created, never two');
+        $this->assertSame($enrollmentsBefore + 1, DB::connection($this->connectionName)->table('enrollments')->count());
+        $this->assertSame($invoicesBefore + 1, DB::connection($this->connectionName)->table('invoices')->count());
+
+        // The operation row's key is derived deterministically from the
+        // token (Uuid::uuid5) inside register() itself — computed the
+        // same way here for a token-scoped lookup, never a bare ::sole()
+        // that would break the moment more than one operation row exists
+        // in this shared live database.
+        $operationKey = (string) \Ramsey\Uuid\Uuid::uuid5(\Ramsey\Uuid\Uuid::NAMESPACE_URL, "quick-registration-operation:{$token}");
+        $operation = QuickRegistrationOperation::on($this->connectionName)->where('idempotency_key', $operationKey)->first();
+        $this->assertNotNull($operation, 'a completed operation row for this specific token must exist');
+        $this->assertSame('completed', $operation->status);
     }
 }

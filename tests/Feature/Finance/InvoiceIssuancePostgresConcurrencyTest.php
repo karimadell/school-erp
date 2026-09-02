@@ -122,12 +122,28 @@ class InvoiceIssuancePostgresConcurrencyTest extends TestCase
     protected function tearDown(): void
     {
         if ($this->migrated) {
-            Artisan::call('migrate:rollback', ['--database' => $this->connectionName, '--force' => true, '--step' => 1000]);
+            // A real Postgres run surfaced that migrate:rollback here can
+            // throw — 2026_08_09_110100_add_session_and_actor_to_cash_transactions.php's
+            // own down() calls Blueprint::dropConstrainedForeignKey(), a
+            // method that does not exist on this Laravel version. That
+            // migration predates this Phase 2D work entirely (2026-08-09
+            // vs this pass's own 2026-09-04 migrations) and is unrelated
+            // to it — out of scope to fix here, and PHPUnit would
+            // otherwise mark an otherwise-fully-passing test as failed
+            // for a teardown-only exception thrown AFTER every real
+            // assertion in the test body already ran. Caught and
+            // reported (never silently swallowed) so cleanup best-effort
+            // failing never masks the test's own real result.
+            try {
+                Artisan::call('migrate:rollback', ['--database' => $this->connectionName, '--force' => true, '--step' => 1000]);
+            } catch (\Throwable $e) {
+                fwrite(STDERR, "\n[".static::class."::tearDown] migrate:rollback failed (pre-existing, unrelated migration bug — see comment above): {$e->getMessage()}\n");
+            }
         }
         parent::tearDown();
     }
 
-    /** @return array{student: Student, fee: Fee, year: AcademicYear} */
+    /** @return array{student: Student, fee: Fee, year: AcademicYear, grade: Grade} */
     private function seedStudentAndFee(): array
     {
         (new RolesAndPermissionsSeeder)->run();
@@ -135,13 +151,31 @@ class InvoiceIssuancePostgresConcurrencyTest extends TestCase
         $stage = Stage::create(['name' => 'Test Stage', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => 'Test Grade', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'A', 'name_ru' => 'A', 'name_ar' => 'A', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Test Mode', 'is_active' => true]);
-        $student = Student::factory()->create();
-        Enrollment::create(['student_id' => $student->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'class_id' => $class->id, 'enrollment_mode_id' => $mode->id, 'is_active' => true]);
+        // Coordinator-supplied fixes (real PostgreSQL run surfaced both):
+        // Student has no HasFactory trait / registered factory anywhere
+        // in this codebase — Student::factory() was never going to work,
+        // it only never got exercised because every prior SQLite run
+        // self-gated before reaching this line. Create directly, same
+        // shape as FinanceOperationsTestCase's own fixture (that file,
+        // line ~46). EnrollmentMode::create() with a fixed code='regular'
+        // collides on a real, strictly-enforced Postgres unique
+        // constraint the moment more than one test in this file (or a
+        // forked child re-running setup) hits it — SQLite's weaker/
+        // shared-connection behavior let this slide; firstOrCreate() is
+        // idempotent regardless of how many times this runs.
+        $mode = EnrollmentMode::firstOrCreate(['code' => 'regular'], ['name_ru' => 'Test Mode', 'is_active' => true]);
+        $student = Student::create(['last_name_ru' => 'Раса', 'first_name_ru' => 'Тестовая', 'patronymic_ru' => 'Постгрес', 'phone' => '+201009998877', 'class_id' => $class->id, 'status' => 'registration_completed']);
+        // A real Postgres run surfaced a THIRD bug here too: this
+        // Enrollment::create() call was missing several NOT NULL
+        // columns (stage_id, academic_year, enrollment_date, enrolled_at,
+        // status) that SQLite silently tolerated but PostgreSQL
+        // correctly rejects — matched to FinanceOperationsTestCase's own
+        // full fixture shape (that file, line ~47).
+        Enrollment::create(['student_id' => $student->id, 'academic_year_id' => $year->id, 'enrollment_mode_id' => $mode->id, 'stage_id' => $stage->id, 'grade_id' => $grade->id, 'class_id' => $class->id, 'academic_year' => $year->name, 'enrollment_date' => '2026-09-01', 'enrolled_at' => '2026-09-01', 'status' => 'active', 'is_active' => true]);
         $fee = Fee::create(['name_ru' => 'Test Fee', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
         FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
 
-        return compact('student', 'fee', 'year');
+        return compact('student', 'fee', 'year', 'grade');
     }
 
     /**
@@ -203,12 +237,12 @@ class InvoiceIssuancePostgresConcurrencyTest extends TestCase
 
     public function test_two_genuinely_concurrent_same_key_same_payload_submissions_converge_on_exactly_one_invoice_graph(): void
     {
-        ['student' => $student, 'fee' => $fee] = $this->seedStudentAndFee();
+        ['student' => $student, 'fee' => $fee, 'year' => $year] = $this->seedStudentAndFee();
         $accountant = User::factory()->create(['is_active' => true]);
         $accountant->assignRole('accountant');
         $key = (string) Str::uuid();
         $data = [
-            'student_id' => $student->id, 'academic_year_id' => AcademicYear::sole()->id,
+            'student_id' => $student->id, 'academic_year_id' => $year->id,
             'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
             'items' => [['fee_id' => $fee->id, 'quantity' => 1]],
             'payment_type' => 'one_time',
@@ -236,20 +270,20 @@ class InvoiceIssuancePostgresConcurrencyTest extends TestCase
 
     public function test_two_genuinely_concurrent_same_key_conflicting_payload_submissions_produce_one_winner_and_one_deterministic_rejection(): void
     {
-        ['student' => $student, 'fee' => $fee] = $this->seedStudentAndFee();
+        ['student' => $student, 'fee' => $fee, 'year' => $year, 'grade' => $grade] = $this->seedStudentAndFee();
         $otherFee = Fee::create(['name_ru' => 'Other Fee', 'category' => Fee::CATEGORY_TUITION, 'amount' => '500.00', 'is_active' => true]);
-        FeePrice::create(['fee_id' => $otherFee->id, 'academic_year_id' => AcademicYear::sole()->id, 'grade_id' => Grade::sole()->id, 'amount' => '500.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        FeePrice::create(['fee_id' => $otherFee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '500.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
         $accountant = User::factory()->create(['is_active' => true]);
         $accountant->assignRole('accountant');
         $key = (string) Str::uuid();
 
         $dataA = [
-            'student_id' => $student->id, 'academic_year_id' => AcademicYear::sole()->id,
+            'student_id' => $student->id, 'academic_year_id' => $year->id,
             'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
             'items' => [['fee_id' => $fee->id, 'quantity' => 1]], 'payment_type' => 'one_time',
         ];
         $dataB = [
-            'student_id' => $student->id, 'academic_year_id' => AcademicYear::sole()->id,
+            'student_id' => $student->id, 'academic_year_id' => $year->id,
             'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
             'items' => [['fee_id' => $otherFee->id, 'quantity' => 1]], 'payment_type' => 'one_time',
         ];

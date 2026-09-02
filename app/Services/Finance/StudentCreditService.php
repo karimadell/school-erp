@@ -60,10 +60,13 @@ class StudentCreditService
             throw ValidationException::withMessages(['amount' => 'Сумма применения кредита должна быть больше нуля.']);
         }
 
-        return DB::transaction(function () use ($credit, $invoice, $amount, $idempotencyKey, $actor, $allocations): StudentCreditApplication {
+        $allocationMeaning = $this->canonicalCreditAllocations($allocations);
+
+        return DB::transaction(function () use ($credit, $invoice, $amount, $idempotencyKey, $actor, $allocations, $allocationMeaning): StudentCreditApplication {
             $existing = StudentCreditApplication::where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
-                if ($existing->student_credit_id !== $credit->id || $existing->invoice_id !== $invoice->id || bccomp($existing->amount, $amount, 2) !== 0) {
+                if ($existing->student_credit_id !== $credit->id || $existing->invoice_id !== $invoice->id || bccomp($existing->amount, $amount, 2) !== 0
+                    || $this->canonicalStoredCreditAllocations($existing) !== $allocationMeaning) {
                     throw ValidationException::withMessages(['idempotency_key' => 'Ключ уже использован для другого применения кредита.']);
                 }
 
@@ -134,6 +137,49 @@ class StudentCreditService
 
             return $application;
         });
+    }
+
+    private function canonicalCreditAllocations(?array $allocations): ?array
+    {
+        if ($allocations === null) {
+            return null;
+        }
+
+        return collect($allocations)->map(function (array $line): array {
+            $periods = collect($line['periods'] ?? [])->map(fn (array $period) => [
+                'installment_coverage_period_id' => (int) $period['installment_coverage_period_id'],
+                'amount' => bcadd((string) $period['amount'], '0', 2),
+            ])->sortBy(fn ($period) => sprintf('%020d|%s', $period['installment_coverage_period_id'], $period['amount']))->values()->all();
+
+            return [
+                'invoice_item_id' => (int) $line['invoice_item_id'],
+                'amount' => bcadd((string) $line['amount'], '0', 2),
+                'periods' => $periods,
+            ];
+        })->sortBy(fn ($line) => sprintf('%020d|%s|%s', $line['invoice_item_id'], $line['amount'], json_encode($line['periods'])))->values()->all();
+    }
+
+    private function canonicalStoredCreditAllocations(StudentCreditApplication $application): ?array
+    {
+        $items = StudentCreditApplicationItem::query()->where('student_credit_application_id', $application->id)->get();
+        if ($items->isEmpty()) {
+            return null;
+        }
+
+        $raw = $items->map(function (StudentCreditApplicationItem $item): array {
+            return [
+                'invoice_item_id' => $item->invoice_item_id,
+                'amount' => (string) $item->amount,
+                'periods' => CreditApplicationCoveragePeriod::query()
+                    ->where('student_credit_application_item_id', $item->id)->get()
+                    ->map(fn (CreditApplicationCoveragePeriod $period) => [
+                        'installment_coverage_period_id' => $period->installment_coverage_period_id,
+                        'amount' => (string) $period->amount,
+                    ])->all(),
+            ];
+        })->all();
+
+        return $this->canonicalCreditAllocations($raw);
     }
 
     /**

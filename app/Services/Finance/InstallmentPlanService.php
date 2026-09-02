@@ -133,6 +133,12 @@ class InstallmentPlanService
         }
 
         $total = bcadd((string) $invoice->total_amount, '0', 2);
+        if ($scheduleAmounts !== null) {
+            $scheduleTotal = array_reduce($scheduleAmounts, fn ($carry, $amount) => bcadd($carry, (string) $amount, 2), '0.00');
+            if (bccomp($scheduleTotal, $total, 2) !== 0) {
+                throw ValidationException::withMessages(['services' => 'Сумма календарного графика не совпадает с итоговой суммой счёта.']);
+            }
+        }
         $each = bcdiv($total, (string) $periodCount, 2);
         $allocated = '0.00';
         $created = [];

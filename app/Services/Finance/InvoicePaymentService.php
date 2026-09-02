@@ -75,12 +75,18 @@ class InvoicePaymentService
         if (! in_array($paymentMethod, ['cash', 'bank', 'card', 'transfer', 'instapay'], true)) {
             throw ValidationException::withMessages(['payment_method' => 'Выбран недопустимый способ оплаты.']);
         }
-        $hash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
+        $legacyHash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
+        $allocationMeaning = $this->canonicalPaymentAllocations($allocations, $installmentId);
+        $hash = hash('sha256', json_encode([
+            'invoice_id' => $invoiceId, 'installment_id' => $installmentId,
+            'cash_account_id' => $cashAccountId, 'amount' => $amount,
+            'payment_method' => $paymentMethod, 'allocations' => $allocationMeaning,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $allocations) {
+        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $legacyHash, $allocationMeaning, $allocations) {
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
-                return $this->replay($existing, $hash);
+                return $this->replay($existing, $hash, $legacyHash, $allocationMeaning);
             }
 
             $invoice = Invoice::query()->lockForUpdate()->find($invoiceId);
@@ -96,7 +102,7 @@ class InvoicePaymentService
             // cannot pass the first lookup together.
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
-                return $this->replay($existing, $hash);
+                return $this->replay($existing, $hash, $legacyHash, $allocationMeaning);
             }
 
             if (bccomp($amount, '0.00', 2) <= 0) {
@@ -315,13 +321,51 @@ class InvoicePaymentService
         });
     }
 
-    private function replay(InvoicePayment $payment, string $hash): InvoicePayment
+    private function replay(InvoicePayment $payment, string $hash, string $legacyHash, ?array $requestedAllocations): InvoicePayment
     {
-        if (! hash_equals((string) $payment->idempotency_hash, $hash)) {
+        if (hash_equals((string) $payment->idempotency_hash, $hash)) {
+            return $payment;
+        }
+
+        // Legacy rows have no allocation material in their stored hash.
+        // Null remains the same explicit legacy/automatic instruction;
+        // allocation-bearing replay is allowed only when the immutable
+        // persisted allocation graph proves exact equality.
+        $legacyMatches = hash_equals((string) $payment->idempotency_hash, $legacyHash);
+        $actual = $this->canonicalStoredPaymentAllocations($payment);
+        if (! $legacyMatches || ($requestedAllocations !== null && $actual !== $requestedAllocations)) {
             throw ValidationException::withMessages(['idempotency_key' => 'Ключ повторного запроса уже использован для другого платежа.']);
         }
 
         return $payment;
+    }
+
+    private function canonicalPaymentAllocations(?array $allocations, ?int $installmentId): ?array
+    {
+        if ($allocations === null) {
+            return null;
+        }
+
+        $canonical = collect($allocations)->map(fn (array $line) => [
+            'invoice_item_id' => (int) $line['invoice_item_id'],
+            'installment_id' => $installmentId,
+            'amount' => $this->money((string) $line['amount']),
+        ])->sortBy(fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_id'] ?? 0, $line['amount']))->values()->all();
+
+        return $canonical;
+    }
+
+    private function canonicalStoredPaymentAllocations(InvoicePayment $payment): array
+    {
+        return PaymentAllocation::query()->where('invoice_payment_id', $payment->id)->get()->map(function (PaymentAllocation $allocation) use ($payment) {
+            $period = PaymentAllocationCoveragePeriod::query()->where('payment_allocation_id', $allocation->id)->first();
+
+            return [
+                'invoice_item_id' => (int) $allocation->invoice_item_id,
+                'installment_id' => $payment->invoice_installment_id,
+                'amount' => $this->money((string) $allocation->amount),
+            ];
+        })->sortBy(fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_id'] ?? 0, $line['amount']))->values()->all();
     }
 
     /**

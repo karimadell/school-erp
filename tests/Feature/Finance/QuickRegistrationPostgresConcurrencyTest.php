@@ -196,4 +196,70 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $this->assertNotNull($operation, 'a completed operation row for this specific token must exist');
         $this->assertSame('completed', $operation->status);
     }
+
+    public function test_concurrent_periodic_registration_with_payment_converges_on_one_complete_settlement_graph(): void
+    {
+        (new RolesAndPermissionsSeeder)->run();
+        $accountant = User::factory()->create(['is_active' => true]);
+        $accountant->assignRole('accountant');
+        $year = AcademicYear::create(['name' => '2027/2028-'.uniqid(), 'start_date' => '2027-08-01', 'end_date' => '2028-06-30', 'is_active' => true]);
+        $stage = Stage::create(['name' => 'Periodic Stage '.uniqid(), 'order' => 2, 'is_active' => true]);
+        $grade = Grade::forceCreate(['name' => 'Periodic Grade '.uniqid(), 'stage_id' => $stage->id, 'level' => 2]);
+        $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'P'.uniqid(), 'name_ru' => 'P', 'name_ar' => 'P', 'is_active' => true]);
+        $mode = EnrollmentMode::firstOrCreate(['code' => 'periodic'], ['name_ru' => 'Periodic', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Periodic Tuition '.uniqid(), 'category' => Fee::CATEGORY_TUITION, 'amount' => '1.00', 'is_active' => true]);
+        $fee->billingPeriods()->create(['billing_period' => 'monthly']);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'payment_period' => 'monthly', 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2027-08-01', 'end_date' => '2028-06-30', 'is_active' => true]);
+        $cash = \App\Models\CashAccount::operating();
+        if (! app(\App\Services\Finance\CashSessionService::class)->activeFor($cash)) {
+            app(\App\Services\Finance\CashSessionService::class)->open($cash, $accountant);
+        }
+
+        $token = 'pg-periodic-race-'.uniqid();
+        $data = [
+            'student_last_name_ru' => 'Раса', 'student_first_name_ru' => 'Периодическая', 'phone' => '+20 100 123 4567',
+            'registration_date' => '2027-09-01', 'academic_year_id' => $year->id, 'stage_id' => $stage->id,
+            'grade_id' => $grade->id, 'class_id' => $class->id, 'enrollment_mode_id' => $mode->id,
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1000.00', 'payment_period' => 'monthly']],
+            'payment_type' => 'calendar', 'billing_period' => 'monthly', 'payment_method' => 'cash',
+            'idempotency_token' => $token,
+        ];
+        $tables = ['students', 'enrollments', 'invoices', 'invoice_payments', 'payment_allocations', 'service_coverages', 'payment_allocation_coverage_periods'];
+        $before = collect($tables)->mapWithKeys(fn ($table) => [$table => DB::connection($this->connectionName)->table($table)->count()]);
+
+        $barrier = tempnam(sys_get_temp_dir(), 'pg_periodic_reg_'); unlink($barrier);
+        $files = [$barrier.'.a', $barrier.'.b']; $pids = [];
+        foreach ($files as $file) {
+            $pid = pcntl_fork();
+            if ($pid === 0) {
+                DB::purge($this->connectionName);
+                while (! file_exists($barrier)) { usleep(2000); }
+                try {
+                    $result = app(QuickStudentRegistrationService::class)->register($data, $accountant);
+                    file_put_contents($file, "student:{$result['student']->id},invoice:{$result['invoice']->id}");
+                } catch (\Throwable $e) {
+                    file_put_contents($file, 'CRASHED:'.get_class($e).':'.$e->getMessage());
+                }
+                exit(0);
+            }
+            $pids[] = $pid;
+        }
+        touch($barrier);
+        foreach ($pids as $pid) { pcntl_waitpid($pid, $status); }
+        $results = array_map(fn ($file) => file_exists($file) ? file_get_contents($file) : null, $files);
+        foreach ($files as $file) { @unlink($file); } @unlink($barrier);
+
+        $this->assertNotNull($results[0]); $this->assertNotNull($results[1]);
+        $this->assertStringNotContainsString('CRASHED', $results[0]); $this->assertStringNotContainsString('CRASHED', $results[1]);
+        $this->assertSame($results[0], $results[1]);
+        foreach ($tables as $table) {
+            $this->assertSame($before[$table] + 1, DB::connection($this->connectionName)->table($table)->count(), "one new {$table} row");
+        }
+        preg_match('/invoice:(\d+)/', $results[0], $match);
+        $invoiceId = (int) $match[1];
+        $this->assertSame(10, DB::connection($this->connectionName)->table('invoice_installments')->where('invoice_id', $invoiceId)->count());
+        $itemId = DB::connection($this->connectionName)->table('invoice_items')->where('invoice_id', $invoiceId)->value('id');
+        $coverageId = DB::connection($this->connectionName)->table('service_coverages')->where('invoice_item_id', $itemId)->value('id');
+        $this->assertSame(10, DB::connection($this->connectionName)->table('installment_coverage_periods')->where('service_coverage_id', $coverageId)->count());
+    }
 }

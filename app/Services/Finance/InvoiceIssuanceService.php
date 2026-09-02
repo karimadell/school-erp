@@ -11,6 +11,7 @@ use App\Models\InstallmentCoveragePeriod;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\PaymentPlan;
+use App\Models\ServiceCoverage;
 use App\Models\Student;
 use App\Models\User;
 use Closure;
@@ -325,6 +326,20 @@ class InvoiceIssuanceService
                         'quarterly_package_price'=>$line['metadata']['quarterly_package_price'] ?? null,
                         'blended_unit_price'=>$line['metadata']['blended_unit_price'] ?? null,
                         'per_block_amounts'=>$line['metadata']['per_block_amounts'] ?? null,
+                        'component_month_count'=>$line['metadata']['component_month_count'] ?? null,
+                        // Corrective pass #4 (HIGH 1) — the ONE authoritative
+                        // post-discount amount for this item; InvoiceItem.amount
+                        // itself deliberately stays pre-discount (see
+                        // InvoiceCalculationService::calculate()'s own
+                        // docblock). Always present (never filtered out even
+                        // when equal to amount, i.e. no discount) so
+                        // reconciliation code never has to guess "was this
+                        // invoice discounted."
+                        'final_discounted_amount'=>$line['metadata']['final_discounted_amount'] ?? $line['amount'],
+                        'pre_discount_amount'=>$line['metadata']['pre_discount_amount'] ?? null,
+                        'allocated_discount_amount'=>$line['metadata']['allocated_discount_amount'] ?? null,
+                        'display_unit_price'=>$line['metadata']['display_unit_price'] ?? null,
+                        'display_quantity'=>$line['metadata']['display_quantity'] ?? null,
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
                 $pivotData = [

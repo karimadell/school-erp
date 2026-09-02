@@ -624,8 +624,8 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
         // so unit_price x quantity == amount always holds — 940.00 x 10
         // = 9400.00, never a fake unit_price=2800/quantity=3 that would
         // only multiply out to 8400.
-        $this->assertSame('940.00', $item->unit_price, 'blended: 9400 amount / 10 total months');
-        $this->assertSame(10, $item->quantity, 'total months covered, never quantity=0 or the block count alone');
+        $this->assertSame('9400.00', $item->unit_price, 'mixed package/tail is one truthful composite charge');
+        $this->assertSame(1, $item->quantity);
         $this->assertSame('9400.00', $item->amount, '3 x 2800 (full quarters) + 1 x 1000 (trailing June, monthly basis) = 8400 + 1000');
         $this->assertSame('9400.00', bcmul($item->unit_price, (string) $item->quantity, 2), 'unit_price x quantity must equal amount exactly');
         $this->assertFalse($item->metadata['derived'] ?? false, 'this is an explicit package price, not a derived one');
@@ -735,7 +735,7 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
 
         $item = $invoice->items->sole();
         $this->assertSame('3800.00', $item->amount, '2800 (1 full block) + 1000 (1 partial month)');
-        $this->assertSame(4, $item->quantity, 'total months, never quantity=0');
+        $this->assertSame(1, $item->quantity, 'one truthful composite package/tail charge');
         $this->assertSame(bcmul($item->unit_price, (string) $item->quantity, 2), $item->amount, 'blended unit_price x quantity == amount always holds');
         $this->assertSame('1', $item->metadata['complete_quarterly_blocks']);
         $this->assertTrue($item->metadata['quarterly_package_applied']);

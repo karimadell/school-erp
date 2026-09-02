@@ -9,6 +9,7 @@ use App\Models\Invoice;
 use App\Models\ServiceCoverage;
 use App\Services\Finance\InvoiceIssuanceService;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Finance V2, Phase 2D corrective pass (HIGH — coverage period integrity).
@@ -192,5 +193,46 @@ class InstallmentCoveragePeriodIntegrityTest extends FinanceOperationsTestCase
             $this->assertSame($invoice->id, $period->installment->invoice_id);
             $this->assertSame($coverage->student_id, $this->student->id);
         }
+    }
+
+    public function test_sqlite_raw_updates_cannot_break_bounds_order_ownership_or_overlap(): void
+    {
+        $this->assertSame('sqlite', DB::connection()->getDriverName());
+        [, $invoice] = $this->issuedFee();
+        $coverage = ServiceCoverage::sole();
+        $periods = InstallmentCoveragePeriod::where('service_coverage_id', $coverage->id)->orderBy('period_start')->get();
+        $target = $periods[1];
+        $original = DB::table('installment_coverage_periods')->where('id', $target->id)->first();
+
+        $otherInvoice = $this->invoice('100.00');
+        $otherInstallment = \App\Models\InvoiceInstallment::create(['invoice_id' => $otherInvoice->id, 'name_ru' => 'x', 'sequence' => 1, 'due_date' => now(), 'amount' => '100.00', 'paid_amount' => '0.00', 'remaining_amount' => '100.00', 'status' => 'pending']);
+        $mutations = [
+            ['period_start' => '2020-01-01', 'period_end' => '2020-01-31'],
+            ['period_start' => '2026-10-31', 'period_end' => '2026-10-01'],
+            ['invoice_installment_id' => $otherInstallment->id],
+            ['period_start' => $periods[0]->period_start->toDateString(), 'period_end' => $periods[0]->period_end->toDateString()],
+        ];
+
+        foreach ($mutations as $mutation) {
+            try {
+                DB::table('installment_coverage_periods')->where('id', $target->id)->update($mutation);
+                $this->fail('Expected raw SQLite UPDATE to be rejected.');
+            } catch (\Illuminate\Database\QueryException) {
+                $fresh = DB::table('installment_coverage_periods')->where('id', $target->id)->first();
+                $this->assertEquals($original, $fresh);
+            }
+        }
+    }
+
+    public function test_sqlite_rejects_direct_service_coverage_student_corruption(): void
+    {
+        $this->issuedFee();
+        $coverage = ServiceCoverage::sole();
+        $other = $this->student->replicate();
+        $other->phone = '+201001119999';
+        $other->save();
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('service_coverages')->where('id', $coverage->id)->update(['student_id' => $other->id]);
     }
 }

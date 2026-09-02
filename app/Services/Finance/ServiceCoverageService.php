@@ -203,7 +203,12 @@ class ServiceCoverageService
         if ($price->payment_period === 'daily' && $item->fee?->category !== \App\Models\Fee::CATEGORY_FOOD) {
             throw ValidationException::withMessages(['fee_price_id' => 'Дневное покрытие поддерживается только для питания.']);
         }
-        if (bccomp((string) $item->unit_price, (string) $price->amount, 2) !== 0) {
+        // A discounted calendar InvoiceItem is persisted at its final
+        // receivable amount. Its original tariff remains an immutable
+        // snapshot in unit_tariff; never compare the discounted composite
+        // presentation price to the source tariff.
+        $snapshottedTariff = $metadata['unit_tariff'] ?? $item->unit_price;
+        if (bccomp((string) $snapshottedTariff, (string) $price->amount, 2) !== 0) {
             throw ValidationException::withMessages(['fee_price_id' => 'Цена позиции счёта не совпадает со снимком исходного тарифа.']);
         }
 

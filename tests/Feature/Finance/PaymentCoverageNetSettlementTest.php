@@ -420,4 +420,66 @@ class PaymentCoverageNetSettlementTest extends FinanceOperationsTestCase
         $this->expectException(ValidationException::class);
         $reflection->invoke(app(InvoicePaymentService::class), $forgedAllocation, $this->firstPeriod($invoice, $transportItem), '400.00');
     }
+
+    public function test_payment_idempotency_binds_canonical_item_and_period_allocation_meaning(): void
+    {
+        $invoice = $this->bundledInvoice();
+        $tuition = $this->tuitionItem($invoice);
+        $transport = $this->transportItem($invoice);
+        $first = $invoice->installments()->orderBy('sequence')->first();
+        $key = (string) Str::uuid();
+        $service = app(InvoicePaymentService::class);
+        $allocation = [
+            ['invoice_item_id' => $transport->id, 'amount' => '400.00'],
+            ['invoice_item_id' => $tuition->id, 'amount' => '300.00'],
+        ];
+
+        $original = $service->record($invoice->id, $this->cash->id, '700', 'cash', $key, $this->accountant, installmentId: $first->id, allocations: $allocation);
+        $replay = $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $first->id, allocations: array_reverse($allocation));
+        $this->assertSame($original->id, $replay->id);
+
+        foreach ([
+            [['invoice_item_id' => $transport->id, 'amount' => '300.00'], ['invoice_item_id' => $tuition->id, 'amount' => '400.00']],
+            [['invoice_item_id' => $tuition->id, 'amount' => '700.00']],
+        ] as $conflict) {
+            try {
+                $service->record($invoice->id, $this->cash->id, '700.00', 'cash', $key, $this->accountant, installmentId: $first->id, allocations: $conflict);
+                $this->fail('Expected allocation-aware payment idempotency conflict.');
+            } catch (ValidationException $e) {
+                $this->assertArrayHasKey('idempotency_key', $e->errors());
+            }
+        }
+        $this->assertSame(2, PaymentAllocation::where('invoice_payment_id', $original->id)->count());
+    }
+
+    public function test_credit_idempotency_binds_canonical_item_period_and_distribution(): void
+    {
+        $invoice = $this->bundledInvoice();
+        $transport = $this->transportItem($invoice);
+        $tuition = $this->tuitionItem($invoice);
+        $coverage = ServiceCoverage::where('invoice_item_id', $transport->id)->sole();
+        $old = FeePrice::where('fee_id', $transport->fee_id)->sole();
+        $old->update(['end_date' => '2026-09-30']);
+        $decrease = FeePrice::create(['fee_id' => $transport->fee_id, 'academic_year_id' => $this->year->id, 'payment_period' => 'monthly', 'option_type' => 'zone', 'option_value' => 'Зона 1', 'amount' => '300.00', 'currency' => 'EGP', 'start_date' => '2026-10-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        app(\App\Services\Finance\TariffAdjustmentService::class)->approve($coverage, $decrease, $this->accountant);
+        $credit = StudentCredit::sole();
+        $period = $this->firstPeriod($invoice, $transport);
+        $key = (string) Str::uuid();
+        $allocation = [['invoice_item_id' => $transport->id, 'amount' => '100.00', 'periods' => [['installment_coverage_period_id' => $period->id, 'amount' => '100.00']]]];
+        $service = app(StudentCreditService::class);
+
+        $original = $service->apply($credit, $invoice, '100', $key, $this->accountant, $allocation);
+        $replay = $service->apply($credit->fresh(), $invoice, '100.00', $key, $this->accountant, $allocation);
+        $this->assertSame($original->id, $replay->id);
+
+        $conflict = [['invoice_item_id' => $tuition->id, 'amount' => '100.00']];
+        try {
+            $service->apply($credit->fresh(), $invoice, '100.00', $key, $this->accountant, $conflict);
+            $this->fail('Expected allocation-aware credit idempotency conflict.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('idempotency_key', $e->errors());
+        }
+        $this->assertSame(1, StudentCreditApplicationItem::where('student_credit_application_id', $original->id)->count());
+        $this->assertSame(1, CreditApplicationCoveragePeriod::count());
+    }
 }

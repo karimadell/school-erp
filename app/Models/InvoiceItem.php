@@ -29,7 +29,10 @@ class InvoiceItem extends Model
         'partial_group_months', 'partial_group_unit_price', 'partial_group_amount', 'partial_group_start', 'partial_group_end',
         'adjustment_basis_period', 'adjustment_basis_fee_price_id', 'adjustment_basis_unit_amount', 'adjustment_basis_matched_dimensions',
         // Corrective pass #3 (HIGH 3 — quarterly <3-month/mixed-block line representation).
-        'requested_billing_strategy', 'complete_quarterly_blocks', 'quarterly_package_applied', 'quarterly_package_price', 'blended_unit_price', 'per_block_amounts',
+        'requested_billing_strategy', 'complete_quarterly_blocks', 'quarterly_package_applied', 'quarterly_package_price', 'blended_unit_price', 'per_block_amounts', 'component_month_count',
+        // Corrective pass #4 (HIGH 1 — calendar discount reconciliation).
+        'final_discounted_amount', 'pre_discount_amount', 'allocated_discount_amount',
+        'display_unit_price', 'display_quantity',
     ];
 
     protected $attributes = ['is_non_refundable' => false];

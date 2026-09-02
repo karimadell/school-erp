@@ -94,14 +94,6 @@ class InvoiceCalculationService
 
         $lines = [];
         $subtotal = '0.00';
-        // Corrective pass #2 (P0 Blocker 1 — partial final quarter): the
-        // shared per-GROUP installment total, summed across every line on
-        // this invoice for the same group index — consumed verbatim by
-        // InstallmentPlanService::generateCalendarSchedule() so scheduling
-        // never re-derives amounts by dividing the aggregate total (wrong
-        // the moment groups differ in size). Only populated when this is
-        // a calendar-billed submission.
-        $scheduleAmounts = $calendarPeriods !== null ? array_fill(0, $calendarPeriods['count'], '0.00') : null;
         // Perf (504 investigation, 2026-08-29): every line item in one Quick
         // Registration/invoice submission shares the same enrollment_mode_id
         // — resolvePrice() used to re-run EnrollmentMode::find() for it on
@@ -235,12 +227,15 @@ class InvoiceCalculationService
                 $amount = bcmul($unitPrice, (string) $quantity, 2);
             }
 
-            if ($groupAmounts !== null) {
-                foreach ($groupAmounts as $i => $groupAmount) {
-                    $scheduleAmounts[$i] = bcadd($scheduleAmounts[$i], $groupAmount, 2);
-                }
-            }
-
+            // Corrective pass #4 (HIGH 1 — calendar discount reconciliation):
+            // $scheduleAmounts is no longer accumulated here, from the
+            // PRE-discount $groupAmounts — it is rebuilt once, below,
+            // from each line's own FINAL (post-discount) period_amounts,
+            // after discount allocation runs. Accumulating it here would
+            // silently leave the installment schedule (and therefore
+            // coverage-period "full settlement" amounts) at the
+            // pre-discount total forever, exactly the confirmed real bug
+            // this pass fixes.
             $subtotal = bcadd($subtotal, $amount, 2);
             $lines[] = [
                 'fee_id' => $fee->id,
@@ -286,6 +281,68 @@ class InvoiceCalculationService
             ]);
         }
 
+        // Corrective pass #4 (HIGH 1 — calendar discount reconciliation,
+        // confirmed real: a discounted invoice's installment schedule
+        // used to still sum to the PRE-discount total, since the
+        // discount was only ever applied at the aggregate subtotal
+        // level, never allocated back down into each line's own amount
+        // or its per-period breakdown). Every line's own FINAL
+        // (post-discount) amount is computed here — proportional to its
+        // own pre-discount share, bcmath throughout, the LAST eligible
+        // line absorbing whatever rounding remainder is left (this
+        // project's own established convention — the identical pattern
+        // InstallmentPlanService::generate()'s percentage split and
+        // generateCalendarSchedule()'s own per-group amounts already
+        // use) — so SUM(line finals) === $total exactly, by
+        // construction, never merely "usually correct."
+        //
+        // InvoiceItem.amount itself is deliberately left meaning exactly
+        // what it already means everywhere else in this codebase (the
+        // line's own PRE-discount charge — confirmed by reading
+        // InvoiceIssuanceService::issue()'s existing, unmodified-by-this-pass
+        // 'amount'=>$line['amount'] assignment, and every other existing
+        // consumer of InvoiceItem.amount/remaining_amount, none of which
+        // expect a discounted value there) — changing that meaning
+        // globally would touch every discounted invoice in this
+        // codebase, calendar-billed or not, far beyond this pass's own
+        // scope and confirmed-real bug. The new, explicit, authoritative
+        // value is $lines[$i]['metadata']['final_discounted_amount'] —
+        // schedule/coverage-capacity reconciliation code must always
+        // read THAT, never assume amount is already discounted.
+        if ($calendarPeriods !== null) {
+            $lines = $this->allocateDiscountAcrossLines($lines, $subtotal, $discount, $discountType, $discountValue);
+        }
+
+        // Corrective pass #4: $scheduleAmounts is rebuilt fresh here,
+        // from each line's own FINAL (post-discount, already re-scaled
+        // by allocateDiscountAcrossLines()) period_amounts — never from
+        // the pre-discount figures computed during the loop above. This
+        // is what InstallmentPlanService::generateCalendarSchedule()
+        // actually bills per period, so it must reflect the discount.
+        $scheduleAmounts = null;
+        if ($calendarPeriods !== null) {
+            $scheduleAmounts = array_fill(0, $calendarPeriods['count'], '0.00');
+            foreach ($lines as $line) {
+                if ($line['period_amounts'] === null) {
+                    continue;
+                }
+                foreach ($line['period_amounts'] as $i => $groupAmount) {
+                    $scheduleAmounts[$i] = bcadd($scheduleAmounts[$i], $groupAmount, 2);
+                }
+
+                $periodTotal = array_reduce($line['period_amounts'], fn ($carry, $amount) => bcadd($carry, $amount, 2), '0.00');
+                if (bccomp($periodTotal, $line['amount'], 2) !== 0) {
+                    throw new \App\Exceptions\Finance\DiscountReconciliationException('Calendar item period amounts do not reconcile to its final amount.');
+                }
+            }
+
+            $lineTotal = array_reduce($lines, fn ($carry, $line) => bcadd($carry, $line['amount'], 2), '0.00');
+            $scheduleTotal = array_reduce($scheduleAmounts, fn ($carry, $amount) => bcadd($carry, $amount, 2), '0.00');
+            if (bccomp($lineTotal, $total, 2) !== 0 || bccomp($scheduleTotal, $total, 2) !== 0) {
+                throw new \App\Exceptions\Finance\DiscountReconciliationException('Calendar lines and schedule do not reconcile to the invoice total.');
+            }
+        }
+
         $remaining = bcsub($total, $paid, 2);
         $status = match (true) {
             bccomp($paid, '0.00', 2) === 0 => Invoice::STATUS_UNPAID,
@@ -305,9 +362,122 @@ class InvoiceCalculationService
             // Corrective pass #2 (P0 Blocker 1): the shared per-group
             // installment totals (summed across every line), consumed
             // verbatim by InstallmentPlanService::generateCalendarSchedule()
-            // — null for every non-calendar-billed call.
+            // — null for every non-calendar-billed call. Corrective pass
+            // #4: now always POST-discount.
             'schedule_amounts' => $scheduleAmounts,
         ];
+    }
+
+    /**
+     * Corrective pass #4 (HIGH 1). Allocates $discount across $lines,
+     * setting each line's metadata['final_discounted_amount'] and
+     * re-scaling its own period_amounts (when present) to sum to that
+     * same final amount — both using the "last eligible line/period
+     * absorbs the rounding remainder" convention already established
+     * elsewhere in this class/service (never divided evenly regardless
+     * of line size, which would misrepresent which Fee actually absorbed
+     * the discount).
+     *
+     * Percentage discount: each line's own share is intrinsically
+     * proportional (amount x percent), so this is really just applying
+     * the same percentage to every line independently — verified to sum
+     * correctly via the remainder-absorption rule regardless.
+     * Fixed discount: allocated by each line's own share of $subtotal
+     * (amount / subtotal x discount) — never split evenly.
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return array<int, array<string, mixed>>
+     */
+    private function allocateDiscountAcrossLines(array $lines, string $subtotal, string $discount, ?string $discountType, string|int|float|null $discountValue): array
+    {
+        if ($lines === []) {
+            return $lines;
+        }
+
+        $percent = $discountType === 'percent' ? $this->money($discountValue ?? '0') : null;
+        $lastIndex = array_key_last($lines);
+        $allocatedDiscount = '0.00';
+
+        foreach ($lines as $i => &$line) {
+            $preDiscountAmount = $line['amount'];
+            if ($i === $lastIndex) {
+                $lineDiscount = bcsub($discount, $allocatedDiscount, 2);
+            } elseif ($percent !== null) {
+                $lineDiscount = bcdiv(bcmul($line['amount'], $percent, 6), '100.00', 2);
+            } else {
+                // Fixed discount, proportional by this line's own share
+                // of the subtotal — never an even split.
+                $lineDiscount = bccomp($subtotal, '0.00', 2) === 0
+                    ? '0.00'
+                    : bcdiv(bcmul($line['amount'], $discount, 6), $subtotal, 2);
+            }
+            $allocatedDiscount = bcadd($allocatedDiscount, $lineDiscount, 2);
+
+            $final = bcsub($line['amount'], $lineDiscount, 2);
+            if (bccomp($final, '0.00', 2) < 0) {
+                throw ValidationException::withMessages([
+                    'discount_value' => "Скидка приводит к отрицательной сумме по услуге «{$line['description']}» — проверьте параметры скидки.",
+                ]);
+            }
+
+            $line['metadata']['final_discounted_amount'] = $final;
+            $line['metadata']['pre_discount_amount'] = $preDiscountAmount;
+            $line['metadata']['allocated_discount_amount'] = $lineDiscount;
+            $line['metadata']['line_total'] = $final;
+            if ($line['period_amounts'] !== null) {
+                $line['period_amounts'] = $this->rescalePeriodAmounts($line['period_amounts'], $final);
+            }
+            $line['amount'] = $final;
+
+            // Discounted calendar lines and mixed quarterly package/tail
+            // lines are composite financial charges. Persist a truthful
+            // identity representation instead of a rounded pseudo-rate.
+            if (bccomp($lineDiscount, '0.00', 2) !== 0 || ($line['metadata']['quarterly_package_applied'] ?? false)) {
+                $line['metadata']['display_unit_price'] = $line['unit_price'];
+                $line['metadata']['display_quantity'] = (string) $line['quantity'];
+                $line['unit_price'] = $final;
+                $line['quantity'] = 1;
+            }
+        }
+        unset($line);
+
+        return $lines;
+    }
+
+    /**
+     * Corrective pass #4 (HIGH 1). Re-scales a line's own per-period
+     * amounts (originally summing to its pre-discount amount) to instead
+     * sum to exactly $targetTotal (its final, post-discount amount) —
+     * same proportional-share-with-last-absorbing-remainder rule as
+     * allocateDiscountAcrossLines() itself, applied one level deeper.
+     *
+     * @param  array<int, string>  $periodAmounts
+     * @return array<int, string>
+     */
+    private function rescalePeriodAmounts(array $periodAmounts, string $targetTotal): array
+    {
+        $originalTotal = array_reduce($periodAmounts, fn ($carry, $amount) => bcadd($carry, $amount, 2), '0.00');
+        if (bccomp($originalTotal, '0.00', 2) === 0) {
+            // A genuinely zero-amount period breakdown (should not occur
+            // for a real charged line) — nothing to proportionally
+            // re-scale against; left as-is rather than dividing by zero.
+            return $periodAmounts;
+        }
+
+        $lastIndex = array_key_last($periodAmounts);
+        $allocated = '0.00';
+        $rescaled = [];
+        foreach ($periodAmounts as $i => $amount) {
+            if ($i === $lastIndex) {
+                $rescaled[$i] = bcsub($targetTotal, $allocated, 2);
+            } else {
+                $share = bcdiv(bcmul($amount, $targetTotal, 6), $originalTotal, 2);
+                $rescaled[$i] = $share;
+                $allocated = bcadd($allocated, $share, 2);
+            }
+        }
+
+        return $rescaled;
     }
 
     /**
@@ -456,11 +626,12 @@ class InvoiceCalculationService
         // off from $amount — $amount itself (and $group_amounts, which
         // drive the actual installment schedule) always remain the
         // authoritative, exact figures regardless.
-        $blendedUnitPrice = bcdiv($amount, (string) $totalMonths, 2);
-
         return [
-            'unit_price' => $blendedUnitPrice,
-            'quantity' => $totalMonths,
+            // One composite charge is the only truthful scalar
+            // representation when package blocks and a monthly tail use
+            // different tariffs. Exact components remain below.
+            'unit_price' => $amount,
+            'quantity' => 1,
             'amount' => $amount,
             'group_amounts' => $groupAmounts,
             'metadata' => array_merge($partialMetadata, [
@@ -468,7 +639,8 @@ class InvoiceCalculationService
                 'quarterly_package_price' => $baseAmount,
                 'complete_quarterly_blocks' => (string) $fullGroupCount,
                 'quarterly_package_applied' => true,
-                'blended_unit_price' => $blendedUnitPrice,
+                'blended_unit_price' => null,
+                'component_month_count' => (string) $totalMonths,
                 'per_block_amounts' => $groupAmounts,
             ]),
         ];

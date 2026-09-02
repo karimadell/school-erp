@@ -490,4 +490,54 @@ class InstallmentCoveragePeriodPostgresConcurrencyTest extends TestCase
             throw $e;
         }
     }
+
+    public function test_direct_sql_updates_cannot_break_bounds_order_ownership_or_overlap_on_postgresql(): void
+    {
+        ['coverage' => $coverage, 'installment' => $first] = $this->seedBundledInvoiceWithCoverage();
+        $periods = \App\Models\InstallmentCoveragePeriod::on($this->connectionName)
+            ->where('service_coverage_id', $coverage->id)->orderBy('period_start')->get();
+        $target = $periods[1];
+        $original = DB::connection($this->connectionName)->table('installment_coverage_periods')->where('id', $target->id)->first();
+
+        $otherInvoice = DB::connection($this->connectionName)->table('invoices')->insertGetId([
+            'student_id' => $coverage->student_id, 'academic_year_id' => AcademicYear::on($this->connectionName)->first()->id,
+            'customer_name' => 'other', 'currency' => 'EGP', 'subtotal_amount' => '1', 'total_amount' => '1', 'discount_amount' => '0',
+            'paid_amount' => '0', 'remaining_amount' => '1', 'status' => 'unpaid', 'due_date' => '2027-06-30',
+            'invoice_number' => 'UPDATE-INTEGRITY-'.uniqid(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $otherInstallment = DB::connection($this->connectionName)->table('invoice_installments')->insertGetId([
+            'invoice_id' => $otherInvoice, 'name_ru' => 'other', 'sequence' => 1, 'due_date' => now(), 'amount' => '1',
+            'paid_amount' => '0', 'remaining_amount' => '1', 'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $mutations = [
+            ['period_start' => '2020-01-01', 'period_end' => '2020-01-31'],
+            ['period_start' => '2026-10-31', 'period_end' => '2026-10-01'],
+            ['invoice_installment_id' => $otherInstallment],
+            ['period_start' => $periods[0]->period_start->toDateString(), 'period_end' => $periods[0]->period_end->toDateString()],
+        ];
+        foreach ($mutations as $mutation) {
+            try {
+                DB::connection($this->connectionName)->table('installment_coverage_periods')->where('id', $target->id)->update($mutation);
+                $this->fail('Expected PostgreSQL UPDATE integrity rejection.');
+            } catch (\Illuminate\Database\QueryException) {
+                $fresh = DB::connection($this->connectionName)->table('installment_coverage_periods')->where('id', $target->id)->first();
+                $this->assertEquals($original, $fresh);
+            }
+        }
+
+        $classId = DB::connection($this->connectionName)->table('classes')->value('id');
+        $otherStudent = DB::connection($this->connectionName)->table('students')->insertGetId([
+            'last_name_ru' => 'Owner', 'first_name_ru' => 'Mismatch', 'patronymic_ru' => 'Test',
+            'phone' => '+2010'.random_int(10000000, 99999999), 'class_id' => $classId,
+            'status' => 'registration_completed', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        try {
+            DB::connection($this->connectionName)->table('service_coverages')->where('id', $coverage->id)->update(['student_id' => $otherStudent]);
+            $this->fail('Expected direct ServiceCoverage ownership corruption to be rejected.');
+        } catch (\Illuminate\Database\QueryException $e) {
+            $this->assertStringContainsString('service coverage student must match invoice student', $e->getMessage());
+            $this->assertSame($coverage->student_id, DB::connection($this->connectionName)->table('service_coverages')->where('id', $coverage->id)->value('student_id'));
+        }
+    }
 }

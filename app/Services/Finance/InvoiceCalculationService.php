@@ -31,6 +31,18 @@ class InvoiceCalculationService
     private const DIMENSION_FIELDS = ['grade_id', 'grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'];
 
     /**
+     * Finance V2, Phase 2D corrective pass #3 (P0 Blocker 2 — complete
+     * canonical tariff-dimension validation, everywhere). The single
+     * source of truth for "which option_type values mean this tariff is
+     * scoped by enrollment mode rather than a literal zone/plan/item" —
+     * both dimensionalCandidates() (automatic resolution) and
+     * explicitPriceMatchesSelection() (the explicit-fee_price_id branch)
+     * consult this SAME constant, so the two can never independently
+     * drift on which option_type values carry that meaning.
+     */
+    private const MODE_OPTION_TYPES = ['enrollment_mode', 'Форма', 'Форма обучения'];
+
+    /**
      * @param  array<int, array<string, mixed>>  $items
      * @param  ?string  $calendarBillingPeriod  Finance V2, Phase 2D corrective
      *         pass (P0 Blocker 1): when the invoice is being issued under
@@ -365,7 +377,9 @@ class InvoiceCalculationService
 
         $groupAmounts = [];
         $fullGroupCount = 0;
+        $totalMonths = 0;
         foreach ($groups as $group) {
+            $totalMonths += $group['months'];
             if ($group['months'] === 3) {
                 $groupAmounts[] = $baseAmount;
                 $fullGroupCount++;
@@ -375,21 +389,88 @@ class InvoiceCalculationService
         }
         $amount = array_reduce($groupAmounts, fn ($carry, $g) => bcadd($carry, $g, 2), '0.00');
 
+        if (! $hasPartialGroup) {
+            // An exact multiple of 3 months — every group is a full
+            // package block, unit_price x quantity already equals amount
+            // precisely, no blending needed.
+            return [
+                'unit_price' => $baseAmount,
+                'quantity' => $fullGroupCount,
+                'amount' => $amount,
+                'group_amounts' => $groupAmounts,
+                'metadata' => [],
+            ];
+        }
+
         $lastGroup = $groups[array_key_last($groups)];
-        $metadata = $hasPartialGroup ? [
+        $partialMetadata = [
             'partial_group_months' => (string) $lastGroup['months'],
             'partial_group_unit_price' => $monthlyBasis,
             'partial_group_amount' => end($groupAmounts),
             'partial_group_start' => $lastGroup['start'],
             'partial_group_end' => $lastGroup['end'],
-        ] : [];
+        ];
+
+        if ($fullGroupCount === 0) {
+            // Corrective pass #3 (HIGH 3 — zero complete quarterly
+            // blocks): the ENTIRE span is a partial group (e.g. a
+            // 1-2 month remainder under quarterly billing) — there is
+            // no package block to represent at all. The line is
+            // represented EXACTLY as its real tariff: unit_price = the
+            // monthly basis amount, quantity = the remaining months,
+            // amount = their product — never quantity=0 for a non-zero
+            // amount, and never a fabricated "0 quarters" line.
+            return [
+                'unit_price' => $monthlyBasis,
+                'quantity' => $totalMonths,
+                'amount' => $amount,
+                'group_amounts' => $groupAmounts,
+                'metadata' => array_merge($partialMetadata, [
+                    'requested_billing_strategy' => 'quarterly',
+                    'complete_quarterly_blocks' => '0',
+                    'quarterly_package_applied' => false,
+                ]),
+            ];
+        }
+
+        // Corrective pass #3 (HIGH 3 — mixed full blocks + trailing
+        // partial): a literal unit_price=package/quantity=fullGroupCount
+        // cannot truthfully multiply out to $amount once a partial group
+        // is blended in (e.g. 3x2800 + 1x1000 = 9400, but 2800x3=8400
+        // != 9400) — checked directly against this codebase's own
+        // InvoiceItem shape: one row per Fee per invoice, no existing
+        // multi-item-per-Fee split for this case (only the SEPARATE,
+        // pre-existing $hasDuplicateFeeLines path, which requires the
+        // CALLER to submit two distinct line entries — not something
+        // this single-line quarterly computation can synthesize without
+        // restructuring calculate()'s own per-item loop). Per the
+        // corrective-pass instruction's own explicit default: a derived
+        // BLENDED unit_price = amount / total_months_covered keeps
+        // unit_price x quantity == amount arithmetically true (quantity
+        // = total months), while the full breakdown (package price,
+        // full-block count, partial months/basis, and every group's own
+        // real amount) is fully recorded in metadata — the audit truth
+        // lives there, never hidden. Note: for the rare amount not
+        // evenly divisible by total_months, bcdiv's 2-decimal rounding
+        // could in principle leave unit_price x quantity a single cent
+        // off from $amount — $amount itself (and $group_amounts, which
+        // drive the actual installment schedule) always remain the
+        // authoritative, exact figures regardless.
+        $blendedUnitPrice = bcdiv($amount, (string) $totalMonths, 2);
 
         return [
-            'unit_price' => $baseAmount,
-            'quantity' => $fullGroupCount,
+            'unit_price' => $blendedUnitPrice,
+            'quantity' => $totalMonths,
             'amount' => $amount,
             'group_amounts' => $groupAmounts,
-            'metadata' => $metadata,
+            'metadata' => array_merge($partialMetadata, [
+                'requested_billing_strategy' => 'quarterly',
+                'quarterly_package_price' => $baseAmount,
+                'complete_quarterly_blocks' => (string) $fullGroupCount,
+                'quarterly_package_applied' => true,
+                'blended_unit_price' => $blendedUnitPrice,
+                'per_block_amounts' => $groupAmounts,
+            ]),
         ];
     }
 
@@ -449,13 +530,8 @@ class InvoiceCalculationService
                 && $price->is_active
                 && $price->currency === self::CURRENCY
                 && (! $academicYearId || $price->academic_year_id === $academicYearId)
-                && $this->isUsable($price, $date);
-
-            foreach (['grade_group', 'payment_period', 'size', 'item', 'option_type', 'option_value'] as $field) {
-                if ($valid && filled($price->{$field}) && (string) ($selection[$field] ?? '') !== (string) $price->{$field}) {
-                    $valid = false;
-                }
-            }
+                && $this->isUsable($price, $date)
+                && $this->explicitPriceMatchesSelection($price, $selection, $modeCache);
 
             if (! $valid) {
                 throw ValidationException::withMessages(['fees' => "Выбранный тариф не принадлежит услуге «{$fee->name_ru}» или недействителен."]);
@@ -607,11 +683,10 @@ class InvoiceCalculationService
         } elseif (filled($selection['enrollment_mode_id'] ?? null)) {
             $modeId = (int) $selection['enrollment_mode_id'];
             $mode = array_key_exists($modeId, $modeCache) ? $modeCache[$modeId] : ($modeCache[$modeId] = EnrollmentMode::find($modeId));
-            $modeTypes = ['enrollment_mode', 'Форма', 'Форма обучения'];
             $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->unique()->values();
-            $hasModePrices = (clone $query)->whereIn('option_type', $modeTypes)->exists();
+            $hasModePrices = (clone $query)->whereIn('option_type', self::MODE_OPTION_TYPES)->exists();
             if ($hasModePrices) {
-                $query->whereIn('option_type', $modeTypes)->whereIn('option_value', $modeValues);
+                $query->whereIn('option_type', self::MODE_OPTION_TYPES)->whereIn('option_value', $modeValues);
             }
         }
 
@@ -628,6 +703,85 @@ class InvoiceCalculationService
             ->when(filled($selection['grade_id'] ?? null), fn ($query) => $query
                 ->orderByRaw('CASE WHEN grade_id = ? THEN 0 WHEN grade_group IS NOT NULL THEN 1 ELSE 2 END', [(int) $selection['grade_id']]))
             ->orderByDesc('start_date')->orderByDesc('id')->lockForUpdate()->get();
+    }
+
+    /**
+     * Finance V2, Phase 2D corrective pass #3 (P0 Blocker 2 — complete
+     * canonical tariff-dimension validation, everywhere). Validates an
+     * EXPLICITLY chosen FeePrice (the fee_price_id selection path)
+     * against the full canonical dimension set — grade_id (via
+     * DIMENSION_FIELDS; previously absent from this branch entirely, a
+     * confirmed real gap: a client submitting a wrong grade's explicit
+     * fee_price_id passed as long as grade_group happened to match or
+     * was blank), grade_group, payment_period, size, item, and option_type/
+     * option_value (including the enrollment_mode_id fallback — the
+     * SAME MODE_OPTION_TYPES constant dimensionalCandidates() itself
+     * uses, so the two can never independently disagree about which
+     * option_type values mean "this tariff is mode-scoped").
+     *
+     * This is now the SINGLE dimension-matching implementation for the
+     * explicit-id path — resolvePrice()'s only caller of this method —
+     * never a second, hand-built subset foreach list that a future
+     * change could update here without updating dimensionalCandidates(),
+     * or vice versa.
+     */
+    private function explicitPriceMatchesSelection(FeePrice $price, array $selection, array &$modeCache): bool
+    {
+        // Grade: mirrors dimensionalCandidates()'s own two-tier semantics
+        // (a grade_group-scoped price matches the selection's own
+        // grade_group, direct or derived from grade_id; a grade_id-scoped
+        // price must match the selection's own grade_id exactly — no
+        // grade_group fallback for an EXPLICIT row, which already
+        // committed to one specific grade_id), but applies this
+        // codebase's existing STRICT rule for every other dimension here:
+        // if the price itself carries a value for a dimension, the
+        // selection must explicitly supply the matching value — a blank
+        // selection field never silently satisfies a filled price field.
+        if (filled($price->grade_id)) {
+            if ((int) ($selection['grade_id'] ?? 0) !== (int) $price->grade_id) {
+                return false;
+            }
+        } elseif (filled($price->grade_group)) {
+            $selectionGroup = $selection['grade_group'] ?? $this->gradeGroupFor($selection['grade_id'] ?? null);
+            if ((string) $price->grade_group !== (string) $selectionGroup) {
+                return false;
+            }
+        }
+
+        foreach (['payment_period', 'size', 'item'] as $field) {
+            if (filled($price->{$field}) && (string) ($selection[$field] ?? '') !== (string) $price->{$field}) {
+                return false;
+            }
+        }
+
+        if (filled($price->option_value)) {
+            // A mode-scoped price whose selection didn't send option_type/
+            // option_value explicitly is validated via enrollment_mode_id
+            // instead — the identical fallback dimensionalCandidates()
+            // applies for automatic resolution, now applied here too so
+            // an explicit fee_price_id selection for a mode-scoped tariff
+            // isn't spuriously rejected just for omitting a redundant
+            // option_type/option_value the caller was never asked to send.
+            if (blank($selection['option_type'] ?? null) && blank($selection['option_value'] ?? null)
+                && in_array($price->option_type, self::MODE_OPTION_TYPES, true)) {
+                $modeId = (int) ($selection['enrollment_mode_id'] ?? 0);
+                if ($modeId <= 0) {
+                    return false;
+                }
+                $mode = array_key_exists($modeId, $modeCache) ? $modeCache[$modeId] : ($modeCache[$modeId] = EnrollmentMode::find($modeId));
+                $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->map(fn ($v) => (string) $v);
+                if (! $modeValues->contains((string) $price->option_value)) {
+                    return false;
+                }
+            } elseif ((string) ($selection['option_value'] ?? '') !== (string) $price->option_value
+                || (filled($price->option_type) && (string) ($selection['option_type'] ?? '') !== (string) $price->option_type)) {
+                return false;
+            }
+        } elseif (filled($price->option_type) && (string) ($selection['option_type'] ?? '') !== (string) $price->option_type) {
+            return false;
+        }
+
+        return true;
     }
 
     /**

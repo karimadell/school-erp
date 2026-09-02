@@ -85,10 +85,16 @@ class InvoiceIssuanceService
         if ($idempotencyKey !== null && ! \Illuminate\Support\Str::isUuid($idempotencyKey)) {
             throw ValidationException::withMessages(['idempotency_key' => 'Укажите корректный ключ повторного запроса.']);
         }
+        // Corrective pass #3 (HIGH 1 — direct InvoiceIssuanceService
+        // idempotency hash). issue() has callers besides Quick
+        // Registration (Classic Invoice via StudentInvoiceController,
+        // among others) — this is its OWN canonical payload hash, never
+        // derived from or coupled to QuickStudentRegistrationService's
+        // operation-level one. See canonicalPayloadHash()'s own
+        // docblock for exactly what is covered and what is deliberately
+        // excluded.
         $idempotencyHash = $idempotencyKey !== null
-            ? hash('sha256', implode('|', [
-                $student->id, $data['academic_year_id'], $data['pricing_date'], $data['payment_type'] ?? 'one_time', json_encode($data['items']),
-            ]))
+            ? $this->canonicalPayloadHash($student, $data, $origin)
             : null;
 
         // Checked BEFORE opening the transaction too — the overwhelmingly
@@ -307,6 +313,18 @@ class InvoiceIssuanceService
                         'partial_group_amount'=>$line['metadata']['partial_group_amount'] ?? null,
                         'partial_group_start'=>$line['metadata']['partial_group_start'] ?? null,
                         'partial_group_end'=>$line['metadata']['partial_group_end'] ?? null,
+                        // Corrective pass #3 (HIGH 3 — quarterly <3-month
+                        // and mixed-block line representation) — full
+                        // audit trace of the requested strategy, how many
+                        // complete quarterly package blocks actually
+                        // applied, and (for the mixed case) the blended
+                        // unit_price plus every block's own real amount.
+                        'requested_billing_strategy'=>$line['metadata']['requested_billing_strategy'] ?? null,
+                        'complete_quarterly_blocks'=>$line['metadata']['complete_quarterly_blocks'] ?? null,
+                        'quarterly_package_applied'=>$line['metadata']['quarterly_package_applied'] ?? null,
+                        'quarterly_package_price'=>$line['metadata']['quarterly_package_price'] ?? null,
+                        'blended_unit_price'=>$line['metadata']['blended_unit_price'] ?? null,
+                        'per_block_amounts'=>$line['metadata']['per_block_amounts'] ?? null,
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
                 $pivotData = [
@@ -470,10 +488,17 @@ class InvoiceIssuanceService
                 $selection = $item->metadata ?? [];
                 $basisPrice = $this->calculator->resolveCoverageBasisPrice($fee, $selection, $pricingDate, $academicYearId, $billingUnit);
                 if (! $basisPrice) {
-                    $unitLabel = $billingUnit === 'daily' ? 'дневной' : 'месячный';
-                    throw ValidationException::withMessages([
-                        'fees' => "Для услуги «{$fee->name_ru}» отсутствует базовый {$unitLabel} тариф, необходимый для покрытия и будущих корректировок — настройте его перед оформлением.",
-                    ]);
+                    // Corrective pass #3 (P2 — Food remediation message
+                    // clarity, no behavior change): the Food/daily case
+                    // gets its own, more specific remediation text —
+                    // pass #1's fail-closed behavior (roll back the
+                    // whole issuance, never a silent partial commit) is
+                    // unchanged; only the wording accountants see is
+                    // clearer about exactly what to configure.
+                    $message = $billingUnit === 'daily'
+                        ? "Для услуги «{$fee->name_ru}» не настроен дневной тариф — питание требует: тариф в дневном исчислении, явную дневную базу для будущих корректировок, и согласованную политику расчёта дней/календаря, прежде чем периодическое начисление станет возможным."
+                        : "Для услуги «{$fee->name_ru}» отсутствует базовый месячный тариф, необходимый для покрытия и будущих корректировок — настройте его перед оформлением.";
+                    throw ValidationException::withMessages(['fees' => $message]);
                 }
 
                 $matchedDimensions = collect(['grade_id', 'grade_group', 'option_type', 'option_value', 'size', 'item', 'enrollment_mode_id'])
@@ -523,5 +548,83 @@ class InvoiceIssuanceService
         }
 
         return $invoice;
+    }
+
+    /**
+     * Corrective pass #3 (HIGH 1 — direct InvoiceIssuanceService
+     * idempotency hash, not borrowed from Quick Registration). Covers
+     * every field that can change the resulting Invoice/InvoiceItem/
+     * InvoiceInstallment/ServiceCoverage graph this method itself
+     * produces: student_id, academic_year_id, pricing_date, due_date,
+     * payment_type, billing_period, payment_plan_id, discount_type,
+     * discount_value, origin, and every item's own canonical dimensions
+     * (fee_id, fee_price_id, quantity, grade_group, payment_period,
+     * option_type, option_value, size, item, first_last_month) — the
+     * exact set StoreInvoiceRequest/QuickStudentRegistrationService's own
+     * item shape carries and this method's own calculate()/InvoiceItem
+     * creation actually consumes.
+     *
+     * Deliberately excludes free-text notes ($data['notes']) — a
+     * submission differing only in a descriptive comment is still the
+     * same financial transaction, consistent with every other Finance V2
+     * idempotency hash in this codebase (InvoicePaymentService::record()'s
+     * own hash never includes its $notes parameter either).
+     *
+     * Canonicalized: associative array keys sorted at every level so key-
+     * ordering differences never change the hash; numeric-with-decimal
+     * strings normalized via bcadd(...,'0',2) so "1500" and "1500.00"
+     * never diverge. Items keep their SUBMITTED ORDER, never sorted —
+     * verified, not assumed: this method's own $hasDuplicateFeeLines
+     * handling (see issue() above) is explicit acknowledgment that two
+     * lines sharing the same fee_id is a real, supported, and
+     * economically DIFFERENT case from submitting it once (a doubled
+     * charge), so line order can never be treated as non-financial here.
+     */
+    private function canonicalPayloadHash(Student $student, array $data, ?string $origin): string
+    {
+        $material = [
+            'student_id' => $student->id,
+            'academic_year_id' => $data['academic_year_id'] ?? null,
+            'pricing_date' => $data['pricing_date'] ?? null,
+            'due_date' => $data['due_date'] ?? null,
+            'payment_type' => $data['payment_type'] ?? 'one_time',
+            'billing_period' => $data['billing_period'] ?? null,
+            'payment_plan_id' => $data['payment_plan_id'] ?? null,
+            'discount_type' => $data['discount_type'] ?? null,
+            'discount_value' => $data['discount_value'] ?? null,
+            'origin' => $origin,
+            'items' => collect($data['items'])->map(fn (array $item) => collect($item)->only([
+                'fee_id', 'fee_price_id', 'quantity', 'grade_group', 'payment_period',
+                'option_type', 'option_value', 'size', 'item', 'first_last_month',
+            ])->all())->all(),
+        ];
+
+        return hash('sha256', json_encode($this->canonicalizeForHash($material)));
+    }
+
+    private function canonicalizeForHash(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            $isList = array_is_list($value);
+            $canonicalized = collect($value)->map(fn ($v) => $this->canonicalizeForHash($v));
+
+            return $isList ? $canonicalized->values()->all() : $canonicalized->sortKeys()->all();
+        }
+        // Corrective pass #3 (P2 — scalar-form normalization): a single
+        // canonical form regardless of the value's original PHP type or
+        // string formatting — "1", 1, and 1.0 all normalize identically,
+        // never producing a false "different submission" rejection for
+        // what is genuinely the same retry, and never collapsing two
+        // actually-different values together (see QuickStudentRegistrationService::
+        // canonicalizeForHash()'s own identical logic and docblock).
+        if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+            $decimal = bcadd((string) $value, '0', 6);
+
+            return bccomp($decimal, (string) (int) $decimal, 6) === 0
+                ? (string) (int) $decimal
+                : bcadd((string) $value, '0', 2);
+        }
+
+        return $value;
     }
 }

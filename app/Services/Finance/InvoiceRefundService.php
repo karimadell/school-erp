@@ -6,8 +6,10 @@ use App\Models\AuditLog;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\InvoicePayment;
+use App\Models\PaymentAllocationCoveragePeriod;
 use App\Models\PaymentRefund;
 use App\Models\PaymentRefundAllocation;
+use App\Models\PaymentRefundAllocationCoveragePeriod;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -247,11 +249,37 @@ class InvoiceRefundService
             // $allocations is null whenever this refund is intentionally
             // left unattributed (see above).
             foreach ($allocations ?? [] as $line) {
-                PaymentRefundAllocation::create([
+                $refundAllocationAmount = $this->money((string) $line['amount']);
+                $refundAllocation = PaymentRefundAllocation::create([
                     'payment_refund_id' => $refund->id,
                     'payment_allocation_id' => (int) $line['payment_allocation_id'],
-                    'amount' => $this->money((string) $line['amount']),
+                    'amount' => $refundAllocationAmount,
                 ]);
+
+                // Finance V2, Phase 2D corrective pass #3 (P0 Blocker 1D
+                // — refunds must reduce period settlement). A
+                // PaymentRefundAllocation always reverses ONE
+                // PaymentAllocation, and a PaymentAllocation maps to AT
+                // MOST one InstallmentCoveragePeriod (that table's own
+                // uniqueness) — a genuine 1:1 mapping, mirroring exactly
+                // what InvoicePaymentService::linkAllocationToCoveragePeriod()
+                // already does for the payment side. Silently skipped
+                // (not an error) when the original allocation was never
+                // itself linked to a coverage period (e.g. Registration,
+                // or any non-calendar-billed Fee) — nothing to reverse
+                // there. NEVER deletes/rewrites the original
+                // PaymentAllocationCoveragePeriod row — net settlement is
+                // computed by summing both tables (see
+                // InstallmentCoveragePeriod::netSettledAmount()), never
+                // by mutating either.
+                $originalPeriodLink = PaymentAllocationCoveragePeriod::where('payment_allocation_id', (int) $line['payment_allocation_id'])->first();
+                if ($originalPeriodLink) {
+                    PaymentRefundAllocationCoveragePeriod::create([
+                        'payment_refund_allocation_id' => $refundAllocation->id,
+                        'installment_coverage_period_id' => $originalPeriodLink->installment_coverage_period_id,
+                        'amount' => $refundAllocationAmount,
+                    ]);
+                }
             }
 
             // Outgoing money movement — one CashTransaction, its own booted hook

@@ -8,7 +8,6 @@ use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
-use App\Models\Invoice;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
@@ -22,7 +21,7 @@ use Tests\TestCase;
 
 /**
  * Finance V2, Phase 2D corrective pass #2 (HIGH 1 — PostgreSQL-safe
- * concurrent idempotency).
+ * concurrent idempotency), strengthened in corrective pass #3 (HIGH 2).
  *
  * The bug this test targets is PostgreSQL-specific and structurally
  * cannot be reproduced on SQLite (see InvoiceIssuanceIdempotencyTest's
@@ -34,10 +33,10 @@ use Tests\TestCase;
  * of transaction block," even a harmless SELECT. InvoiceIssuanceService::
  * issue()'s pass-#1 shape caught the unique-violation and re-queried
  * INSIDE the same transaction — safe on SQLite, broken on real
- * PostgreSQL. The pass-#2 fix lets the violation propagate out of
- * DB::transaction() (which then rolls back cleanly) and only recovers
- * the winning row in a fresh, non-aborted transaction/connection state
- * afterward.
+ * PostgreSQL. The pass-#2 fix (unchanged in this pass — no bug found in
+ * it) lets the violation propagate out of DB::transaction() (which then
+ * rolls back cleanly) and only recovers the winning row in a fresh,
+ * non-aborted transaction/connection state afterward.
  *
  * ============================================================
  * THIS TEST REQUIRES A REAL, REACHABLE POSTGRESQL SERVER.
@@ -47,10 +46,8 @@ use Tests\TestCase;
  * therefore WRITTEN but has NOT been executed against a real PostgreSQL
  * instance, and that is being stated plainly rather than silently
  * omitted or quietly relabeled as equivalent to the sqlite coverage
- * above. It is written as carefully and correctly as possible from
- * direct reading of PostgreSQL's documented transaction-abort behavior,
- * but has not been verified to actually pass. Before relying on it, run
- * it for real and confirm.
+ * elsewhere in this suite. Before relying on it, run it for real and
+ * confirm.
  *
  * To run it for real:
  *   1. Have a real PostgreSQL server reachable (e.g. `docker run -d -p 5432:5432
@@ -66,17 +63,21 @@ use Tests\TestCase;
  * in this environment, since no PostgreSQL server is reachable here.
  *
  * Concurrency is real OS-level concurrency (pcntl_fork()), not a
- * simulated/sequential stand-in: the parent process begins a real
- * transaction, inserts the invoice row for a specific idempotency_key,
- * and deliberately holds it open (uncommitted) while a forked CHILD
- * process — a genuinely separate PHP process with its OWN PostgreSQL
- * connection — runs the REAL InvoiceIssuanceService::issue() against the
- * SAME key. The child's own INSERT blocks on PostgreSQL's row lock until
- * the parent commits, at which point the child's insert resolves as a
- * real unique-constraint violation raised by PostgreSQL itself, and the
- * child must then recover (return the parent's row, or throw a clean
- * idempotency_key ValidationException) rather than crash with an
- * unrecovered "current transaction is aborted" PDOException.
+ * simulated/sequential stand-in, and — corrective pass #3's specific
+ * strengthening — genuinely SYMMETRIC: TWO forked children, each a
+ * separate PHP process with its OWN PostgreSQL connection, both racing
+ * the REAL InvoiceIssuanceService::issue() call against the SAME key at
+ * (as close as OS scheduling allows) the same moment, synchronized via a
+ * shared barrier file. Pass #2's own version of this test raced a real
+ * child against a hand-rolled raw-SQL "parent" row carrying a fabricated
+ * hash — which could only ever end in rejection (the fabricated hash can
+ * never match a real payload's canonical hash), so it had to accept
+ * "replay OR rejection" as if either were an equally valid outcome. That
+ * is no longer true here: since both racers submit byte-identical real
+ * payloads, the LOSER's outcome is deterministic — a genuine successful
+ * replay (the exact same Invoice id the winner got), never a rejection —
+ * and this test asserts exactly that, not merely "one of them didn't
+ * error."
  */
 class InvoiceIssuancePostgresConcurrencyTest extends TestCase
 {
@@ -89,7 +90,7 @@ class InvoiceIssuancePostgresConcurrencyTest extends TestCase
         parent::setUp();
 
         if (! extension_loaded('pcntl')) {
-            $this->markTestSkipped('pcntl extension not available — cannot fork a genuinely concurrent second process.');
+            $this->markTestSkipped('pcntl extension not available — cannot fork genuinely concurrent processes.');
         }
 
         config([
@@ -115,6 +116,7 @@ class InvoiceIssuancePostgresConcurrencyTest extends TestCase
         Artisan::call('migrate', ['--database' => $this->connectionName, '--force' => true]);
         DB::connection($this->connectionName)->statement('SET client_min_messages TO WARNING');
         $this->migrated = true;
+        config(['database.default' => $this->connectionName]);
     }
 
     protected function tearDown(): void
@@ -125,86 +127,150 @@ class InvoiceIssuancePostgresConcurrencyTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_a_real_concurrent_duplicate_key_race_on_postgresql_recovers_cleanly_without_an_aborted_transaction_error(): void
+    /** @return array{student: Student, fee: Fee, year: AcademicYear} */
+    private function seedStudentAndFee(): array
     {
-        config(['database.default' => $this->connectionName]);
         (new RolesAndPermissionsSeeder)->run();
-        $accountant = User::factory()->create(['is_active' => true]);
-        $accountant->assignRole('accountant');
-
         $year = AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
         $stage = Stage::create(['name' => 'Test Stage', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => 'Test Grade', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'A', 'name_ru' => 'A', 'name_ar' => 'A', 'is_active' => true]);
         $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Test Mode', 'is_active' => true]);
         $student = Student::factory()->create();
-        $enrollment = Enrollment::create(['student_id' => $student->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'class_id' => $class->id, 'enrollment_mode_id' => $mode->id, 'is_active' => true]);
+        Enrollment::create(['student_id' => $student->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'class_id' => $class->id, 'enrollment_mode_id' => $mode->id, 'is_active' => true]);
         $fee = Fee::create(['name_ru' => 'Test Fee', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
         FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
 
+        return compact('student', 'fee', 'year');
+    }
+
+    /**
+     * Forks two children, both racing InvoiceIssuanceService::issue()
+     * against the SAME key with $dataA/$dataB (byte-identical for the
+     * same-payload race, deliberately different for the conflicting-
+     * payload race), synchronized on a shared barrier file so both
+     * attempt their submission at (as close as OS scheduling allows) the
+     * same moment. Returns both children's raw result strings.
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    private function runConcurrentRace(Student $student, array $dataA, array $dataB, string $key, User $actor): array
+    {
+        $barrier = tempnam(sys_get_temp_dir(), 'pg_race_');
+        unlink($barrier);
+        $resultFileA = $barrier.'.a';
+        $resultFileB = $barrier.'.b';
+
+        $spawn = function (array $data, string $resultFile) use ($barrier, $student, $key, $actor): int {
+            $pid = pcntl_fork();
+            if ($pid === -1) {
+                $this->fail('pcntl_fork() failed — cannot run this test.');
+            }
+            if ($pid === 0) {
+                DB::purge($this->connectionName);
+                while (! file_exists($barrier)) {
+                    usleep(2000);
+                }
+                try {
+                    $result = app(InvoiceIssuanceService::class)->issue($student, $data, $actor, idempotencyKey: $key);
+                    file_put_contents($resultFile, 'invoice:'.$result->id);
+                } catch (\Illuminate\Validation\ValidationException $e) {
+                    file_put_contents($resultFile, 'rejected:'.json_encode($e->errors()));
+                } catch (\Throwable $e) {
+                    file_put_contents($resultFile, 'CRASHED:'.get_class($e).':'.$e->getMessage());
+                }
+                exit(0);
+            }
+
+            return $pid;
+        };
+
+        $pidA = $spawn($dataA, $resultFileA);
+        $pidB = $spawn($dataB, $resultFileB);
+        touch($barrier); // release both children at once
+
+        pcntl_waitpid($pidA, $statusA);
+        pcntl_waitpid($pidB, $statusB);
+
+        $resultA = file_exists($resultFileA) ? file_get_contents($resultFileA) : null;
+        $resultB = file_exists($resultFileB) ? file_get_contents($resultFileB) : null;
+        @unlink($resultFileA);
+        @unlink($resultFileB);
+        @unlink($barrier);
+
+        return [$resultA, $resultB];
+    }
+
+    public function test_two_genuinely_concurrent_same_key_same_payload_submissions_converge_on_exactly_one_invoice_graph(): void
+    {
+        ['student' => $student, 'fee' => $fee] = $this->seedStudentAndFee();
+        $accountant = User::factory()->create(['is_active' => true]);
+        $accountant->assignRole('accountant');
         $key = (string) Str::uuid();
         $data = [
-            'student_id' => $student->id, 'academic_year_id' => $year->id,
+            'student_id' => $student->id, 'academic_year_id' => AcademicYear::sole()->id,
             'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
             'items' => [['fee_id' => $fee->id, 'quantity' => 1]],
             'payment_type' => 'one_time',
         ];
 
-        // A rendezvous file: the child signals "about to insert" so the
-        // parent can hold its own transaction open until the child is
-        // genuinely blocked on the row lock, then commit, releasing the
-        // child into a real unique-violation.
-        $barrier = tempnam(sys_get_temp_dir(), 'pg_race_');
-        unlink($barrier);
+        [$resultA, $resultB] = $this->runConcurrentRace($student, $data, $data, $key, $accountant);
 
-        $pid = pcntl_fork();
-        if ($pid === -1) {
-            $this->fail('pcntl_fork() failed — cannot run this test.');
-        }
+        $this->assertNotNull($resultA, 'first racer produced no result at all — likely crashed before writing one');
+        $this->assertNotNull($resultB, 'second racer produced no result at all — likely crashed before writing one');
+        $this->assertStringNotContainsString('CRASHED', (string) $resultA, "first racer must recover cleanly, not crash: {$resultA}");
+        $this->assertStringNotContainsString('CRASHED', (string) $resultB, "second racer must recover cleanly, not crash: {$resultB}");
 
-        if ($pid === 0) {
-            // Child: waits for the parent's signal, then races issue()
-            // against the same key on its own fresh connection.
-            DB::purge($this->connectionName);
-            while (! file_exists($barrier)) {
-                usleep(5000);
-            }
-            try {
-                $result = app(InvoiceIssuanceService::class)->issue($student, $data, $accountant, idempotencyKey: $key);
-                file_put_contents($barrier.'.child_result', 'invoice:'.$result->id);
-            } catch (\Illuminate\Validation\ValidationException $e) {
-                file_put_contents($barrier.'.child_result', 'rejected:'.json_encode($e->errors()));
-            } catch (\Throwable $e) {
-                file_put_contents($barrier.'.child_result', 'CRASHED:'.get_class($e).':'.$e->getMessage());
-            }
-            exit(0);
-        }
+        // Both racers submitted byte-identical payloads — the loser's
+        // outcome is deterministic: a genuine successful replay of the
+        // winner's own Invoice id, never a rejection.
+        $this->assertStringStartsWith('invoice:', (string) $resultA);
+        $this->assertStringStartsWith('invoice:', (string) $resultB);
+        $this->assertSame($resultA, $resultB, 'both racers must resolve to the exact same winning Invoice id');
 
-        // Parent: hold its own invoice insert open, signal the child,
-        // give it time to block on the row, then commit.
-        DB::connection($this->connectionName)->beginTransaction();
-        $parentInvoice = DB::connection($this->connectionName)->table('invoices')->insertGetId([
-            'idempotency_key' => $key, 'idempotency_hash' => hash('sha256', 'parent-wins'),
-            'student_id' => $student->id, 'currency' => 'EGP',
-            'subtotal_amount' => '1000.00', 'total_amount' => '1000.00', 'discount_amount' => '0.00',
-            'paid_amount' => '0.00', 'remaining_amount' => '1000.00', 'status' => 'unpaid',
-            'due_date' => '2027-06-30', 'created_at' => now(), 'updated_at' => now(),
-        ]);
-        touch($barrier);
-        usleep(300000);
-        DB::connection($this->connectionName)->commit();
+        $invoiceId = (int) str_replace('invoice:', '', (string) $resultA);
+        $this->assertSame(1, DB::connection($this->connectionName)->table('invoices')->where('idempotency_key', $key)->count(), 'exactly one invoice row for this key, never two');
+        $this->assertSame(1, DB::connection($this->connectionName)->table('invoice_items')->where('invoice_id', $invoiceId)->count(), 'exactly one item set, never a duplicated line');
+        $this->assertSame(1, DB::connection($this->connectionName)->table('invoice_installments')->where('invoice_id', $invoiceId)->count(), 'exactly one schedule, never duplicated');
+    }
 
-        pcntl_waitpid($pid, $status);
-        $resultFile = $barrier.'.child_result';
-        $childResult = file_exists($resultFile) ? file_get_contents($resultFile) : null;
-        @unlink($resultFile);
+    public function test_two_genuinely_concurrent_same_key_conflicting_payload_submissions_produce_one_winner_and_one_deterministic_rejection(): void
+    {
+        ['student' => $student, 'fee' => $fee] = $this->seedStudentAndFee();
+        $otherFee = Fee::create(['name_ru' => 'Other Fee', 'category' => Fee::CATEGORY_TUITION, 'amount' => '500.00', 'is_active' => true]);
+        FeePrice::create(['fee_id' => $otherFee->id, 'academic_year_id' => AcademicYear::sole()->id, 'grade_id' => Grade::sole()->id, 'amount' => '500.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        $accountant = User::factory()->create(['is_active' => true]);
+        $accountant->assignRole('accountant');
+        $key = (string) Str::uuid();
 
-        $this->assertNotNull($childResult, 'child process produced no result at all — likely crashed before writing one');
-        $this->assertStringNotContainsString('CRASHED', (string) $childResult, "child issue() call must recover cleanly, not crash: {$childResult}");
-        $this->assertTrue(
-            str_starts_with((string) $childResult, 'invoice:'.$parentInvoice) || str_starts_with((string) $childResult, 'rejected:'),
-            "child must either return the parent's own winning invoice or cleanly reject — got: {$childResult}"
-        );
-        $this->assertSame(1, DB::connection($this->connectionName)->table('invoices')->where('idempotency_key', $key)->count(), 'exactly one invoice for this key, never two');
+        $dataA = [
+            'student_id' => $student->id, 'academic_year_id' => AcademicYear::sole()->id,
+            'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
+            'items' => [['fee_id' => $fee->id, 'quantity' => 1]], 'payment_type' => 'one_time',
+        ];
+        $dataB = [
+            'student_id' => $student->id, 'academic_year_id' => AcademicYear::sole()->id,
+            'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
+            'items' => [['fee_id' => $otherFee->id, 'quantity' => 1]], 'payment_type' => 'one_time',
+        ];
+
+        [$resultA, $resultB] = $this->runConcurrentRace($student, $dataA, $dataB, $key, $accountant);
+
+        $this->assertNotNull($resultA);
+        $this->assertNotNull($resultB);
+        $this->assertStringNotContainsString('CRASHED', (string) $resultA, "must recover cleanly, not crash: {$resultA}");
+        $this->assertStringNotContainsString('CRASHED', (string) $resultB, "must recover cleanly, not crash: {$resultB}");
+
+        // Materially different payloads racing for the same key: exactly
+        // ONE succeeds (whichever wins the row-lock race), the OTHER
+        // deterministically rejects with an idempotency_key hash
+        // mismatch — never both succeeding, never both silently
+        // rejecting, never a raw unrecovered DB error.
+        $outcomes = [$resultA, $resultB];
+        $winners = collect($outcomes)->filter(fn ($r) => str_starts_with((string) $r, 'invoice:'));
+        $rejections = collect($outcomes)->filter(fn ($r) => str_starts_with((string) $r, 'rejected:'));
+        $this->assertCount(1, $winners, 'exactly one racer must win and create the invoice');
+        $this->assertCount(1, $rejections, 'exactly one racer must be deterministically rejected');
+        $this->assertSame(1, DB::connection($this->connectionName)->table('invoices')->where('idempotency_key', $key)->count());
     }
 }

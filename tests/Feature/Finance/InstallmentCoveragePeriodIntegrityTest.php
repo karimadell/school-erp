@@ -124,6 +124,58 @@ class InstallmentCoveragePeriodIntegrityTest extends FinanceOperationsTestCase
         ]);
     }
 
+    /**
+     * Corrective pass #3 (HIGH 4 — coverage DB integrity, direct-SQL-
+     * bypass-resistant). Same bypass style as the test above, this time
+     * for the "period must lie within its ServiceCoverage's own span"
+     * invariant — previously enforced ONLY by the Eloquent model layer.
+     */
+    public function test_the_database_itself_rejects_a_period_outside_the_coverage_span_bypassing_the_model_layer(): void
+    {
+        if (\Illuminate\Support\Facades\DB::connection()->getDriverName() !== 'sqlite') {
+            $this->markTestSkipped('This test exercises the SQLite-specific trigger; PostgreSQL gets an equivalent trigger function instead (same migration, different branch) — not re-verified here since this suite only runs against sqlite.');
+        }
+
+        [, $invoice] = $this->issuedFee();
+        $coverage = ServiceCoverage::sole();
+        $installment = $invoice->installments()->first();
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        \Illuminate\Support\Facades\DB::table('installment_coverage_periods')->insert([
+            'invoice_installment_id' => $installment->id,
+            'service_coverage_id' => $coverage->id,
+            'period_start' => '2020-01-01',
+            'period_end' => '2020-01-31',
+            'created_at' => now(),
+        ]);
+    }
+
+    /**
+     * Corrective pass #3 (HIGH 4). Same bypass style, for the "installment
+     * and coverage must belong to the same invoice" cross-invoice
+     * invariant.
+     */
+    public function test_the_database_itself_rejects_a_cross_invoice_mapping_bypassing_the_model_layer(): void
+    {
+        if (\Illuminate\Support\Facades\DB::connection()->getDriverName() !== 'sqlite') {
+            $this->markTestSkipped('This test exercises the SQLite-specific trigger; PostgreSQL gets an equivalent trigger function instead (same migration, different branch) — not re-verified here since this suite only runs against sqlite.');
+        }
+
+        [, $invoice] = $this->issuedFee();
+        $coverage = ServiceCoverage::sole();
+        $otherInvoice = $this->invoice('100.00');
+        $otherInstallment = \App\Models\InvoiceInstallment::create(['invoice_id' => $otherInvoice->id, 'name_ru' => 'x', 'sequence' => 1, 'due_date' => now(), 'amount' => '100.00', 'paid_amount' => '0.00', 'remaining_amount' => '100.00', 'status' => 'pending']);
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        \Illuminate\Support\Facades\DB::table('installment_coverage_periods')->insert([
+            'invoice_installment_id' => $otherInstallment->id,
+            'service_coverage_id' => $coverage->id,
+            'period_start' => $coverage->coverage_start->toDateString(),
+            'period_end' => $coverage->coverage_start->copy()->addDays(5)->toDateString(),
+            'created_at' => now(),
+        ]);
+    }
+
     public function test_cross_student_or_cross_invoice_mapping_is_structurally_impossible_through_the_application(): void
     {
         // Coverage-period creation only ever happens internally within

@@ -28,6 +28,8 @@ class InvoiceItem extends Model
         'unit_tariff', 'billing_unit', 'unit_count', 'coverage_start', 'coverage_end', 'line_total',
         'partial_group_months', 'partial_group_unit_price', 'partial_group_amount', 'partial_group_start', 'partial_group_end',
         'adjustment_basis_period', 'adjustment_basis_fee_price_id', 'adjustment_basis_unit_amount', 'adjustment_basis_matched_dimensions',
+        // Corrective pass #3 (HIGH 3 — quarterly <3-month/mixed-block line representation).
+        'requested_billing_strategy', 'complete_quarterly_blocks', 'quarterly_package_applied', 'quarterly_package_price', 'blended_unit_price', 'per_block_amounts',
     ];
 
     protected $attributes = ['is_non_refundable' => false];

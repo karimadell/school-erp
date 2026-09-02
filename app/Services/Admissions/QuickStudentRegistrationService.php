@@ -531,17 +531,38 @@ class QuickStudentRegistrationService
      * own hash — invoice/installment/cash_account/amount/method — never
      * includes its own $notes parameter either).
      *
+     * Corrective pass #3 (P2 — normalization). The 'services' array is
+     * sorted by its own fee_id before hashing — verified safe, not
+     * assumed: StoreQuickStudentRegistrationRequest's own validation
+     * rule ('services.*.fee_id' => ['distinct', ...], enforced BEFORE
+     * this method is ever reached) makes a repeated fee_id within one
+     * submission structurally impossible here, unlike InvoiceIssuanceService's
+     * own $data['items'] (no such uniqueness constraint there — see that
+     * method's own docblock for why ITS items array deliberately stays
+     * unsorted). fee_id is therefore a safe, stable, always-unique
+     * canonical sort key — a legitimately reordered-but-identical
+     * resubmission (e.g. a UI that re-renders services in a different
+     * order) now replays cleanly instead of failing safe on order alone.
+     *
      * Canonicalized so semantically-identical payloads always hash
      * identically: array keys sorted deterministically at every level,
-     * and any numeric-looking scalar normalized to a fixed bcmath-style
-     * decimal string (never PHP's own float-to-string formatting) so
-     * "1500" and "1500.00" — or a services array submitted with keys in
-     * a different order — never produce a false "different submission"
-     * rejection for what is genuinely the same retry.
+     * and every numeric scalar (int, float, or numeric string alike —
+     * "1", 1, and 1.0 all normalize identically) reduced to one fixed
+     * representation, so "1500" and "1500.00", or an int 1 vs a string
+     * "1", never produce a false "different submission" rejection for
+     * what is genuinely the same retry. This is always a lossless,
+     * meaning-preserving transformation — never coercion that could mask
+     * a materially different value (a genuinely different amount or id
+     * still normalizes to a genuinely different string).
      */
     private function operationPayloadHash(array $data): string
     {
         $material = collect($data)->except(['idempotency_token', 'notes', 'payment_note'])->all();
+        if (isset($material['services']) && is_array($material['services'])) {
+            $material['services'] = collect($material['services'])
+                ->sortBy(fn ($service) => (int) ($service['fee_id'] ?? 0))
+                ->values()->all();
+        }
 
         return hash('sha256', json_encode($this->canonicalizeForHash($material)));
     }
@@ -552,17 +573,27 @@ class QuickStudentRegistrationService
             $isList = array_is_list($value);
             $canonicalized = collect($value)->map(fn ($v) => $this->canonicalizeForHash($v));
 
-            // A list (e.g. the services array) keeps its own submission
-            // order — line order is not assumed to be economically
-            // irrelevant (repeating the identical fee_id on two separate
-            // lines is a real, different, doubled charge from submitting
-            // it once), only each line's OWN internal key order is
-            // normalized. An associative array's keys are sorted so key
-            // order alone never changes the hash.
+            // A list (e.g. the services array, already fee_id-sorted
+            // above) keeps whatever order it arrives in at this point —
+            // each line's OWN internal key order is still normalized. An
+            // associative array's keys are sorted so key order alone
+            // never changes the hash.
             return $isList ? $canonicalized->values()->all() : $canonicalized->sortKeys()->all();
         }
-        if (is_string($value) && is_numeric($value) && str_contains($value, '.')) {
-            return bcadd($value, '0', 2);
+        if (is_int($value) || is_float($value) || (is_string($value) && is_numeric($value))) {
+            // A single canonical form regardless of the value's original
+            // PHP type or string formatting: an integer-valued number
+            // (1, "1", 1.0, "1.00") always normalizes to the plain
+            // integer string "1" — never to "1.00", which would wrongly
+            // imply a money-shaped field; a genuinely fractional number
+            // normalizes to a fixed 2dp bcmath string. Either way this
+            // never collapses two DIFFERENT logical values together —
+            // only different representations of the identical value.
+            $decimal = bcadd((string) $value, '0', 6);
+
+            return bccomp($decimal, (string) (int) $decimal, 6) === 0
+                ? (string) (int) $decimal
+                : bcadd((string) $value, '0', 2);
         }
 
         return $value;

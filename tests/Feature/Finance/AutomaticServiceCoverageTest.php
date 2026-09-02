@@ -619,13 +619,25 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
         ], $this->accountant);
 
         $item = $invoice->items->sole();
-        $this->assertSame('2800.00', $item->unit_price, 'the explicit quarterly package price, used as-is for full groups');
-        $this->assertSame(3, $item->quantity, 'quantity is the number of FULL quarterly groups, not total months');
+        // Corrective pass #3 (HIGH 3): a MIXED case (full package blocks
+        // + a trailing partial) is represented with a BLENDED unit_price
+        // so unit_price x quantity == amount always holds — 940.00 x 10
+        // = 9400.00, never a fake unit_price=2800/quantity=3 that would
+        // only multiply out to 8400.
+        $this->assertSame('940.00', $item->unit_price, 'blended: 9400 amount / 10 total months');
+        $this->assertSame(10, $item->quantity, 'total months covered, never quantity=0 or the block count alone');
         $this->assertSame('9400.00', $item->amount, '3 x 2800 (full quarters) + 1 x 1000 (trailing June, monthly basis) = 8400 + 1000');
+        $this->assertSame('9400.00', bcmul($item->unit_price, (string) $item->quantity, 2), 'unit_price x quantity must equal amount exactly');
         $this->assertFalse($item->metadata['derived'] ?? false, 'this is an explicit package price, not a derived one');
         $this->assertSame('1', $item->metadata['partial_group_months']);
         $this->assertSame('1000.00', $item->metadata['partial_group_unit_price']);
         $this->assertSame('1000.00', $item->metadata['partial_group_amount']);
+        // The TRUE breakdown lives in metadata, not the item's own
+        // unit_price/quantity fields.
+        $this->assertSame('2800.00', $item->metadata['quarterly_package_price']);
+        $this->assertSame('3', $item->metadata['complete_quarterly_blocks']);
+        $this->assertTrue($item->metadata['quarterly_package_applied']);
+        $this->assertSame(['2800.00', '2800.00', '2800.00', '1000.00'], $item->metadata['per_block_amounts']);
 
         $installments = $invoice->installments()->orderBy('sequence')->get();
         $this->assertSame(['2800.00', '2800.00', '2800.00', '1000.00'], $installments->pluck('amount')->all());
@@ -663,5 +675,70 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
         }
 
         $this->assertSame($invoicesBefore, Invoice::count());
+    }
+
+    // ================================================================
+    // Corrective pass #3 (HIGH 3 — quarterly <3-month line representation).
+    // ================================================================
+
+    private function issueQuarterlyPackageSpan(string $endDate, string $pricingDate): \App\Models\Invoice
+    {
+        $this->year->forceFill(['end_date' => $endDate])->save();
+        $fee = Fee::create(['name_ru' => "Обучение (квартал, {$endDate})", 'category' => Fee::CATEGORY_TUITION, 'amount' => '1.00', 'is_active' => true]);
+        $fee->billingPeriods()->create(['billing_period' => 'quarterly']);
+        $fee->billingPeriods()->create(['billing_period' => 'monthly']);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'quarterly', 'grade_id' => $this->enrollment->grade_id, 'amount' => '2800.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => $endDate, 'is_active' => true]);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'monthly', 'grade_id' => $this->enrollment->grade_id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => $endDate, 'is_active' => true]);
+
+        return app(InvoiceIssuanceService::class)->issue($this->student, [
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'due_date' => $endDate, 'pricing_date' => $pricingDate,
+            'items' => [['fee_id' => $fee->id, 'grade_group' => null, 'payment_period' => 'quarterly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null]],
+            'payment_type' => 'calendar', 'billing_period' => 'quarterly',
+        ], $this->accountant);
+    }
+
+    public function test_a_one_month_explicit_quarterly_span_has_zero_complete_blocks_and_a_coherent_line(): void
+    {
+        // Sep only (year ends Sep 30) -> 0 complete quarterly blocks, the
+        // ENTIRE span is a single 1-month partial group.
+        $invoice = $this->issueQuarterlyPackageSpan('2026-09-30', '2026-09-01');
+
+        $item = $invoice->items->sole();
+        $this->assertSame('1000.00', $item->unit_price, 'the monthly basis amount, never a fabricated quantity=0 line');
+        $this->assertSame(1, $item->quantity);
+        $this->assertSame('1000.00', $item->amount);
+        $this->assertSame(bcmul($item->unit_price, (string) $item->quantity, 2), $item->amount, 'unit_price x quantity == amount always holds');
+        $this->assertSame('0', $item->metadata['complete_quarterly_blocks']);
+        $this->assertFalse($item->metadata['quarterly_package_applied']);
+    }
+
+    public function test_a_two_month_explicit_quarterly_span_has_zero_complete_blocks_and_a_coherent_line(): void
+    {
+        $invoice = $this->issueQuarterlyPackageSpan('2026-10-31', '2026-09-01');
+
+        $item = $invoice->items->sole();
+        $this->assertSame('1000.00', $item->unit_price);
+        $this->assertSame(2, $item->quantity);
+        $this->assertSame('2000.00', $item->amount);
+        $this->assertSame(bcmul($item->unit_price, (string) $item->quantity, 2), $item->amount);
+        $this->assertSame('0', $item->metadata['complete_quarterly_blocks']);
+        $this->assertFalse($item->metadata['quarterly_package_applied']);
+    }
+
+    public function test_a_four_month_explicit_quarterly_span_mixes_one_complete_block_and_a_partial_month(): void
+    {
+        // Sep-Dec (year ends Dec 31) -> 1 full quarterly block (Sep-Nov,
+        // 2800) + 1 trailing partial month (Dec, monthly basis 1000) =
+        // 3800 total, a genuinely MIXED case (never zero-block).
+        $invoice = $this->issueQuarterlyPackageSpan('2026-12-31', '2026-09-01');
+
+        $item = $invoice->items->sole();
+        $this->assertSame('3800.00', $item->amount, '2800 (1 full block) + 1000 (1 partial month)');
+        $this->assertSame(4, $item->quantity, 'total months, never quantity=0');
+        $this->assertSame(bcmul($item->unit_price, (string) $item->quantity, 2), $item->amount, 'blended unit_price x quantity == amount always holds');
+        $this->assertSame('1', $item->metadata['complete_quarterly_blocks']);
+        $this->assertTrue($item->metadata['quarterly_package_applied']);
+        $this->assertSame(['2800.00', '1000.00'], $item->metadata['per_block_amounts']);
     }
 }

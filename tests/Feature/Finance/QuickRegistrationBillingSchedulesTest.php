@@ -567,4 +567,47 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         $this->assertArrayHasKey('adjustment_basis_fee_price_id', $item->metadata);
         $this->assertSame('150.00', $item->metadata['adjustment_basis_unit_amount'] ?? null);
     }
+
+    /**
+     * Corrective pass #3 (P2 — idempotency hash normalization). Worked
+     * example I: the SAME token, an identically-composed bundled
+     * submission whose 'services' array is simply reordered between the
+     * two attempts, must replay the SAME operation — never fail safe on
+     * order alone. Verified safe first (not assumed): StoreQuickStudentRegistrationRequest
+     * enforces 'services.*.fee_id' => 'distinct', so a repeated fee_id in
+     * one submission is structurally impossible, making fee_id a safe,
+     * always-unique sort key for this specific caller.
+     */
+    public function test_reordering_the_services_array_under_the_same_token_still_replays_the_same_operation(): void
+    {
+        $tuition = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1000.00', ['monthly']);
+        $this->tuitionPrice($tuition, '1000.00');
+        $transport = $this->fee('Транспорт', Fee::CATEGORY_TRANSPORT, '400.00', ['monthly']);
+        \App\Models\FeePrice::create(['fee_id' => $transport->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '400.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true, 'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly']);
+        $token = 'reorder-token-'.uniqid();
+
+        $servicesAB = [
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00'],
+            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $this->transportRoute()->id, 'payment_period' => 'monthly'],
+        ];
+        $first = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'calendar', 'billing_period' => 'monthly',
+            'services' => $servicesAB, 'idempotency_token' => $token,
+        ]);
+        $first->assertSessionHasNoErrors()->assertRedirect();
+        $this->assertSame(1, Invoice::count());
+        $firstStudentId = \App\Models\Student::sole()->id;
+
+        // Identical content, services array REORDERED (Transport first).
+        $servicesBA = array_reverse($servicesAB);
+        $second = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'calendar', 'billing_period' => 'monthly',
+            'services' => $servicesBA, 'idempotency_token' => $token,
+        ]);
+        $second->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame(1, Invoice::count(), 'a harmless reordering must replay, never create a second registration');
+        $this->assertSame(1, \App\Models\Student::count());
+        $this->assertSame($firstStudentId, \App\Models\Student::sole()->id);
+    }
 }

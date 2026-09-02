@@ -267,11 +267,7 @@ class InvoicePaymentService
                             ->where('service_coverage_id', $coverage->id)->first()
                         : null;
                     if ($period) {
-                        PaymentAllocationCoveragePeriod::create([
-                            'payment_allocation_id' => $paymentAllocation->id,
-                            'installment_coverage_period_id' => $period->id,
-                            'amount' => $allocationAmount,
-                        ]);
+                        $this->linkAllocationToCoveragePeriod($paymentAllocation, $period, $allocationAmount);
                     }
                 }
             }
@@ -326,6 +322,71 @@ class InvoicePaymentService
         }
 
         return $payment;
+    }
+
+    /**
+     * Finance V2, Phase 2D corrective pass #3 (P0 Blocker 1 A/B/C).
+     *
+     * A — period capacity: the target period is row-locked first (so a
+     * genuinely concurrent second payment for the SAME period serializes
+     * behind this one rather than both reading "not yet full" together),
+     * then net-already-allocated (gross payment allocations + credit -
+     * refunds, i.e. InstallmentCoveragePeriod::netSettledAmount() as it
+     * stands right now under the lock) is compared against the period's
+     * own 'amount' — a new allocation that would push net-allocated past
+     * it is rejected outright, never silently capped or partially
+     * applied.
+     *
+     * B — parent allocation capacity: SUM(PaymentAllocationCoveragePeriod
+     * for this PaymentAllocation) must never exceed that PaymentAllocation's
+     * own amount. Structurally unreachable today (this method's only
+     * caller passes the identical amount for both the parent
+     * PaymentAllocation and this child row), but checked explicitly
+     * anyway — defense against a future call site that doesn't maintain
+     * that invariant, not just an assumption baked into the caller.
+     *
+     * C — same-item/same-service ownership: the coverage this period
+     * belongs to must be for the EXACT SAME InvoiceItem the parent
+     * PaymentAllocation is for — a Tuition allocation must be
+     * structurally prevented from ever mapping to Transport's coverage
+     * period, checked explicitly here rather than merely relying on the
+     * caller having looked the period up "correctly."
+     */
+    private function linkAllocationToCoveragePeriod(PaymentAllocation $paymentAllocation, InstallmentCoveragePeriod $period, string $amount): void
+    {
+        $period = InstallmentCoveragePeriod::query()->lockForUpdate()->findOrFail($period->id);
+
+        // C — ownership.
+        $coverageItemId = $period->coverage()->value('invoice_item_id');
+        if ($coverageItemId !== $paymentAllocation->invoice_item_id) {
+            throw ValidationException::withMessages([
+                'allocations' => 'Период покрытия принадлежит другой услуге, чем распределение платежа.',
+            ]);
+        }
+
+        // B — parent allocation capacity.
+        $alreadyLinkedToThisAllocation = bcadd((string) PaymentAllocationCoveragePeriod::where('payment_allocation_id', $paymentAllocation->id)->sum('amount'), '0', 2);
+        if (bccomp(bcadd($alreadyLinkedToThisAllocation, $amount, 2), (string) $paymentAllocation->amount, 2) > 0) {
+            throw ValidationException::withMessages([
+                'allocations' => 'Сумма распределения по периодам покрытия превышает сумму самого распределения платежа.',
+            ]);
+        }
+
+        // A — period capacity (net of existing payment/credit/refund activity).
+        if ($period->amount !== null) {
+            $netAlready = $period->netSettledAmount();
+            if (bccomp(bcadd($netAlready, $amount, 2), (string) $period->amount, 2) > 0) {
+                throw ValidationException::withMessages([
+                    'allocations' => 'Сумма превышает остаток по периоду покрытия услуги — период уже урегулирован другим платежом.',
+                ]);
+            }
+        }
+
+        PaymentAllocationCoveragePeriod::create([
+            'payment_allocation_id' => $paymentAllocation->id,
+            'installment_coverage_period_id' => $period->id,
+            'amount' => $amount,
+        ]);
     }
 
     /**

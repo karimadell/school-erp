@@ -110,54 +110,107 @@ class InstallmentCoveragePeriod extends Model
         return $this->hasMany(PaymentAllocationCoveragePeriod::class, 'installment_coverage_period_id');
     }
 
+    /** Corrective pass #3 (P0 Blocker 1D) — every explicit refund-to-period reversal for this specific period. */
+    public function paymentRefundAllocationCoveragePeriods()
+    {
+        return $this->hasMany(PaymentRefundAllocationCoveragePeriod::class, 'installment_coverage_period_id');
+    }
+
+    /** Corrective pass #3 (P0 Blocker 1E) — every explicit credit-application-to-period settlement for this specific period. */
+    public function creditApplicationCoveragePeriods()
+    {
+        return $this->hasMany(CreditApplicationCoveragePeriod::class, 'installment_coverage_period_id');
+    }
+
+    /** Corrective pass #3 (P0 Blocker 1) — gross cash allocated to this period, before any refund. */
+    public function grossPaymentAllocated(): string
+    {
+        return bcadd((string) $this->paymentAllocationCoveragePeriods()->sum('amount'), '0', 2);
+    }
+
+    /** Corrective pass #3 (P0 Blocker 1D) — gross amount reversed from this period by refunds. */
+    public function grossRefunded(): string
+    {
+        return bcadd((string) $this->paymentRefundAllocationCoveragePeriods()->sum('amount'), '0', 2);
+    }
+
+    /** Corrective pass #3 (P0 Blocker 1E) — gross credit explicitly applied to this period. */
+    public function grossCreditApplied(): string
+    {
+        return bcadd((string) $this->creditApplicationCoveragePeriods()->sum('amount'), '0', 2);
+    }
+
+    /**
+     * Corrective pass #3 (P0 Blocker 1) — net settled = cash allocated
+     * + credit applied - refunded, all scoped to THIS specific period.
+     * Never inferred from installment-level remaining_amount/status —
+     * the original allocation/refund/credit rows are never mutated or
+     * deleted; this is always a live sum over them.
+     */
+    public function netSettledAmount(): string
+    {
+        return bcsub(bcadd($this->grossPaymentAllocated(), $this->grossCreditApplied(), 2), $this->grossRefunded(), 2);
+    }
+
+    /** Corrective pass #3 (P0 Blocker 1) — how much of this period's own full amount remains outstanding (never negative). */
+    public function remainingAmount(): ?string
+    {
+        if ($this->amount === null) {
+            return null;
+        }
+        $remaining = bcsub((string) $this->amount, $this->netSettledAmount(), 2);
+
+        return bccomp($remaining, '0.00', 2) < 0 ? '0.00' : $remaining;
+    }
+
     /**
      * Finance V2, Phase 2D corrective pass #1 (HIGH — payment<->coverage
      * explicitness) investigated StudentCreditService::apply() directly:
-     * it never touches InvoiceInstallment, so a bundled installment's own
-     * remaining_amount reflects only genuine InvoicePayment activity.
+     * confirmed it never touches InvoiceInstallment.
      *
-     * Corrective pass #2 (P0 Blocker 2): that investigation also
-     * surfaced the real remaining gap — a SHARED installment's own
-     * remaining_amount is an INSTALLMENT-level fact, not a per-service
-     * one, so it cannot by itself distinguish "Transport's own period
-     * settled, Tuition's own period didn't" when the two Fees share one
-     * installment and only one of them was explicitly paid. This method
-     * now answers that at the correct granularity, using the explicit
-     * PaymentAllocation -> PaymentAllocationCoveragePeriod chain instead:
+     * Corrective pass #2 (P0 Blocker 2) moved this off installment-level
+     * remaining_amount/status entirely, onto the explicit PaymentAllocation
+     * -> PaymentAllocationCoveragePeriod chain, since a SHARED installment's
+     * own remaining_amount cannot distinguish "Transport's own period
+     * settled, Tuition's own period didn't."
      *
-     *  - 'unpaid': no InvoicePayment at all against this period's own
-     *    installment.
-     *  - 'unallocated': at least one payment against this installment has
-     *    NO PaymentAllocation at all for this period's own InvoiceItem
-     *    (Phase 1C's legacy/ambiguous multi-item exception) — this
-     *    period's true settlement is genuinely unknowable from the data,
-     *    and is NEVER guessed or backfilled; every validated allocation
-     *    always sums to exactly its payment's own amount (validateAllocations()),
-     *    so a payment is either fully allocated or not allocated at all —
-     *    never partially, which keeps this a clean binary per payment.
-     *  - 'unknown': this row predates the 'amount' column (a legacy
-     *    installment_coverage_periods row with no recorded full amount to
-     *    compare against) — distinct from every other state, never
-     *    reported as settled or partial without a real reference amount.
+     * Corrective pass #3 (P0 Blocker 1) extends the SAME discipline to
+     * refunds and credit — net settlement, never gross, and never
+     * inferred from anything installment-level:
+     *
+     *  - 'unpaid': no InvoicePayment against this period's own
+     *    installment AND no credit ever applied to this period, and net
+     *    settled <= 0.
+     *  - 'unallocated': at least one payment against this installment
+     *    has NO PaymentAllocation at all for this period's own
+     *    InvoiceItem (Phase 1C's legacy/ambiguous multi-item exception —
+     *    unchanged from pass #2), OR at least one StudentCreditApplicationItem
+     *    exists for this period's own InvoiceItem with NO period-level
+     *    breakdown at all (credit was applied to the ITEM but which
+     *    period(s) it settled is genuinely unrecorded) — either way,
+     *    this period's true settlement is unknowable from the data, and
+     *    is NEVER guessed or backfilled.
+     *  - 'unknown': this row predates the 'amount' column (no reference
+     *    amount to compare net settlement against).
      *  - 'settled' / 'partial' / 'unpaid': every payment against this
-     *    installment IS explicitly allocated, and the sum of this
-     *    period's own PaymentAllocationCoveragePeriod rows is compared
-     *    directly against this period's own recorded 'amount' — the
-     *    correct per-service, per-period reference, never the shared
-     *    installment total.
+     *    installment IS explicitly allocated (and every credit
+     *    application touching this item IS explicitly period-attributed)
+     *    — net settled amount (payments + credit - refunds) is compared
+     *    directly against this period's own recorded 'amount'.
      */
     public function settlementStatus(): string
     {
-        $payments = InvoicePayment::where('invoice_installment_id', $this->invoice_installment_id)->get(['id']);
-        if ($payments->isEmpty()) {
-            return 'unpaid';
-        }
-
-        $paymentIds = $payments->pluck('id');
+        $paymentIds = InvoicePayment::where('invoice_installment_id', $this->invoice_installment_id)->pluck('id');
         $hasUnallocatedPayment = $paymentIds->contains(
             fn ($paymentId) => ! PaymentAllocation::where('invoice_payment_id', $paymentId)->exists()
         );
-        if ($hasUnallocatedPayment) {
+
+        $itemId = $this->coverage()->value('invoice_item_id');
+        $hasCreditWithoutPeriodAttribution = StudentCreditApplicationItem::where('invoice_item_id', $itemId)
+            ->whereDoesntHave('coveragePeriods')
+            ->exists();
+
+        if ($hasUnallocatedPayment || $hasCreditWithoutPeriodAttribution) {
             return 'unallocated';
         }
 
@@ -165,12 +218,12 @@ class InstallmentCoveragePeriod extends Model
             return 'unknown';
         }
 
-        $settled = bcadd((string) $this->paymentAllocationCoveragePeriods()->sum('amount'), '0', 2);
-        if (bccomp($settled, '0.00', 2) <= 0) {
+        $net = $this->netSettledAmount();
+        if (bccomp($net, '0.00', 2) <= 0) {
             return 'unpaid';
         }
 
-        return bccomp($settled, (string) $this->amount, 2) >= 0 ? 'settled' : 'partial';
+        return bccomp($net, (string) $this->amount, 2) >= 0 ? 'settled' : 'partial';
     }
 
     public function isSettled(): bool

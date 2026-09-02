@@ -20,6 +20,8 @@ class Invoice extends Model
     public const ORIGIN_QUICK_REGISTRATION = 'quick_registration';
 
     protected $fillable = [
+        'idempotency_key',
+        'idempotency_hash',
         'student_id',
         'invoice_number',
         'currency',
@@ -179,15 +181,19 @@ class Invoice extends Model
         $this->paid_amount = $paid;
         $this->remaining_amount = $remaining;
 
-        if (bccomp($paid, '0.00', 2) <= 0) {
+        if (bccomp($remaining, '0.00', 2) <= 0) {
+            $this->status = self::STATUS_PAID;
+            // A zero-total invoice is a waiver, not a cash event. Keep
+            // paid_at null unless a genuine payment established it.
+            if (bccomp($paid, '0.00', 2) > 0) {
+                $this->paid_at ??= now();
+            }
+        } elseif (bccomp($paid, '0.00', 2) <= 0) {
             $this->status = self::STATUS_UNPAID;
             $this->paid_at = null;
         } elseif (bccomp($remaining, '0.00', 2) > 0) {
             $this->status = self::STATUS_PARTIAL;
             $this->paid_at = null;
-        } else {
-            $this->status = self::STATUS_PAID;
-            $this->paid_at ??= now();
         }
 
         $this->save();

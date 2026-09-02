@@ -80,20 +80,53 @@ class InstallmentPlanServiceCalendarTest extends FinanceOperationsTestCase
 
     // ----- quarterly -----------------------------------------------------------
 
-    public function test_quarterly_schedule_uses_calendar_quarter_boundaries(): void
+    public function test_quarterly_schedule_anchors_to_the_actual_service_start_month_not_civil_calendar_quarters(): void
     {
+        // Corrective pass #2 (P0 Blocker 1): quarters are consecutive
+        // 3-month chunks anchored to the REAL service start month — an
+        // August-start service groups Aug-Oct / Nov-Jan / Feb-Apr / May-Jun
+        // (the last a genuine 2-month partial group, since Aug..Jun is 11
+        // months), never civil (January-anchored) quarters Jul-Sep /
+        // Oct-Dec / etc, which would bill for July even though the
+        // service didn't start until August.
         $invoice = $this->invoice('1200.00');
-        // Registration in August (Q3: Jul-Sep) through year end June (Q2:
-        // Apr-Jun) -> Q3 2026, Q4 2026, Q1 2027, Q2 2027 = 4 quarters.
         $this->service()->generateCalendarSchedule($invoice, 'quarterly', '2026-08-15', $this->year->end_date->toDateString());
 
         $installments = $invoice->installments()->orderBy('sequence')->get();
         $this->assertSame(4, $installments->count());
-        $this->assertSame('2026-08-15', $installments[0]->due_date->toDateString());
-        $this->assertSame('2026-10-01', $installments[1]->due_date->toDateString());
-        $this->assertSame('2027-01-01', $installments[2]->due_date->toDateString());
-        $this->assertSame('2027-04-01', $installments[3]->due_date->toDateString());
+        $this->assertSame('2026-08-15', $installments[0]->due_date->toDateString(), 'first installment due on the actual registration date, no proration');
+        $this->assertSame('2026-11-01', $installments[1]->due_date->toDateString());
+        $this->assertSame('2027-02-01', $installments[2]->due_date->toDateString());
+        $this->assertSame('2027-05-01', $installments[3]->due_date->toDateString(), 'the trailing partial group (May-Jun) still starts on a real calendar-month boundary');
         $this->assertSame('1200.00', $installments->reduce(fn ($c, $i) => bcadd($c, $i->amount, 2), '0.00'));
+    }
+
+    public function test_quarterly_period_boundaries_never_precede_the_actual_service_start_month(): void
+    {
+        // No group start month ever falls before the actual service start
+        // — the specific bug this corrective pass fixed (a September
+        // start snapping backward to July).
+        $invoice = $this->invoice('900.00');
+        $created = $this->service()->generateCalendarSchedule($invoice, 'quarterly', '2026-09-17', $this->year->end_date->toDateString());
+
+        $this->assertSame('2026-09-01', $created[0]['period_start'], 'the first group starts in September, never July');
+        foreach ($created as $period) {
+            $this->assertGreaterThanOrEqual('2026-09-01', $period['period_start']);
+        }
+    }
+
+    public function test_quarterly_period_end_never_exceeds_the_real_academic_year_end(): void
+    {
+        // A non-month-aligned academic-year end date must still cap the
+        // last group's period_end — never extend coverage past the real
+        // boundary, even though the "no proration" policy still charges
+        // the trailing group as a full unit.
+        $this->year->forceFill(['end_date' => '2027-01-15'])->save();
+        $invoice = $this->invoice('900.00');
+        $created = $this->service()->generateCalendarSchedule($invoice, 'quarterly', '2026-09-01', $this->year->end_date->toDateString());
+
+        $last = end($created);
+        $this->assertSame('2027-01-15', $last['period_end'], 'capped at the true academic-year end, never padded to month-end');
     }
 
     // ----- yearly ----------------------------------------------------------

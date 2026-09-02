@@ -8,8 +8,11 @@ use App\Models\CashTransaction;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\InvoiceInstallment;
+use App\Models\InstallmentCoveragePeriod;
 use App\Models\PaymentAllocation;
+use App\Models\PaymentAllocationCoveragePeriod;
 use App\Models\PaymentRefund;
+use App\Models\ServiceCoverage;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -72,12 +75,18 @@ class InvoicePaymentService
         if (! in_array($paymentMethod, ['cash', 'bank', 'card', 'transfer', 'instapay'], true)) {
             throw ValidationException::withMessages(['payment_method' => 'Выбран недопустимый способ оплаты.']);
         }
-        $hash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
+        $legacyHash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
+        $allocationMeaning = $this->canonicalPaymentAllocations($allocations, $installmentId);
+        $hash = hash('sha256', json_encode([
+            'invoice_id' => $invoiceId, 'installment_id' => $installmentId,
+            'cash_account_id' => $cashAccountId, 'amount' => $amount,
+            'payment_method' => $paymentMethod, 'allocations' => $allocationMeaning,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $allocations) {
+        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $legacyHash, $allocationMeaning, $allocations) {
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
-                return $this->replay($existing, $hash);
+                return $this->replay($existing, $hash, $legacyHash, $allocationMeaning);
             }
 
             $invoice = Invoice::query()->lockForUpdate()->find($invoiceId);
@@ -93,7 +102,7 @@ class InvoicePaymentService
             // cannot pass the first lookup together.
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
-                return $this->replay($existing, $hash);
+                return $this->replay($existing, $hash, $legacyHash, $allocationMeaning);
             }
 
             if (bccomp($amount, '0.00', 2) <= 0) {
@@ -237,11 +246,36 @@ class InvoicePaymentService
             // together. $allocations is null whenever Phase 1A leaves this
             // payment intentionally unallocated (see above).
             foreach ($allocations ?? [] as $allocation) {
-                PaymentAllocation::create([
+                $itemId = (int) $allocation['invoice_item_id'];
+                $allocationAmount = $this->money((string) $allocation['amount']);
+                $paymentAllocation = PaymentAllocation::create([
                     'invoice_payment_id' => $payment->id,
-                    'invoice_item_id' => (int) $allocation['invoice_item_id'],
-                    'amount' => $this->money((string) $allocation['amount']),
+                    'invoice_item_id' => $itemId,
+                    'amount' => $allocationAmount,
                 ]);
+
+                // Finance V2, Phase 2D corrective pass #2 (P0 Blocker 2 —
+                // explicit payment-to-coverage-period allocation). This
+                // installment always settles exactly one period per Fee
+                // (installment_coverage_periods is unique on (installment,
+                // coverage)), so this is a genuine 1:1 mapping, never an
+                // arbitrary split of one allocation across several
+                // periods — reuses the SAME allocation amount, tied to
+                // whichever specific period THIS installment represents
+                // for THIS item's own coverage. Silently skipped (not an
+                // error) when the item has no automatic coverage at all
+                // (e.g. Registration, or any non-calendar-billed Fee) —
+                // there is nothing to link.
+                if ($installment) {
+                    $coverage = ServiceCoverage::where('invoice_item_id', $itemId)->first();
+                    $period = $coverage
+                        ? InstallmentCoveragePeriod::where('invoice_installment_id', $installment->id)
+                            ->where('service_coverage_id', $coverage->id)->first()
+                        : null;
+                    if ($period) {
+                        $this->linkAllocationToCoveragePeriod($paymentAllocation, $period, $allocationAmount);
+                    }
+                }
             }
 
             CashTransaction::create([
@@ -287,13 +321,172 @@ class InvoicePaymentService
         });
     }
 
-    private function replay(InvoicePayment $payment, string $hash): InvoicePayment
+    private function replay(InvoicePayment $payment, string $hash, string $legacyHash, ?array $requestedAllocations): InvoicePayment
     {
-        if (! hash_equals((string) $payment->idempotency_hash, $hash)) {
+        if (hash_equals((string) $payment->idempotency_hash, $hash)) {
+            return $payment;
+        }
+
+        // Legacy rows have no allocation material in their stored hash.
+        // Replay is allowed only when an allocation-bearing retry can be
+        // proven exactly equal from the immutable persisted period graph.
+        $legacyMatches = hash_equals((string) $payment->idempotency_hash, $legacyHash);
+        // A legacy hash never recorded whether allocation instructions were
+        // supplied. A null retry therefore cannot prove identical settlement
+        // meaning and must fail closed just like a missing period graph.
+        $legacyExact = $requestedAllocations !== null
+            && $this->legacyAllocationGraphExactlyMatches($payment, $requestedAllocations);
+        if (! $legacyMatches || ! $legacyExact) {
             throw ValidationException::withMessages(['idempotency_key' => 'Ключ повторного запроса уже использован для другого платежа.']);
         }
 
         return $payment;
+    }
+
+    private function canonicalPaymentAllocations(?array $allocations, ?int $installmentId): ?array
+    {
+        if ($allocations === null) {
+            return null;
+        }
+
+        $canonical = collect($allocations)->map(fn (array $line) => [
+            'invoice_item_id' => (int) $line['invoice_item_id'],
+            'installment_id' => $installmentId,
+            'amount' => $this->money((string) $line['amount']),
+        ])->sortBy(fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_id'] ?? 0, $line['amount']))->values()->all();
+
+        return $canonical;
+    }
+
+    /**
+     * A pre-allocation-hash replay is safe only when the immutable persisted
+     * item-to-period graph proves the exact requested meaning. Item totals,
+     * due dates, or inferred coverage dates are deliberately insufficient.
+     */
+    private function legacyAllocationGraphExactlyMatches(InvoicePayment $payment, array $requestedAllocations): bool
+    {
+        if ($payment->invoice_installment_id === null) {
+            return false;
+        }
+
+        $expected = collect($requestedAllocations)->map(function (array $line) use ($payment) {
+            $periodIds = InstallmentCoveragePeriod::query()
+                ->where('invoice_installment_id', $payment->invoice_installment_id)
+                ->whereHas('coverage', fn ($query) => $query->where('invoice_item_id', $line['invoice_item_id']))
+                ->pluck('id');
+
+            if ($periodIds->count() !== 1) {
+                return null;
+            }
+
+            return [
+                'invoice_item_id' => (int) $line['invoice_item_id'],
+                'installment_coverage_period_id' => (int) $periodIds->sole(),
+                'amount' => $this->money((string) $line['amount']),
+            ];
+        });
+        if ($expected->contains(null)) {
+            return false;
+        }
+
+        $allocations = PaymentAllocation::query()
+            ->where('invoice_payment_id', $payment->id)
+            ->get();
+        $actual = collect();
+        foreach ($allocations as $allocation) {
+            $periodLinks = PaymentAllocationCoveragePeriod::query()
+                ->where('payment_allocation_id', $allocation->id)
+                ->get();
+            if ($periodLinks->isEmpty()
+                || bccomp((string) $periodLinks->sum('amount'), (string) $allocation->amount, 2) !== 0) {
+                return false;
+            }
+            foreach ($periodLinks as $periodLink) {
+                $period = InstallmentCoveragePeriod::query()->find($periodLink->installment_coverage_period_id);
+                if (! $period
+                    || $period->invoice_installment_id !== $payment->invoice_installment_id
+                    || $period->coverage()->value('invoice_item_id') !== $allocation->invoice_item_id) {
+                    return false;
+                }
+                $actual->push([
+                    'invoice_item_id' => (int) $allocation->invoice_item_id,
+                    'installment_coverage_period_id' => (int) $period->id,
+                    'amount' => $this->money((string) $periodLink->amount),
+                ]);
+            }
+        }
+
+        $sort = fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_coverage_period_id'], $line['amount']);
+        $expected = $expected->sortBy($sort)->values()->all();
+        $actual = $actual->sortBy($sort)->values()->all();
+
+        return $actual === $expected
+            && bccomp((string) collect($actual)->sum('amount'), (string) $payment->amount, 2) === 0;
+    }
+
+    /**
+     * Finance V2, Phase 2D corrective pass #3 (P0 Blocker 1 A/B/C).
+     *
+     * A — period capacity: the target period is row-locked first (so a
+     * genuinely concurrent second payment for the SAME period serializes
+     * behind this one rather than both reading "not yet full" together),
+     * then net-already-allocated (gross payment allocations + credit -
+     * refunds, i.e. InstallmentCoveragePeriod::netSettledAmount() as it
+     * stands right now under the lock) is compared against the period's
+     * own 'amount' — a new allocation that would push net-allocated past
+     * it is rejected outright, never silently capped or partially
+     * applied.
+     *
+     * B — parent allocation capacity: SUM(PaymentAllocationCoveragePeriod
+     * for this PaymentAllocation) must never exceed that PaymentAllocation's
+     * own amount. Structurally unreachable today (this method's only
+     * caller passes the identical amount for both the parent
+     * PaymentAllocation and this child row), but checked explicitly
+     * anyway — defense against a future call site that doesn't maintain
+     * that invariant, not just an assumption baked into the caller.
+     *
+     * C — same-item/same-service ownership: the coverage this period
+     * belongs to must be for the EXACT SAME InvoiceItem the parent
+     * PaymentAllocation is for — a Tuition allocation must be
+     * structurally prevented from ever mapping to Transport's coverage
+     * period, checked explicitly here rather than merely relying on the
+     * caller having looked the period up "correctly."
+     */
+    private function linkAllocationToCoveragePeriod(PaymentAllocation $paymentAllocation, InstallmentCoveragePeriod $period, string $amount): void
+    {
+        $period = InstallmentCoveragePeriod::query()->lockForUpdate()->findOrFail($period->id);
+
+        // C — ownership.
+        $coverageItemId = $period->coverage()->value('invoice_item_id');
+        if ($coverageItemId !== $paymentAllocation->invoice_item_id) {
+            throw ValidationException::withMessages([
+                'allocations' => 'Период покрытия принадлежит другой услуге, чем распределение платежа.',
+            ]);
+        }
+
+        // B — parent allocation capacity.
+        $alreadyLinkedToThisAllocation = bcadd((string) PaymentAllocationCoveragePeriod::where('payment_allocation_id', $paymentAllocation->id)->sum('amount'), '0', 2);
+        if (bccomp(bcadd($alreadyLinkedToThisAllocation, $amount, 2), (string) $paymentAllocation->amount, 2) > 0) {
+            throw ValidationException::withMessages([
+                'allocations' => 'Сумма распределения по периодам покрытия превышает сумму самого распределения платежа.',
+            ]);
+        }
+
+        // A — period capacity (net of existing payment/credit/refund activity).
+        if ($period->amount !== null) {
+            $netAlready = $period->netSettledAmount();
+            if (bccomp(bcadd($netAlready, $amount, 2), (string) $period->amount, 2) > 0) {
+                throw ValidationException::withMessages([
+                    'allocations' => 'Сумма превышает остаток по периоду покрытия услуги — период уже урегулирован другим платежом.',
+                ]);
+            }
+        }
+
+        PaymentAllocationCoveragePeriod::create([
+            'payment_allocation_id' => $paymentAllocation->id,
+            'installment_coverage_period_id' => $period->id,
+            'amount' => $amount,
+        ]);
     }
 
     /**

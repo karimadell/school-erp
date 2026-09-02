@@ -128,4 +128,69 @@ class HistoricalBillingCompatibilityServiceTest extends FinanceOperationsTestCas
         $this->fee->refresh();
         $this->assertFalse($this->fee->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN), 'tuition fixture never used a plan historically in this test — no spurious grant');
     }
+
+    public function test_registration_fee_never_regains_custom_plan_capability_even_with_real_historical_usage(): void
+    {
+        // Pre-deploy safety patch: Registration is a hard "once only"
+        // invariant. Even genuine, real (non-test) historical plan usage
+        // must never grant it custom_plan — that would let historical data
+        // silently override a non-negotiable business rule.
+        $registration = Fee::create(['name_ru' => 'Регистрационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '1000.00', 'is_active' => true]);
+        $plan = PaymentPlan::create(['name_ru' => 'Реальный исторический план', 'is_active' => true, 'is_test_data' => false]);
+        $plan->installments()->create(['name_ru' => 'Этап 1', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '100']);
+
+        $this->historicalPlanInvoice($registration, $plan);
+
+        $granted = app(HistoricalBillingCompatibilityService::class)->grantHistoricalCustomPlanAssignments();
+
+        $this->assertEmpty(array_filter($granted, fn ($row) => $row['fee_id'] === $registration->id), 'Registration must never be granted, regardless of historical usage');
+        $registration->refresh();
+        $this->assertFalse($registration->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN));
+        $this->assertSame(0, $registration->assignedPaymentPlans()->count());
+    }
+
+    public function test_test_flagged_payment_plan_historical_usage_is_ignored(): void
+    {
+        // A Fee whose only historical "usage" was against a plan flagged
+        // is_test_data=true (e.g. UatMasterDataRepair's UAT 50/50 plan)
+        // must gain nothing — pure fixture data is not real business
+        // evidence.
+        $uniform = Fee::create(['name_ru' => 'Школьная форма (тест)', 'category' => Fee::CATEGORY_UNIFORM, 'amount' => '500.00', 'is_active' => true]);
+        $testPlan = PaymentPlan::create(['name_ru' => 'UAT — 2 платежа 50/50', 'is_active' => true, 'is_test_data' => true]);
+        $testPlan->installments()->create(['name_ru' => 'Этап 1', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '50']);
+        $testPlan->installments()->create(['name_ru' => 'Этап 2', 'sequence' => 2, 'offset_days' => 30, 'percentage' => '50']);
+
+        $this->historicalPlanInvoice($uniform, $testPlan);
+
+        $granted = app(HistoricalBillingCompatibilityService::class)->grantHistoricalCustomPlanAssignments();
+
+        $this->assertEmpty(array_filter($granted, fn ($row) => $row['fee_id'] === $uniform->id), 'test-flagged plan usage must not count as historical evidence');
+        $uniform->refresh();
+        $this->assertFalse($uniform->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN));
+        $this->assertSame(0, $uniform->assignedPaymentPlans()->count());
+    }
+
+    public function test_real_historical_plan_usage_is_preserved_alongside_test_plan_exclusion(): void
+    {
+        // Both guards active in one run: a Fee used with a REAL plan still
+        // gets granted; a Fee used only with the TEST plan does not — the
+        // exclusion is scoped to the test plan specifically, not to the
+        // whole detection mechanism.
+        $transport = Fee::create(['name_ru' => 'Трансфер (доп.)', 'category' => Fee::CATEGORY_TRANSPORT, 'amount' => '900.00', 'is_active' => true]);
+        $realPlan = PaymentPlan::create(['name_ru' => 'Настоящий план', 'is_active' => true, 'is_test_data' => false]);
+        $realPlan->installments()->create(['name_ru' => 'Этап 1', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '100']);
+        $this->historicalPlanInvoice($transport, $realPlan);
+
+        $uniform = Fee::create(['name_ru' => 'Форма (доп.)', 'category' => Fee::CATEGORY_UNIFORM, 'amount' => '400.00', 'is_active' => true]);
+        $testPlan = PaymentPlan::create(['name_ru' => 'UAT — 2 платежа 50/50 (доп.)', 'is_active' => true, 'is_test_data' => true]);
+        $testPlan->installments()->create(['name_ru' => 'Этап 1', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '100']);
+        $this->historicalPlanInvoice($uniform, $testPlan);
+
+        app(HistoricalBillingCompatibilityService::class)->grantHistoricalCustomPlanAssignments();
+
+        $transport->refresh();
+        $uniform->refresh();
+        $this->assertTrue($transport->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN), 'real plan usage still grants');
+        $this->assertFalse($uniform->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN), 'test plan usage still does not grant');
+    }
 }

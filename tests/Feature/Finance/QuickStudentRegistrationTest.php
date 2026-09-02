@@ -170,7 +170,17 @@ class QuickStudentRegistrationTest extends TestCase
         $this->assertSame(2, $item->quantity);
         $this->assertSame('200.00', $item->unit_price);
         $this->assertSame('400.00', $item->amount);
-        $this->assertSame(['uniform_product_id' => $productId, 'item' => 'Футболка', 'size' => 'M'], $item->metadata);
+        // Corrective pass #2 (HIGH 4 — Finance metadata preservation):
+        // the Admissions-domain fields below must be present and correct
+        // — but InvoiceItem.metadata is no longer asserted as an EXACT
+        // match, since InvoiceIssuanceService's own Finance pricing
+        // metadata (fee_price_id/pricing_date/tariff_valid_from/to) now
+        // correctly coexists alongside it instead of being silently
+        // overwritten. That coexistence is asserted directly in
+        // QuickRegistrationBillingSchedulesTest's own dedicated metadata-
+        // preservation tests.
+        $this->assertSame(['uniform_product_id' => $productId, 'item' => 'Футболка', 'size' => 'M'], collect($item->metadata)->only(['uniform_product_id', 'item', 'size'])->all());
+        $this->assertArrayHasKey('fee_price_id', $item->metadata, 'Finance pricing metadata must survive alongside the Admissions fields above');
     }
 
     public function test_transport_metadata_is_preserved_on_item_and_subscription(): void
@@ -189,14 +199,22 @@ class QuickStudentRegistrationTest extends TestCase
             $this->service($transport, '0.00', $metadata),
         ]))->assertSessionHasNoErrors();
         $expected = ['area' => 'Мубарак 6', 'route_id' => $routeId, 'route' => 'Маршрут 2', 'stop' => 'Школа'];
-        $this->assertSame($expected, InvoiceItem::sole()->metadata);
+        // Corrective pass #2 (HIGH 4): same reasoning as the uniform test
+        // above — the Admissions fields are asserted as a subset, since
+        // Finance pricing metadata now correctly coexists on InvoiceItem.
+        // StudentServiceSubscription was never affected by this bug (it
+        // is written independently, never touched by the InvoiceItem
+        // metadata-write this fix changed) and keeps its exact-match
+        // assertion.
+        $this->assertSame($expected, collect(InvoiceItem::sole()->metadata)->only(['area', 'route_id', 'route', 'stop'])->all());
+        $this->assertArrayHasKey('fee_price_id', InvoiceItem::sole()->metadata, 'Finance pricing metadata must survive alongside the Admissions fields above');
         $this->assertSame($expected, StudentServiceSubscription::sole()->metadata);
     }
 
     public function test_everything_rolls_back_when_calculation_fails(): void
     {
-        $this->app->instance(InvoiceCalculationService::class, new class extends InvoiceCalculationService {
-            public function calculate(array $items, ?string $discountType = null, string|int|float|null $discountValue = null, string|int|float|null $initialPaymentAmount = null, ?string $pricingDate = null, ?int $academicYearId = null): array
+        $this->app->instance(InvoiceCalculationService::class, new class(app(\App\Services\Finance\CalendarPeriodCalculator::class)) extends InvoiceCalculationService {
+            public function calculate(array $items, ?string $discountType = null, string|int|float|null $discountValue = null, string|int|float|null $initialPaymentAmount = null, ?string $pricingDate = null, ?int $academicYearId = null, ?string $calendarBillingPeriod = null, ?string $academicYearEndDate = null): array
             {
                 throw ValidationException::withMessages(['services' => 'Ошибка расчёта.']);
             }

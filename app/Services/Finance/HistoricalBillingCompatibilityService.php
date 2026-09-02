@@ -2,6 +2,7 @@
 
 namespace App\Services\Finance;
 
+use App\Models\Fee;
 use App\Models\FeeBillingPeriod;
 use Illuminate\Support\Facades\DB;
 
@@ -41,9 +42,24 @@ class HistoricalBillingCompatibilityService
         // schedule applies to the whole invoice, never a single line item)
         // — matching exactly how InvoiceIssuanceService::issue() itself
         // validates "every Fee on the invoice must have the plan assigned".
+        // Pre-deploy safety patch (Phase 2B):
+        // - Registration is a hard, non-negotiable "once only" business
+        //   invariant (enforced elsewhere for new invoices) — historical
+        //   data, including any pre-Phase-2B mistake or ad-hoc test usage,
+        //   must never be allowed to grant it custom_plan eligibility. Hard
+        //   excluded from the detection query itself, not just filtered
+        //   after the fact.
+        // - Plans flagged is_test_data (e.g. UatMasterDataRepair's UAT
+        //   50/50 plan) are pure fixture data, not real business history —
+        //   excluded from the join so their historical usage never counts
+        //   as evidence a Fee legitimately needs a custom-plan grant.
         $pairs = DB::table('invoice_installments')
             ->join('invoice_items', 'invoice_items.invoice_id', '=', 'invoice_installments.invoice_id')
+            ->join('fees', 'fees.id', '=', 'invoice_items.fee_id')
+            ->join('payment_plans', 'payment_plans.id', '=', 'invoice_installments.payment_plan_id')
             ->whereNotNull('invoice_installments.payment_plan_id')
+            ->where('fees.category', '!=', Fee::CATEGORY_REGISTRATION)
+            ->where('payment_plans.is_test_data', false)
             ->select('invoice_items.fee_id', 'invoice_installments.payment_plan_id')
             ->distinct()
             ->get();

@@ -388,6 +388,7 @@ class UatMasterDataRepair extends Command
                 $plan = PaymentPlan::create([
                     'name_ru' => $installmentPlan['name'], 'is_active' => true, 'sort_order' => 0,
                     'description' => 'UAT test data only — not a final school policy.',
+                    'is_test_data' => true,
                 ]);
                 foreach ($installmentPlan['installments'] as $installment) {
                     PaymentPlanInstallment::create(array_merge(

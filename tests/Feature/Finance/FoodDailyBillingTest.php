@@ -160,6 +160,16 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         $this->assertSame('2026-09-13', $period->period_end->toDateString());
     }
 
+    public function test_n_teaching_days_count_exhausting_the_academic_year_fails_closed(): void
+    {
+        // resolveForwardFromCount() must never silently return short of the
+        // requested count — starting a few days before the academic year's
+        // own end (2027-06-30) and asking for far more teaching days than
+        // remain must fail closed, not truncate the range.
+        $this->expectException(ValidationException::class);
+        app(FoodBillableDayCalculator::class)->resolveForwardFromCount($this->year, '2027-06-25', 100);
+    }
+
     public function test_n_teaching_days_crossing_a_tariff_change_produces_an_exact_segmented_amount(): void
     {
         $this->price('170.00', '2026-08-01', '2026-09-08');
@@ -235,6 +245,92 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         $expected = bcadd(bcmul((string) $firstDays, '100.00', 2), bcmul((string) $secondDays, '110.00', 2), 2);
         $this->assertSame($expected, $item->amount);
         $this->assertCount(2, $item->metadata['food_tariff_segments']);
+    }
+
+    public function test_tariff_change_exactly_on_first_billable_day_uses_only_the_new_tariff(): void
+    {
+        // Boundary case: the new tariff's own start_date equals the very
+        // first billable day of the coverage range. Every billable day
+        // must use the new tariff — no stale/expired old-tariff segment.
+        $this->price('100.00', '2026-08-01', '2026-08-31');
+        $new = $this->price('150.00', '2026-09-01', '2027-06-30');
+        // 2026-09-01 (Tue) .. 2026-09-03 (Thu): 3 consecutive teaching days.
+        $invoice = $this->issue('2026-09-01', '2026-09-03', itemOverrides: [
+            'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-01', 'food_range_end' => '2026-09-03',
+        ]);
+
+        $item = $invoice->items()->sole();
+        $segments = $item->metadata['food_tariff_segments'];
+        $this->assertCount(1, $segments);
+        $this->assertSame($new->id, $segments[0]['fee_price_id']);
+        $this->assertSame('2026-09-01', $segments[0]['start']);
+        $this->assertSame('2026-09-03', $segments[0]['end']);
+        $this->assertSame(3, $segments[0]['billable_day_count']);
+        $this->assertSame('450.00', $item->amount);
+        $this->assertSame('450.00', $invoice->total_amount);
+    }
+
+    public function test_tariff_change_exactly_on_last_billable_day_splits_only_the_final_day(): void
+    {
+        // Boundary case: the old tariff's own end_date is the day BEFORE
+        // the range's last billable day, and the new tariff's start_date
+        // is exactly the final billable day — only that last day must
+        // price at the new rate.
+        $old = $this->price('100.00', '2026-08-01', '2026-09-02');
+        $new = $this->price('150.00', '2026-09-03', '2027-06-30');
+        $invoice = $this->issue('2026-09-01', '2026-09-03', itemOverrides: [
+            'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-01', 'food_range_end' => '2026-09-03',
+        ]);
+
+        $item = $invoice->items()->sole();
+        $segments = $item->metadata['food_tariff_segments'];
+        $this->assertCount(2, $segments);
+        $this->assertSame($old->id, $segments[0]['fee_price_id']);
+        $this->assertSame('2026-09-01', $segments[0]['start']);
+        $this->assertSame('2026-09-02', $segments[0]['end']);
+        $this->assertSame(2, $segments[0]['billable_day_count']);
+        $this->assertSame('200.00', $segments[0]['amount']);
+        $this->assertSame($new->id, $segments[1]['fee_price_id']);
+        $this->assertSame('2026-09-03', $segments[1]['start']);
+        $this->assertSame('2026-09-03', $segments[1]['end']);
+        $this->assertSame(1, $segments[1]['billable_day_count']);
+        $this->assertSame('150.00', $segments[1]['amount']);
+        $this->assertSame('350.00', $item->amount);
+        $this->assertSame('350.00', $invoice->total_amount);
+    }
+
+    public function test_tariff_change_landing_on_a_non_teaching_day_takes_effect_on_the_next_teaching_day(): void
+    {
+        // Boundary case: the new tariff's effective_from date (2026-09-04,
+        // a Friday day-off) is itself never billable — the change must
+        // still take effect starting the NEXT actual teaching day
+        // (2026-09-06), and the non-teaching effective date generates no
+        // charge at all under either tariff.
+        $old = $this->price('100.00', '2026-08-01', '2026-09-03');
+        $new = $this->price('150.00', '2026-09-04', '2027-06-30');
+        // 2026-09-01 (Tue) .. 2026-09-08 (Tue): billable = 01,02,03,06,07,08
+        // (04 Fri, 05 Sat excluded by weekly_days_off).
+        $invoice = $this->issue('2026-09-01', '2026-09-08', itemOverrides: [
+            'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-01', 'food_range_end' => '2026-09-08',
+        ]);
+
+        $item = $invoice->items()->sole();
+        $this->assertSame(6, $item->metadata['food_billable_day_count']);
+        $this->assertSame(2, $item->metadata['food_excluded_day_count']);
+        $segments = $item->metadata['food_tariff_segments'];
+        $this->assertCount(2, $segments);
+        $this->assertSame($old->id, $segments[0]['fee_price_id']);
+        $this->assertSame('2026-09-01', $segments[0]['start']);
+        $this->assertSame('2026-09-03', $segments[0]['end']);
+        $this->assertSame(3, $segments[0]['billable_day_count']);
+        $this->assertSame('300.00', $segments[0]['amount']);
+        $this->assertSame($new->id, $segments[1]['fee_price_id']);
+        $this->assertSame('2026-09-06', $segments[1]['start']);
+        $this->assertSame('2026-09-08', $segments[1]['end']);
+        $this->assertSame(3, $segments[1]['billable_day_count']);
+        $this->assertSame('450.00', $segments[1]['amount']);
+        $this->assertSame('750.00', $item->amount);
+        $this->assertSame('750.00', $invoice->total_amount);
     }
 
     public function test_full_prepayment_is_one_payment_explicitly_mapped_to_the_single_period(): void
@@ -406,6 +502,62 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
             $this->fail('Expected changed day-count conflict.');
         } catch (ValidationException) {}
         $this->assertSame(1, Invoice::count());
+    }
+
+    public function test_replay_after_calendar_change_preserves_original_historical_meaning(): void
+    {
+        // Final independent review, MEDIUM finding: replayInvoice() is
+        // reached BEFORE FoodBillableDayCalculator ever runs again (the
+        // idempotency-key lookup in issue() short-circuits ahead of the
+        // food_resolution call) — this proves that design holds end-to-end:
+        // a calendar edit made AFTER the original issuance must never alter
+        // what a same-key retry returns.
+        $this->price(); // 100.00/day
+        $key = (string) Str::uuid();
+        // 2026-09-01 (Tue) .. 2026-09-10 (Thu), weekly days off fri/sat only:
+        // billable = 01,02,03,06,07,08,09,10 = 8 teaching days -> 800.00.
+        $first = $this->issue('2026-09-01', '2026-09-10', key: $key);
+
+        $this->assertSame('800.00', $first->total_amount);
+        $originalItem = $first->items()->sole();
+        $originalItemMetadata = $originalItem->metadata;
+        $this->assertSame(8, $originalItemMetadata['food_billable_day_count']);
+        $originalCoverage = ServiceCoverage::sole();
+        $originalCoverageMetadata = $originalCoverage->metadata;
+        $originalCoverageStart = $originalCoverage->coverage_start->toDateString();
+        $originalCoverageEnd = $originalCoverage->coverage_end->toDateString();
+        $originalPeriod = InstallmentCoveragePeriod::sole();
+
+        // A holiday added AFTER issuance, landing on 2026-09-07 — one of
+        // the 8 days already billed above. Recalculating the same range
+        // today would yield only 7 billable days (700.00).
+        CalendarEvent::create([
+            'academic_calendar_id' => $this->calendar->id, 'name' => 'Внеплановый выходной',
+            'start_date' => '2026-09-07', 'end_date' => '2026-09-07',
+            'type' => CalendarEvent::TYPE_OFFICIAL_HOLIDAY, 'is_active' => true,
+        ]);
+        $this->assertSame(7, app(FoodBillableDayCalculator::class)->calculate($this->year, '2026-09-01', '2026-09-10')['billable_day_count']);
+
+        $replayed = $this->issue('2026-09-01', '2026-09-10', key: $key);
+
+        $this->assertSame($first->id, $replayed->id);
+        $this->assertSame(1, Invoice::count());
+        $this->assertSame(1, ServiceCoverage::count());
+        $this->assertSame(1, InstallmentCoveragePeriod::count());
+
+        $replayed->refresh();
+        $this->assertSame('800.00', $replayed->total_amount);
+        $replayedItem = $replayed->items()->sole()->fresh();
+        $this->assertSame($originalItemMetadata, $replayedItem->metadata);
+        $this->assertSame(8, $replayedItem->metadata['food_billable_day_count']);
+
+        $originalCoverage->refresh();
+        $this->assertSame($originalCoverageStart, $originalCoverage->coverage_start->toDateString());
+        $this->assertSame($originalCoverageEnd, $originalCoverage->coverage_end->toDateString());
+        $this->assertSame($originalCoverageMetadata, $originalCoverage->metadata);
+
+        $originalPeriod->refresh();
+        $this->assertSame('800.00', $originalPeriod->amount);
     }
 
     public function test_quick_registration_full_prepayment_creates_one_payment_and_single_period_graph(): void

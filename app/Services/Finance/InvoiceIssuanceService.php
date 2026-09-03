@@ -7,8 +7,10 @@ use App\Models\AuditLog;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FeeBillingPeriod;
+use App\Models\FeePrice;
 use App\Models\InstallmentCoveragePeriod;
 use App\Models\Invoice;
+use App\Models\InvoiceInstallment;
 use App\Models\InvoiceItem;
 use App\Models\PaymentPlan;
 use App\Models\ServiceCoverage;
@@ -43,6 +45,7 @@ class InvoiceIssuanceService
         private InvoiceCalculationService $calculator,
         private InstallmentPlanService $plans,
         private ServiceCoverageService $coverage,
+        private FoodBillableDayCalculator $foodDays,
     ) {
     }
 
@@ -193,16 +196,53 @@ class InvoiceIssuanceService
             // check still happens later (needs $invoiceFees, resolved
             // after item creation below) — this only validates the
             // billing_period value itself is a real calendar period.
+            // Food is entirely decoupled from CalendarPeriodCalculator's
+            // month/quarter grouping (which exists only for Tuition/
+            // Transport's calendar billing_period concept and structurally
+            // cannot represent a 1-day/1-week/N-teaching-day/custom-range
+            // Food purchase — CalendarPeriodCalculator::resolve()
+            // unconditionally snaps its period start to startOfMonth()).
+            // billing_period is therefore required only when a non-Food
+            // calendar-billed Fee is ALSO on the invoice; a Food-only
+            // invoice needs no billing_period at all.
+            $hasFood = collect($items)->contains(fn (array $item) => $resolveFee((int) $item['fee_id'])->category === Fee::CATEGORY_FOOD);
+            $hasNonFoodItems = collect($items)->contains(fn (array $item) => $resolveFee((int) $item['fee_id'])->category !== Fee::CATEGORY_FOOD);
+            if ($hasFood && ($data['payment_type'] ?? null) !== 'calendar') {
+                throw ValidationException::withMessages(['payment_type' => 'Питание оформляется только с явным периодом обслуживания.']);
+            }
             $calendarBillingPeriod = null;
-            if (($data['payment_type'] ?? null) === 'calendar') {
+            if (($data['payment_type'] ?? null) === 'calendar' && $hasNonFoodItems) {
                 $calendarBillingPeriod = $data['billing_period'] ?? null;
                 if (! in_array($calendarBillingPeriod, FeeBillingPeriod::CALENDAR_PERIODS, true)) {
                     throw ValidationException::withMessages(['billing_period' => 'Укажите период оплаты.']);
                 }
             }
+            $calendarStart = $data['coverage_start'] ?? $data['pricing_date'];
+            $calendarEnd = $data['coverage_end'] ?? ($calendarBillingPeriod !== null ? $year->end_date->toDateString() : null);
+
+            // Each Food item resolves its OWN [start,end] range directly
+            // from its submitted duration-mode selection via the single
+            // canonical FoodBillableDayCalculator::resolveFromDurationSelection()
+            // entry point — the SAME one the live-pricing preview endpoint
+            // (QuickStudentRegistrationController::price()) calls, so
+            // preview and real issuance can never structurally disagree.
+            // Resolved once here and attached to the item so it feeds both
+            // pricing (InvoiceCalculationService::calculate(), below) and,
+            // later, ServiceCoverage/InstallmentCoveragePeriod creation
+            // (createFoodInstallmentAndCoverage()) — never re-derived.
+            if ($hasFood) {
+                $items = collect($items)->map(function (array $item) use ($resolveFee, $year) {
+                    if ($resolveFee((int) $item['fee_id'])->category === Fee::CATEGORY_FOOD) {
+                        $item['food_resolution'] = $this->foodDays->resolveFromDurationSelection($year, $item);
+                    }
+
+                    return $item;
+                })->all();
+            }
+
             $calculation = $this->calculator->calculate(
                 $items, $data['discount_type'] ?? null, $data['discount_value'] ?? null, '0', $data['pricing_date'], $year->id,
-                $calendarBillingPeriod, $calendarBillingPeriod !== null ? $year->end_date->toDateString() : null,
+                $calendarBillingPeriod, $calendarEnd, $calendarStart,
             );
             $invoiceData = [
                 'student_id'=>$student->id, 'academic_year_id'=>$year->id, 'customer_name'=>$student->full_name,
@@ -340,6 +380,15 @@ class InvoiceIssuanceService
                         'allocated_discount_amount'=>$line['metadata']['allocated_discount_amount'] ?? null,
                         'display_unit_price'=>$line['metadata']['display_unit_price'] ?? null,
                         'display_quantity'=>$line['metadata']['display_quantity'] ?? null,
+                        'food_billable_day_count'=>$line['metadata']['food_billable_day_count'] ?? null,
+                        'food_excluded_day_count'=>$line['metadata']['food_excluded_day_count'] ?? null,
+                        'food_calendar_id'=>$line['metadata']['food_calendar_id'] ?? null,
+                        'food_calendar_rule_version'=>$line['metadata']['food_calendar_rule_version'] ?? null,
+                        'food_tariff_segments'=>$line['metadata']['food_tariff_segments'] ?? null,
+                        'food_coverage_start'=>$line['metadata']['food_coverage_start'] ?? null,
+                        'food_coverage_end'=>$line['metadata']['food_coverage_end'] ?? null,
+                        'food_duration_mode'=>$line['metadata']['food_duration_mode'] ?? null,
+                        'food_requested_day_count'=>$line['metadata']['food_requested_day_count'] ?? null,
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
                 $pivotData = [
@@ -360,49 +409,65 @@ class InvoiceIssuanceService
             // on this invoice (resolved above from $data['items']) — used
             // below to validate the chosen billing option is one every one
             // of them actually allows, never a blanket global option.
-            $invoiceFees = $feesById;
+            //
+            // Food flexible-duration corrective pass: Food Fees are always
+            // excluded from $invoiceFees below and settled entirely through
+            // their own dedicated createFoodInstallmentAndCoverage() call
+            // instead — payment schedule stays a separate concept from
+            // service coverage, and a multi-month Food purchase is never
+            // automatically split into monthly installments just because
+            // its resolved range happens to span several calendar months.
+            $invoiceFees = $feesById->reject(fn (Fee $fee) => $fee->category === Fee::CATEGORY_FOOD);
+            $foodFees = $feesById->filter(fn (Fee $fee) => $fee->category === Fee::CATEGORY_FOOD);
 
-            if ($data['payment_type'] === 'plan') {
-                // Phase 2B fix: a PaymentPlan is only valid for this invoice
-                // if it is explicitly assigned to EVERY Fee being invoiced
-                // (and that Fee allows 'custom_plan') — never offered
-                // globally to any Fee regardless of assignment.
-                foreach ($invoiceFees as $fee) {
-                    if (! $fee->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN)
-                        || ! $fee->assignedPaymentPlans()->where('payment_plans.id', $data['payment_plan_id'])->exists()) {
-                        throw ValidationException::withMessages(['payment_plan_id' => "Выбранный план оплаты не назначен для услуги «{$fee->name_ru}»."]);
+            if ($invoiceFees->isNotEmpty()) {
+                if ($data['payment_type'] === 'plan') {
+                    // Phase 2B fix: a PaymentPlan is only valid for this invoice
+                    // if it is explicitly assigned to EVERY Fee being invoiced
+                    // (and that Fee allows 'custom_plan') — never offered
+                    // globally to any Fee regardless of assignment.
+                    foreach ($invoiceFees as $fee) {
+                        if (! $fee->allowsBillingPeriod(FeeBillingPeriod::PERIOD_CUSTOM_PLAN)
+                            || ! $fee->assignedPaymentPlans()->where('payment_plans.id', $data['payment_plan_id'])->exists()) {
+                            throw ValidationException::withMessages(['payment_plan_id' => "Выбранный план оплаты не назначен для услуги «{$fee->name_ru}»."]);
+                        }
                     }
-                }
-                $plan = PaymentPlan::active()->lockForUpdate()->findOrFail($data['payment_plan_id']);
-                $this->plans->generate($invoice, $plan, $data['pricing_date']);
-            } elseif ($data['payment_type'] === 'calendar') {
-                // Already resolved and format-validated above (before
-                // calculate()) — reused here, not re-derived, so pricing
-                // and scheduling can never see a different value.
-                $billingPeriod = $calendarBillingPeriod;
-                foreach ($invoiceFees as $fee) {
-                    if (! $fee->allowsBillingPeriod($billingPeriod)) {
-                        $periodLabel = FeeBillingPeriod::PERIOD_LABELS[$billingPeriod] ?? $billingPeriod;
-                        throw ValidationException::withMessages(['billing_period' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
+                    $plan = PaymentPlan::active()->lockForUpdate()->findOrFail($data['payment_plan_id']);
+                    $this->plans->generate($invoice, $plan, $data['pricing_date']);
+                } elseif ($data['payment_type'] === 'calendar' && $calendarBillingPeriod !== null) {
+                    // Already resolved and format-validated above (before
+                    // calculate()) — reused here, not re-derived, so pricing
+                    // and scheduling can never see a different value.
+                    $billingPeriod = $calendarBillingPeriod;
+                    foreach ($invoiceFees as $fee) {
+                        if (! $fee->allowsBillingPeriod($billingPeriod)) {
+                            $periodLabel = FeeBillingPeriod::PERIOD_LABELS[$billingPeriod] ?? $billingPeriod;
+                            throw ValidationException::withMessages(['billing_period' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
+                        }
                     }
-                }
-                // Corrective pass #2 (P0 Blocker 1 — partial final
-                // quarter): the shared per-group amounts calculate()
-                // already computed (unit price x each group's own
-                // month-count, never an even division) — passed straight
-                // through so scheduling can never disagree with pricing.
-                $schedule = $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $data['pricing_date'], $year->end_date->toDateString(), $calculation['schedule_amounts'] ?? null);
+                    // Corrective pass #2 (P0 Blocker 1 — partial final
+                    // quarter): the shared per-group amounts calculate()
+                    // already computed (unit price x each group's own
+                    // month-count, never an even division) — passed straight
+                    // through so scheduling can never disagree with pricing.
+                    $schedule = $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $calendarStart, $calendarEnd, $calculation['schedule_amounts'] ?? null, $calculation['scheduleable_total'] ?? null);
 
-                // Finance V2, Phase 2D corrective pass (P0 Blocker 2):
-                // coverage is now created for EVERY calendar billing
-                // period (monthly/quarterly/yearly), not just monthly —
-                // collection cadence and coverage tracking are separate
-                // concerns; ServiceCoverage always uses billing_unit=
-                // 'monthly' (or 'daily' for Food) regardless of how often
-                // the invoice actually collects money.
-                $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
-            } else {
-                $this->plans->generateSingle($invoice, $data['due_date']);
+                    // Finance V2, Phase 2D corrective pass (P0 Blocker 2):
+                    // coverage is now created for EVERY calendar billing
+                    // period (monthly/quarterly/yearly), not just monthly —
+                    // collection cadence and coverage tracking are separate
+                    // concerns; ServiceCoverage always uses billing_unit=
+                    // 'monthly'. Food is never passed here (see $invoiceFees
+                    // above) — its own coverage is created by
+                    // createFoodInstallmentAndCoverage() below instead.
+                    $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
+                } else {
+                    $this->plans->generateSingle($invoice, $data['due_date']);
+                }
+            }
+
+            foreach ($foodFees as $fee) {
+                $this->createFoodInstallmentAndCoverage($invoice, $itemsByFeeId[$fee->id], $actor);
             }
 
             AuditLog::create(['user_id'=>$actor->id,'action'=>'created','model'=>'Invoice','model_id'=>$invoice->id,'new_values'=>['invoice_number'=>$invoice->invoice_number,'total_amount'=>$invoice->total_amount],'ip'=>$ip,'user_agent'=>$userAgent]);
@@ -483,7 +548,20 @@ class InvoiceIssuanceService
             $isFood = $fee->category === Fee::CATEGORY_FOOD;
             $billingUnit = $isFood ? 'daily' : 'monthly';
 
-            if (! $isFood && $billingPeriod === FeeBillingPeriod::PERIOD_MONTHLY && ($item->metadata['fee_price_id'] ?? null)) {
+            if ($isFood && ! empty($item->metadata['food_tariff_segments'])) {
+                $basisPrice = FeePrice::query()->lockForUpdate()->findOrFail((int) $item->metadata['food_tariff_segments'][0]['fee_price_id']);
+                $coverage = $this->coverage->recordWithBasisPrice($item, $basisPrice, [
+                    'coverage_start' => $coverageStart,
+                    'coverage_end' => $coverageEnd,
+                    'billing_unit' => 'daily',
+                    'metadata' => [
+                        'food_calendar_id' => $item->metadata['food_calendar_id'],
+                        'food_calendar_rule_version' => $item->metadata['food_calendar_rule_version'],
+                        'food_billable_day_count' => $item->metadata['food_billable_day_count'],
+                        'food_tariff_segments' => $item->metadata['food_tariff_segments'],
+                    ],
+                ], $actor);
+            } elseif (! $isFood && $billingPeriod === FeeBillingPeriod::PERIOD_MONTHLY && ($item->metadata['fee_price_id'] ?? null)) {
                 // Fast, unchanged path: the item's own charged price is
                 // already monthly-denominated — reuse it directly,
                 // exactly like Stage B did.
@@ -551,6 +629,74 @@ class InvoiceIssuanceService
     }
 
     /**
+     * Food flexible-duration corrective pass. Food's own dedicated
+     * settlement: exactly ONE installment (a lump sum — a multi-month
+     * Food purchase is never automatically split into monthly
+     * installments just because its resolved range happens to span
+     * several calendar months, per the business rule that payment
+     * schedule stays a separate concept from service coverage), one
+     * ServiceCoverage, and one InstallmentCoveragePeriod — spanning the
+     * item's own resolved [food_coverage_start, food_coverage_end]
+     * (InvoiceIssuanceService::issue()'s $item['food_resolution'],
+     * carried onto the persisted InvoiceItem.metadata by
+     * InvoiceCalculationService::priceFoodDailyLine()) — never the
+     * installment schedule of whatever other Fee happens to share this
+     * invoice. Entirely independent of $data['payment_type']/billing_period,
+     * which govern only non-Food Fees on the same invoice, if any.
+     *
+     * Reuses ServiceCoverageService::recordWithBasisPrice() completely
+     * unchanged — the exact same call createAutomaticCoverage()'s own
+     * Food branch used to make (that branch is now unreachable dead code,
+     * kept only as defensive fallback, since $invoiceFees passed to
+     * createAutomaticCoverage() above never includes a Food Fee anymore).
+     */
+    private function createFoodInstallmentAndCoverage(Invoice $invoice, InvoiceItem $item, User $actor): void
+    {
+        $coverageStart = $item->metadata['food_coverage_start'] ?? null;
+        $coverageEnd = $item->metadata['food_coverage_end'] ?? null;
+        if (! $coverageStart || ! $coverageEnd || empty($item->metadata['food_tariff_segments'])) {
+            throw ValidationException::withMessages(['fees' => "Не удалось определить период покрытия питания для позиции счёта #{$item->id}."]);
+        }
+
+        $nextSequence = ((int) $invoice->installments()->max('sequence')) + 1;
+        $installment = InvoiceInstallment::create([
+            'invoice_id' => $invoice->id,
+            'name_ru' => 'Питание',
+            'sequence' => $nextSequence,
+            'due_date' => $invoice->due_date,
+            'amount' => $item->amount,
+            'paid_amount' => '0.00',
+            'remaining_amount' => $item->amount,
+            'status' => bccomp((string) $item->amount, '0.00', 2) <= 0
+                ? InvoiceInstallment::STATUS_PAID
+                : InvoiceInstallment::STATUS_PENDING,
+        ]);
+
+        $basisPrice = FeePrice::query()->lockForUpdate()->findOrFail((int) $item->metadata['food_tariff_segments'][0]['fee_price_id']);
+        $coverage = $this->coverage->recordWithBasisPrice($item, $basisPrice, [
+            'coverage_start' => $coverageStart,
+            'coverage_end' => $coverageEnd,
+            'billing_unit' => 'daily',
+            'metadata' => [
+                'food_calendar_id' => $item->metadata['food_calendar_id'] ?? null,
+                'food_calendar_rule_version' => $item->metadata['food_calendar_rule_version'] ?? null,
+                'food_billable_day_count' => $item->metadata['food_billable_day_count'] ?? null,
+                'food_duration_mode' => $item->metadata['food_duration_mode'] ?? null,
+                'food_requested_day_count' => $item->metadata['food_requested_day_count'] ?? null,
+                'food_tariff_segments' => $item->metadata['food_tariff_segments'],
+            ],
+        ], $actor);
+
+        InstallmentCoveragePeriod::create([
+            'invoice_installment_id' => $installment->id,
+            'service_coverage_id' => $coverage->id,
+            'period_start' => $coverageStart,
+            'period_end' => $coverageEnd,
+            'amount' => $item->amount,
+        ]);
+    }
+
+    /**
      * Finance V2, Phase 2D corrective pass — same convention as
      * InvoicePaymentService::replay(): a key reused for a genuinely
      * different submission (different student/year/date/payment_type/items)
@@ -604,6 +750,8 @@ class InvoiceIssuanceService
             'due_date' => $data['due_date'] ?? null,
             'payment_type' => $data['payment_type'] ?? 'one_time',
             'billing_period' => $data['billing_period'] ?? null,
+            'coverage_start' => $data['coverage_start'] ?? null,
+            'coverage_end' => $data['coverage_end'] ?? null,
             'payment_plan_id' => $data['payment_plan_id'] ?? null,
             'discount_type' => $data['discount_type'] ?? null,
             'discount_value' => $data['discount_value'] ?? null,
@@ -611,6 +759,15 @@ class InvoiceIssuanceService
             'items' => collect($data['items'])->map(fn (array $item) => collect($item)->only([
                 'fee_id', 'fee_price_id', 'quantity', 'grade_group', 'payment_period',
                 'option_type', 'option_value', 'size', 'item', 'first_last_month',
+                // Food flexible-duration corrective pass: the RAW duration-
+                // mode selection must be hashed directly, not just the
+                // resolved coverage_start/coverage_end below — for
+                // 'teaching_days' mode the caller supplies a COUNT, not an
+                // end date, and two different counts are a materially
+                // different purchase even if a since-changed calendar
+                // could make them resolve to coincidentally similar dates.
+                'food_duration_mode', 'food_date', 'food_week_start', 'food_start_date',
+                'food_day_count', 'food_month', 'food_end_month', 'food_range_start', 'food_range_end',
             ])->all())->all(),
         ];
 

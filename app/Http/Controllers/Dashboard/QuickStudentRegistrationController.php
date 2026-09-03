@@ -85,6 +85,7 @@ class QuickStudentRegistrationController extends Controller
         // never disagree.
         $sellableMealPlanIds = $fees->where('category', Fee::CATEGORY_FOOD)
             ->flatMap(fn (Fee $fee) => $fee->prices)
+            ->where('payment_period', Fee::PERIOD_DAILY)
             ->pluck('option_value')
             ->filter(fn ($value) => is_numeric($value))
             ->map(fn ($value) => (int) $value)
@@ -170,6 +171,23 @@ class QuickStudentRegistrationController extends Controller
             'enrollment_mode_id' => ['required', 'integer', 'exists:enrollment_modes,id'],
             'pricing_date' => ['nullable', 'date'],
             'registration_date' => ['nullable', 'date'],
+            // Food flexible-duration corrective pass: replaces the old
+            // month-only coverage_start_month/coverage_end_month pair —
+            // the SAME duration-mode fields Quick Registration's own
+            // submission accepts, resolved through the SAME
+            // FoodBillableDayCalculator::resolveFromDurationSelection()
+            // entry point real issuance uses, so this live preview can
+            // never structurally disagree with what issuance actually
+            // charges.
+            'food_duration_mode' => ['nullable', 'string', Rule::in(['day', 'school_week', 'teaching_days', 'month', 'custom_range'])],
+            'food_date' => ['nullable', 'date_format:Y-m-d'],
+            'food_week_start' => ['nullable', 'date_format:Y-m-d'],
+            'food_start_date' => ['nullable', 'date_format:Y-m-d'],
+            'food_day_count' => ['nullable', 'integer', 'min:1'],
+            'food_month' => ['nullable', 'date_format:Y-m'],
+            'food_end_month' => ['nullable', 'date_format:Y-m'],
+            'food_range_start' => ['nullable', 'date_format:Y-m-d'],
+            'food_range_end' => ['nullable', 'date_format:Y-m-d'],
         ]);
         $fee = Fee::findOrFail($data['fee_id']);
         $year = AcademicYear::findOrFail($data['academic_year_id']);
@@ -181,7 +199,7 @@ class QuickStudentRegistrationController extends Controller
             Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
             Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL,
         ];
-        $calculation = $calculator->calculate(items: [[
+        $item = [
             'fee_id' => $fee->id,
             'fee_price_id' => $data['fee_price_id'] ?? null,
             'quantity' => $data['quantity'],
@@ -190,7 +208,7 @@ class QuickStudentRegistrationController extends Controller
                 ? ($data['grade_id'] ?? null)
                 : null,
             'grade_group' => $data['grade_group'] ?? null,
-            'payment_period' => $data['payment_period'] ?? null,
+            'payment_period' => $fee->category === Fee::CATEGORY_FOOD ? Fee::PERIOD_DAILY : ($data['payment_period'] ?? null),
             'first_last_month' => (bool) ($data['first_last_month'] ?? false),
             'item' => $fee->category === Fee::CATEGORY_UNIFORM ? ($data['item'] ?? null) : null,
             'size' => $fee->category === Fee::CATEGORY_UNIFORM ? ($data['size'] ?? null) : null,
@@ -204,7 +222,12 @@ class QuickStudentRegistrationController extends Controller
                 Fee::CATEGORY_FOOD => isset($data['meal_plan_id']) ? (string) $data['meal_plan_id'] : null,
                 default => null,
             },
-        ]], pricingDate: $pricingDate->toDateString(), academicYearId: (int) $data['academic_year_id']);
+        ];
+        if ($fee->category === Fee::CATEGORY_FOOD) {
+            $item['food_resolution'] = app(\App\Services\Finance\FoodBillableDayCalculator::class)
+                ->resolveFromDurationSelection($year, $data);
+        }
+        $calculation = $calculator->calculate(items: [$item], pricingDate: $pricingDate->toDateString(), academicYearId: (int) $data['academic_year_id']);
 
         return response()->json([
             'unit_price' => $calculation['line_items'][0]['unit_price'],

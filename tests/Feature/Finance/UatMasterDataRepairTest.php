@@ -40,6 +40,9 @@ class UatMasterDataRepairTest extends TestCase
     {
         parent::setUp();
         $this->year = AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true]);
+        // Food flexible-duration corrective pass: FinanceConfigurationReadinessService::assessFood()
+        // additionally requires an AcademicCalendar for the year (Food's day-count calculator needs one).
+        \App\Models\AcademicCalendar::create(['academic_year_id' => $this->year->id, 'weekly_days_off' => ['fri', 'sat']]);
 
         $this->foodFee = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '1.00', 'is_active' => true]);
         foreach ([
@@ -62,7 +65,7 @@ class UatMasterDataRepairTest extends TestCase
         return FeePrice::create([
             'fee_id' => $this->foodFee->id, 'academic_year_id' => $this->year->id, 'amount' => $amount, 'currency' => 'EGP',
             'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
-            'option_type' => 'meal_plan', 'option_value' => $optionValue,
+            'option_type' => 'meal_plan', 'option_value' => $optionValue, 'payment_period' => 'daily',
         ]);
     }
 

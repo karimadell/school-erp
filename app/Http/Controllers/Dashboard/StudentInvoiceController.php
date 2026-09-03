@@ -22,7 +22,7 @@ class StudentInvoiceController extends Controller
     {
         $student->load(['currentEnrollment.academicYear','currentEnrollment.grade','currentEnrollment.serviceSubscriptions.fee']);
         $year = $student->currentEnrollment?->academicYear;
-        $fees = Fee::active()->with(['prices' => fn ($query) => $query
+        $fees = Fee::active()->where('category', '!=', Fee::CATEGORY_FOOD)->with(['prices' => fn ($query) => $query
             ->when($year, fn ($query) => $query->where('academic_year_id', $year->id))
             ->where('is_active', true)->orderByDesc('start_date')])->orderBy('category')->orderBy('name_ru')->get();
 

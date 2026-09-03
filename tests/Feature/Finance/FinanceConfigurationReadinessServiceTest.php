@@ -61,6 +61,12 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         DB::table('uniform_products')->insert(['name_ru' => $item, 'category' => 'other', 'size' => $size, 'price' => 100, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
     }
 
+    /** Food flexible-duration corrective pass: FinanceConfigurationReadinessService::assessFood() additionally requires an AcademicCalendar for the year (Food's day-count calculator needs one) and a genuinely DAILY-denominated tariff. */
+    private function foodCalendar(): void
+    {
+        \App\Models\AcademicCalendar::create(['academic_year_id' => $this->year->id, 'weekly_days_off' => ['fri', 'sat']]);
+    }
+
     // ----- Transport -----------------------------------------------------
 
     public function test_transport_is_ready_when_a_zone_tariff_exists(): void
@@ -114,15 +120,17 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
 
     public function test_food_is_ready_when_a_meal_plan_backed_tariff_exists(): void
     {
+        $this->foodCalendar();
         $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
         $plan = MealPlan::create(['name_ru' => 'Завтрак', 'meal_type' => 'breakfast', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
-        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id]);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id, 'payment_period' => 'daily']);
 
         $this->assertTrue($this->readiness->forFee($fee, $this->year)['ready']);
     }
 
     public function test_food_is_not_ready_when_a_meal_plan_exists_but_has_no_tariff(): void
     {
+        $this->foodCalendar();
         $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
         MealPlan::create(['name_ru' => 'Завтрак', 'meal_type' => 'breakfast', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
 
@@ -133,8 +141,9 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
 
     public function test_food_is_not_ready_with_a_valid_tariff_and_zero_meal_plans(): void
     {
+        $this->foodCalendar();
         $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
-        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => '1']);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => '1', 'payment_period' => 'daily']);
 
         $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
     }
@@ -145,27 +154,30 @@ class FinanceConfigurationReadinessServiceTest extends TestCase
         // numeric MealPlan id — InvoiceCalculationService::resolvableCandidates()
         // is catalog-agnostic and still resolves it by pure pricing rules,
         // but it must never make Food readiness report ready.
+        $this->foodCalendar();
         $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
         MealPlan::create(['name_ru' => 'Напиток', 'meal_type' => 'breakfast', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
-        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => 'Напиток']);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => 'Напиток', 'payment_period' => 'daily']);
 
         $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
     }
 
     public function test_food_is_ready_with_an_active_meal_plan_and_matching_numeric_tariff(): void
     {
+        $this->foodCalendar();
         $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
         $plan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => 'lunch', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
-        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id]);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id, 'payment_period' => 'daily']);
 
         $this->assertTrue($this->readiness->forFee($fee, $this->year)['ready']);
     }
 
     public function test_food_is_not_ready_when_the_matching_meal_plan_is_inactive(): void
     {
+        $this->foodCalendar();
         $fee = $this->fee('Питание', Fee::CATEGORY_FOOD);
         $plan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => 'lunch', 'period' => 'daily', 'price' => '70.00', 'is_active' => false]);
-        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id]);
+        $this->price($fee, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id, 'payment_period' => 'daily']);
 
         $this->assertFalse($this->readiness->forFee($fee, $this->year)['ready']);
     }

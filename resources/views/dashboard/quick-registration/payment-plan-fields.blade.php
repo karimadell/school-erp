@@ -51,15 +51,38 @@ document.addEventListener('DOMContentLoaded', () => {
         if (periodWrapper) periodWrapper.style.display = isCalendar ? '' : 'none';
         if (planWrapper) planWrapper.style.display = isPlan ? '' : 'none';
     };
-    type.addEventListener('change', syncVisibility);
-    syncVisibility();
+    // Food flexible-duration corrective pass: Food no longer forces
+    // billing_period='monthly' — it resolves its own duration-mode
+    // selection (day/school_week/teaching_days/month/custom_range)
+    // instead of CalendarPeriodCalculator's month/quarter grouping, so a
+    // Food-only submission needs no billing_period concept at all.
+    // billing_period stays required (and offered in full) only when a
+    // non-Food service shares the same invoice.
+    const syncFoodCapability = () => {
+        const foodSelected = [...form.querySelectorAll('[data-service-row][data-category="food"] .service-toggle')]
+            .some(input => input.checked);
+        const nonFoodSelected = [...form.querySelectorAll('[data-service-row]:not([data-category="food"]) .service-toggle')]
+            .some(input => input.checked);
+        [...type.options].forEach(option => option.disabled = foodSelected && option.value !== 'calendar');
+        if (foodSelected) {
+            type.value = 'calendar';
+        }
+        syncVisibility();
+        if (periodWrapper) periodWrapper.style.display = (type.value === 'calendar' && nonFoodSelected) ? '' : 'none';
+        if (foodSelected && !nonFoodSelected && period) period.value = '';
+    };
+    type.addEventListener('change', syncFoodCapability);
+    form.querySelectorAll('[data-service-row] .service-toggle').forEach(input => input.addEventListener('change', syncFoodCapability));
+    syncFoodCapability();
 
     form.addEventListener('submit', event => {
         if (type.value === 'plan' && !plan.value) {
             event.preventDefault();
             plan.classList.add('is-invalid');
         }
-        if (type.value === 'calendar' && period && !period.value) {
+        const nonFoodSelected = [...form.querySelectorAll('[data-service-row]:not([data-category="food"]) .service-toggle')]
+            .some(input => input.checked);
+        if (type.value === 'calendar' && nonFoodSelected && period && !period.value) {
             event.preventDefault();
             period.classList.add('is-invalid');
         }

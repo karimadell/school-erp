@@ -3,6 +3,7 @@
 namespace Tests\Feature\Finance;
 
 use App\Models\Fee;
+use App\Models\AcademicCalendar;
 use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InstallmentCoveragePeriod;
@@ -341,6 +342,7 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
 
     public function test_food_gets_daily_coverage_when_a_real_daily_tariff_exists(): void
     {
+        AcademicCalendar::create(['academic_year_id' => $this->year->id, 'weekly_days_off' => ['fri', 'sat']]);
         $food = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '1.00', 'is_active' => true]);
         $food->billingPeriods()->create(['billing_period' => 'monthly']);
         FeePrice::create(['fee_id' => $food->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'daily', 'option_type' => 'meal_plan', 'option_value' => 'Стандарт', 'amount' => '50.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
@@ -348,18 +350,21 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
         $invoice = app(InvoiceIssuanceService::class)->issue($this->student, [
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-06-30', 'pricing_date' => '2026-09-17',
-            'items' => [['fee_id' => $food->id, 'grade_group' => null, 'payment_period' => 'daily', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => 'meal_plan', 'option_value' => 'Стандарт']],
-            'payment_type' => 'calendar', 'billing_period' => 'monthly',
+            'items' => [['fee_id' => $food->id, 'grade_group' => null, 'payment_period' => 'daily', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => 'meal_plan', 'option_value' => 'Стандарт', 'food_duration_mode' => 'month', 'food_month' => '2026-09', 'food_end_month' => '2027-06']],
+            'payment_type' => 'calendar',
         ], $this->accountant);
 
         $coverage = ServiceCoverage::where('fee_id', $food->id)->sole();
-        $this->assertSame('daily', $coverage->billing_unit, 'Food gets daily coverage granularity even though the SCHEDULE cadence is monthly');
-        // Collection cadence stays monthly regardless of coverage granularity.
-        $this->assertSame(10, $invoice->installments()->count());
+        $this->assertSame('daily', $coverage->billing_unit, 'Food gets daily coverage granularity');
+        // Food flexible-duration corrective pass: Food always settles as
+        // its own dedicated lump-sum installment, never a monthly-split
+        // schedule, regardless of how many calendar months it spans.
+        $this->assertSame(1, $invoice->installments()->count());
     }
 
     public function test_food_with_only_a_monthly_tariff_and_no_daily_basis_blocks_the_entire_issuance(): void
     {
+        AcademicCalendar::create(['academic_year_id' => $this->year->id, 'weekly_days_off' => ['fri', 'sat']]);
         // Corrective pass (P0 Blocker 3): coverage is a financial invariant
         // for a periodic-billed Food Fee — if no daily basis tariff exists
         // to build it from, the WHOLE issuance must fail loudly and roll
@@ -377,8 +382,8 @@ class AutomaticServiceCoverageTest extends FinanceOperationsTestCase
             app(InvoiceIssuanceService::class)->issue($this->student, [
                 'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
                 'due_date' => '2027-06-30', 'pricing_date' => '2026-09-17',
-                'items' => [['fee_id' => $food->id, 'grade_group' => null, 'payment_period' => 'monthly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => 'meal_plan', 'option_value' => 'Стандарт']],
-                'payment_type' => 'calendar', 'billing_period' => 'monthly',
+                'items' => [['fee_id' => $food->id, 'grade_group' => null, 'payment_period' => 'monthly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => 'meal_plan', 'option_value' => 'Стандарт', 'food_duration_mode' => 'month', 'food_month' => '2026-09', 'food_end_month' => '2027-06']],
+                'payment_type' => 'calendar',
             ], $this->accountant);
             $this->fail('Expected ValidationException — no daily basis tariff exists for this Food Fee.');
         } catch (ValidationException $exception) {

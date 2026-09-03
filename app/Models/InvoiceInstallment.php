@@ -47,4 +47,17 @@ class InvoiceInstallment extends Model
         $this->forceFill(['paid_amount'=>$paid, 'remaining_amount'=>bcsub((string)$this->amount,$paid,2)])->saveQuietly();
         $this->forceFill(['status'=>$this->derivedStatus()])->saveQuietly();
     }
+
+    /** Reconcile a calendar installment settled through explicit period links rather than installment-scoped payments. */
+    public function refreshCoverageStatus(): void
+    {
+        $settled = $this->coveragePeriods()->get()->reduce(
+            fn (string $sum, InstallmentCoveragePeriod $period) => bcadd($sum, $period->netSettledAmount(), 2),
+            '0.00',
+        );
+        $settled = bccomp($settled, (string) $this->amount, 2) > 0 ? (string) $this->amount : $settled;
+        $remaining = bcsub((string) $this->amount, $settled, 2);
+        $this->forceFill(['paid_amount' => $settled, 'remaining_amount' => $remaining])->saveQuietly();
+        $this->forceFill(['status' => $this->derivedStatus()])->saveQuietly();
+    }
 }

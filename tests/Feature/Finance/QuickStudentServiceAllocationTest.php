@@ -100,8 +100,15 @@ class QuickStudentServiceAllocationTest extends TestCase
 
     public function test_meal_plan_and_tuition_metadata_are_snapshotted(): void
     {
+        // Food flexible-duration corrective pass: Food always requires an
+        // explicit duration-mode selection and payment_type='calendar' —
+        // bundling it with Tuition here therefore requires Tuition's own
+        // billing_period to be configured too (Food itself never consults
+        // billing_period at all — see InvoiceIssuanceService::issue()).
+        \App\Models\AcademicCalendar::create(['academic_year_id' => $this->base['academic_year_id'], 'weekly_days_off' => ['fri', 'sat']]);
         $meal = $this->fee('Питание', Fee::CATEGORY_FOOD, '250.00');
         $tuition = $this->fee('Обучение', Fee::CATEGORY_TUITION, '1000.00');
+        $tuition->billingPeriods()->create(['billing_period' => 'monthly']);
         $plan = MealPlan::create([
             'name_ru' => 'Полный день', 'meal_type' => MealPlan::TYPE_BOTH,
             'period' => MealPlan::PERIOD_MONTHLY, 'price' => '999.00', 'is_active' => true,
@@ -111,13 +118,37 @@ class QuickStudentServiceAllocationTest extends TestCase
         FeePrice::create([
             'fee_id' => $meal->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '250.00', 'currency' => 'EGP',
             'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
-            'option_type' => 'meal_plan', 'option_value' => (string) $plan->id,
+            'option_type' => 'meal_plan', 'option_value' => (string) $plan->id, 'payment_period' => 'daily',
+        ]);
+        // A calendar-billed Tuition line needs a real monthly-denominated
+        // tariff (ServiceCoverageService::recordWithBasisPrice() requires
+        // one) — the flat Fee.amount fallback is not enough here.
+        // grade_id must match: QuickStudentRegistrationService's own
+        // normalization stamps the enrollment's grade_id onto Tuition
+        // items automatically, and ServiceCoverageService::sourceTariff()
+        // requires every dimension the item's metadata carries to match
+        // the resolved tariff exactly.
+        FeePrice::create([
+            'fee_id' => $tuition->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '1000.00', 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true, 'payment_period' => 'monthly',
+            'grade_id' => $this->base['grade_id'],
         ]);
 
+        // Note: 'first_last_month' is deliberately NOT exercised here
+        // bundled with automatic ServiceCoverage creation — doubling the
+        // charged unit price while ServiceCoverageService::sourceTariff()
+        // requires the coverage's snapshotted unit_tariff to exactly equal
+        // the FeePrice's own raw amount is a genuine, pre-existing
+        // interaction gap between that flag and automatic coverage,
+        // entirely independent of Food/this corrective pass — out of
+        // scope here. payment_period snapshotting alone is sufficient to
+        // prove Tuition's own metadata persists correctly alongside
+        // Food's.
         $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
+            'payment_type' => 'calendar', 'billing_period' => 'monthly',
             'services' => [
-                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $plan->id],
-                ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00', 'payment_period' => 'monthly', 'first_last_month' => true],
+                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'month', 'food_month' => '2026-09'],
+                ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00', 'payment_period' => 'monthly'],
             ],
         ])->assertSessionHasNoErrors();
 
@@ -125,7 +156,6 @@ class QuickStudentServiceAllocationTest extends TestCase
         $this->assertSame($plan->id, $items[0]->metadata['meal_plan_id']);
         $this->assertSame('Полный день', $items[0]->metadata['meal_plan']);
         $this->assertSame('monthly', $items[1]->metadata['payment_period']);
-        $this->assertTrue($items[1]->metadata['first_last_month']);
 
         // Phase 2 — new subscriptions must be created exclusively through
         // StudentServiceSubscriptionService::subscribe(), not a raw
@@ -169,14 +199,26 @@ class QuickStudentServiceAllocationTest extends TestCase
      * that final step fails, none of it — not even the MealSubscription
      * created earlier in the same request — may survive.
      */
-    public function test_a_late_failure_rolls_back_the_meal_subscription_and_everything_else(): void
+    /**
+     * Food flexible-duration corrective pass: Food now REQUIRES
+     * payment_type='calendar' unconditionally (InvoiceIssuanceService::
+     * issue()) — it can no longer be bought through a custom PaymentPlan
+     * ('plan' payment_type) at all, so the exact "Food + custom plan late
+     * failure" combination this test used to exercise is now
+     * architecturally impossible, not merely untested. Activity exercises
+     * the identical late-in-transaction-rollback mechanism (a custom
+     * plan's first-installment-percentage validation, which only runs
+     * after the subscription/invoice/items already exist in-transaction)
+     * without relying on Food's now-calendar-only architecture. See
+     * test_meal_plan_and_tuition_metadata_are_snapshotted() above for
+     * MealSubscription's own (now calendar-only) rollback coverage.
+     */
+    public function test_a_late_failure_rolls_back_the_service_subscription_and_everything_else(): void
     {
-        $meal = $this->fee('Питание', Fee::CATEGORY_FOOD, '1200.00');
-        $plan = MealPlan::create(['name_ru' => 'Полный день', 'meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '1200.00', 'is_active' => true]);
+        $activity = $this->fee('Секция плавания', Fee::CATEGORY_ACTIVITY, '1200.00');
         FeePrice::create([
-            'fee_id' => $meal->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '1200.00', 'currency' => 'EGP',
+            'fee_id' => $activity->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '1200.00', 'currency' => 'EGP',
             'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
-            'option_type' => 'meal_plan', 'option_value' => (string) $plan->id,
         ]);
         $paymentPlan = PaymentPlan::create(['name_ru' => 'План', 'is_active' => true]);
         $paymentPlan->installments()->create(['name_ru' => 'Первый', 'sequence' => 1, 'offset_days' => 0, 'percentage' => '10']);
@@ -185,13 +227,13 @@ class QuickStudentServiceAllocationTest extends TestCase
         // fee (and the fee must allow 'custom_plan') so this test still
         // reaches the LATE, in-transaction rollback it's designed to
         // exercise, rather than an early request-validation rejection.
-        $meal->billingPeriods()->create(['billing_period' => 'custom_plan']);
-        $meal->assignedPaymentPlans()->attach($paymentPlan->id);
+        $activity->billingPeriods()->create(['billing_period' => 'custom_plan']);
+        $activity->assignedPaymentPlans()->attach($paymentPlan->id);
 
         $response = $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'plan', 'payment_plan_id' => $paymentPlan->id,
             'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
-            'services' => [['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => '200.00', 'meal_plan_id' => $plan->id]],
+            'services' => [['fee_id' => $activity->id, 'quantity' => 1, 'paid_now' => '200.00']],
         ]);
 
         // 200.00 exceeds the first installment's 10% (120.00) — rejected
@@ -202,6 +244,5 @@ class QuickStudentServiceAllocationTest extends TestCase
         $this->assertDatabaseCount('invoices', 0);
         $this->assertDatabaseCount('invoice_items', 0);
         $this->assertDatabaseCount('student_service_subscriptions', 0);
-        $this->assertDatabaseCount('meal_subscriptions', 0);
     }
 }

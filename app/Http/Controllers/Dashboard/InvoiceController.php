@@ -48,7 +48,9 @@ class InvoiceController extends Controller
 
     public function create(InvoiceCalculationService $calculator): View
     {
-        $feesQuery = Fee::with('prices');
+        // Food V1 requires a bounded monthly range and the teaching-day
+        // calculator, which this legacy one-time form cannot express.
+        $feesQuery = Fee::with('prices')->where('category', '!=', Fee::CATEGORY_FOOD);
 
         if (Schema::hasColumn('fees', 'is_active')) {
             $feesQuery->where('is_active', 1);

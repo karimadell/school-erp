@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\CashAccount;
 use App\Models\CashTransaction;
 use App\Models\InvoicePayment;
+use App\Models\InstallmentCoveragePeriod;
 use App\Models\PaymentAllocationCoveragePeriod;
 use App\Models\PaymentRefund;
 use App\Models\PaymentRefundAllocation;
@@ -248,6 +249,7 @@ class InvoiceRefundService
             // CashTransaction, so all three succeed or roll back together.
             // $allocations is null whenever this refund is intentionally
             // left unattributed (see above).
+            $affectedInstallmentIds = [];
             foreach ($allocations ?? [] as $line) {
                 $refundAllocationAmount = $this->money((string) $line['amount']);
                 $refundAllocation = PaymentRefundAllocation::create([
@@ -279,6 +281,7 @@ class InvoiceRefundService
                         'installment_coverage_period_id' => $originalPeriodLink->installment_coverage_period_id,
                         'amount' => $refundAllocationAmount,
                     ]);
+                    $affectedInstallmentIds[] = InstallmentCoveragePeriod::whereKey($originalPeriodLink->installment_coverage_period_id)->value('invoice_installment_id');
                 }
             }
 
@@ -303,6 +306,9 @@ class InvoiceRefundService
             // Recompute balances (net of refunds) — outstanding rises again.
             $invoice->refreshPaymentStatus();
             $payment->installment?->refreshStatus();
+            collect($affectedInstallmentIds)->filter()->unique()->each(
+                fn ($id) => \App\Models\InvoiceInstallment::query()->lockForUpdate()->findOrFail((int) $id)->refreshCoverageStatus()
+            );
 
             AuditLog::create([
                 'user_id' => $actor?->id,

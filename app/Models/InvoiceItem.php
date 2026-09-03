@@ -33,6 +33,9 @@ class InvoiceItem extends Model
         // Corrective pass #4 (HIGH 1 — calendar discount reconciliation).
         'final_discounted_amount', 'pre_discount_amount', 'allocated_discount_amount',
         'display_unit_price', 'display_quantity',
+        'food_billable_day_count', 'food_excluded_day_count', 'food_calendar_id',
+        'food_calendar_rule_version', 'food_tariff_segments', 'food_period_details',
+        'food_duration_mode', 'food_requested_day_count', 'food_coverage_start', 'food_coverage_end',
     ];
 
     protected $attributes = ['is_non_refundable' => false];

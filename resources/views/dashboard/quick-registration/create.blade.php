@@ -97,7 +97,7 @@
                             $oldService = $oldServices->get((string) $fee->id, []);
                             $available = $serviceIsAvailable($fee);
                         @endphp
-                        <div class="service-row border rounded p-3 mb-3 {{ $available ? '' : 'opacity-75' }}" data-service-row data-fee-id="{{ $fee->id }}" data-name="{{ $fee->name_ru }}">
+                        <div class="service-row border rounded p-3 mb-3 {{ $available ? '' : 'opacity-75' }}" data-service-row data-fee-id="{{ $fee->id }}" data-category="{{ $fee->category }}" data-name="{{ $fee->name_ru }}">
                             <div class="form-check">
                                 <input class="form-check-input service-toggle" type="checkbox" name="services[{{ $index }}][fee_id]" value="{{ $fee->id }}" id="fee-{{ $fee->id }}" @checked($oldService !== []) @disabled(!$available)>
                                 <label class="form-check-label fw-bold" for="fee-{{ $fee->id }}">{{ $fee->name_ru }} — {{ $fee->prices->isNotEmpty() ? 'цена определяется по выбранным параметрам' : number_format($fee->current_amount, 2, '.', '').' EGP' }}</label>
@@ -127,6 +127,36 @@
                                     <div class="col-md-3"><label class="form-label">Остановка</label><input name="services[{{ $index }}][transport_stop]" value="{{ $oldService['transport_stop'] ?? '' }}" class="form-control"></div>
                                 @elseif($groupKey === 'food')
                                     <div class="col-md-4"><label class="form-label">План питания *</label><select name="services[{{ $index }}][meal_plan_id]" class="form-select price-option"><option value="">Выберите план питания</option>@foreach($mealPlans as $plan)<option value="{{ $plan->id }}" @selected((string) ($oldService['meal_plan_id'] ?? '') === (string) $plan->id)>{{ $plan->name_ru }}</option>@endforeach</select></div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Режим периода *</label>
+                                        <select name="services[{{ $index }}][food_duration_mode]" class="form-select price-option food-duration-mode">
+                                            <option value="day" @selected(($oldService['food_duration_mode'] ?? 'day') === 'day')>Один день</option>
+                                            <option value="school_week" @selected(($oldService['food_duration_mode'] ?? '') === 'school_week')>Учебная неделя</option>
+                                            <option value="teaching_days" @selected(($oldService['food_duration_mode'] ?? '') === 'teaching_days')>N учебных дней</option>
+                                            <option value="month" @selected(($oldService['food_duration_mode'] ?? '') === 'month')>Месяц(ы)</option>
+                                            <option value="custom_range" @selected(($oldService['food_duration_mode'] ?? '') === 'custom_range')>Произвольный период</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-5 food-duration-fields" data-mode="day">
+                                        <label class="form-label">Дата *</label>
+                                        <input type="date" name="services[{{ $index }}][food_date]" value="{{ $oldService['food_date'] ?? now()->toDateString() }}" class="form-control price-option food-field" data-food-mode="day">
+                                    </div>
+                                    <div class="col-md-5 food-duration-fields d-none" data-mode="school_week">
+                                        <label class="form-label">Начало учебной недели *</label>
+                                        <input type="date" name="services[{{ $index }}][food_week_start]" value="{{ $oldService['food_week_start'] ?? '' }}" class="form-control price-option food-field" data-food-mode="school_week">
+                                    </div>
+                                    <div class="col-md-5 food-duration-fields d-none row g-2" data-mode="teaching_days">
+                                        <div class="col-6"><label class="form-label">Начало *</label><input type="date" name="services[{{ $index }}][food_start_date]" value="{{ $oldService['food_start_date'] ?? '' }}" class="form-control price-option food-field" data-food-mode="teaching_days"></div>
+                                        <div class="col-6"><label class="form-label">Кол-во учебных дней *</label><input type="number" min="1" name="services[{{ $index }}][food_day_count]" value="{{ $oldService['food_day_count'] ?? '' }}" class="form-control price-option food-field" data-food-mode="teaching_days"></div>
+                                    </div>
+                                    <div class="col-md-5 food-duration-fields d-none row g-2" data-mode="month">
+                                        <div class="col-6"><label class="form-label">Первый месяц *</label><input type="month" name="services[{{ $index }}][food_month]" value="{{ $oldService['food_month'] ?? now()->format('Y-m') }}" class="form-control price-option food-field" data-food-mode="month"></div>
+                                        <div class="col-6"><label class="form-label">Последний месяц</label><input type="month" name="services[{{ $index }}][food_end_month]" value="{{ $oldService['food_end_month'] ?? '' }}" class="form-control price-option food-field" data-food-mode="month"></div>
+                                    </div>
+                                    <div class="col-md-5 food-duration-fields d-none row g-2" data-mode="custom_range">
+                                        <div class="col-6"><label class="form-label">Начало *</label><input type="date" name="services[{{ $index }}][food_range_start]" value="{{ $oldService['food_range_start'] ?? '' }}" class="form-control price-option food-field" data-food-mode="custom_range"></div>
+                                        <div class="col-6"><label class="form-label">Окончание *</label><input type="date" name="services[{{ $index }}][food_range_end]" value="{{ $oldService['food_range_end'] ?? '' }}" class="form-control price-option food-field" data-food-mode="custom_range"></div>
+                                    </div>
                                 @elseif($groupKey === 'uniform')
                                     <div class="col-md-4"><label class="form-label">Изделие и размер *</label><select name="services[{{ $index }}][uniform_product_id]" class="form-select price-option uniform-product"><option value="">Выберите изделие</option>@foreach($uniformProducts as $product)<option value="{{ $product->id }}" data-item="{{ $product->name_ru }}" data-size="{{ $product->size }}" @selected((string) ($oldService['uniform_product_id'] ?? '') === (string) $product->id)>{{ $product->name_ru }} — {{ $product->size }}</option>@endforeach</select></div>
                                     <div class="col-md-2"><label class="form-label">Количество *</label><input type="number" min="1" max="100" name="services[{{ $index }}][quantity]" value="{{ $oldService['quantity'] ?? 1 }}" class="form-control quantity"></div>
@@ -213,8 +243,24 @@ function syncTransportPeriods(row) {
     if (periods.includes(desired)) periodSelect.value = desired;
 }
 
+// Food flexible-duration corrective pass: shows only the input group for
+// the currently selected duration mode (day/school_week/teaching_days/
+// month/custom_range) and disables the hidden groups' own inputs so they
+// never get submitted alongside the visible mode's fields.
+function syncFoodDurationMode(row) {
+    const modeSelect = row.querySelector('.food-duration-mode');
+    if (!modeSelect) return;
+    const mode = modeSelect.value;
+    row.querySelectorAll('.food-duration-fields').forEach(group => {
+        const active = group.dataset.mode === mode;
+        group.classList.toggle('d-none', !active);
+        group.querySelectorAll('input').forEach(input => input.disabled = !active);
+    });
+}
+
 async function updateRow(row) {
     syncTransportPeriods(row);
+    syncFoodDurationMode(row);
     const selected = row.querySelector('.service-toggle').checked;
     const fields = row.querySelector('.service-fields');
     fields.classList.toggle('d-none', !selected);
@@ -232,6 +278,13 @@ async function updateRow(row) {
     ['grade_group', 'payment_period', 'transport_area'].forEach(name => { const input = row.querySelector(`[name$="[${name}]"]`); if (input?.value) body.append(name, input.value); });
     const firstLast = row.querySelector('[name$="[first_last_month]"]'); if (firstLast?.checked) body.append('first_last_month', '1');
     const mealPlan = row.querySelector('[name$="[meal_plan_id]"]'); if (mealPlan?.value) body.append('meal_plan_id', mealPlan.value);
+    const foodMode = row.querySelector('.food-duration-mode');
+    if (foodMode?.value) {
+        body.append('food_duration_mode', foodMode.value);
+        row.querySelectorAll(`.food-field[data-food-mode="${foodMode.value}"]`).forEach(input => {
+            if (input.value) body.append(input.name.match(/\[([a-z_]+)\]$/)[1], input.value);
+        });
+    }
     const product = row.querySelector('.uniform-product')?.selectedOptions[0]; if (product?.value) { body.append('item', product.dataset.item); body.append('size', product.dataset.size); }
 
     let unit = null, total = null, errorMessage = 'Тариф не настроен.';

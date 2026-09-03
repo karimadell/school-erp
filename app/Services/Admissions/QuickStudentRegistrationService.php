@@ -210,9 +210,29 @@ class QuickStudentRegistrationService
                         Fee::CATEGORY_FOOD => isset($service['meal_plan_id']) ? (string) $service['meal_plan_id'] : null,
                         default => null,
                     },
+                    'payment_period' => $fee->category === Fee::CATEGORY_FOOD ? Fee::PERIOD_DAILY : ($service['payment_period'] ?? null),
                 ]);
             });
             $items = $normalizedServices->all();
+
+            // Food flexible-duration corrective pass: $items already
+            // carries each Food service's own raw duration-mode fields
+            // (food_duration_mode + whichever of food_date/food_week_start/
+            // food_start_date+food_day_count/food_month(+food_end_month)/
+            // food_range_start+food_range_end that mode needs) straight
+            // through from $service — array_merge() above preserves every
+            // key $service already had that wasn't explicitly overridden.
+            // InvoiceIssuanceService::issue() resolves each Food item's own
+            // concrete [start,end] range from these fields internally (via
+            // FoodBillableDayCalculator::resolveFromDurationSelection()) —
+            // never derived here, so this service no longer needs to know
+            // about calendar-month coverage at all. The resolved
+            // 'food_resolution' it attaches is visible on $selection
+            // inside $subscriptionResolver below (same $items array,
+            // looked up by fee_id), which is where this service still
+            // needs a concrete start date for the MealSubscription/
+            // StudentServiceSubscription rows.
+            $foodService = $normalizedServices->first(fn (array $service) => $service['_fee_category'] === Fee::CATEGORY_FOOD);
 
             $paidNow = $normalizedServices->reduce(
                 fn (string $sum, array $service) => bcadd($sum, (string) $service['paid_now'], 2),
@@ -227,8 +247,16 @@ class QuickStudentRegistrationService
             // place that knows about StudentServiceSubscriptionService or
             // MealSubscription — InvoiceIssuanceService never does.
             $subscriptionResolver = function (Fee $fee, array $selection, Enrollment $enrollment) use ($data, $actor) {
+                // $selection is the item InvoiceIssuanceService::issue()
+                // itself resolved 'food_resolution' onto (see this
+                // method's own docblock note above) — its own
+                // coverage_start is the actual start of the resolved Food
+                // range (a single date, a week start, an N-teaching-day
+                // walk's start, a month's 1st, or a custom range's start),
+                // never a raw calendar-month guess.
+                $foodCoverageStart = $selection['food_resolution']['coverage_start'] ?? null;
                 $subscription = $this->subscriptions->subscribe($enrollment, $fee, [
-                    'start_date' => $data['registration_date'],
+                    'start_date' => $fee->category === Fee::CATEGORY_FOOD && $foodCoverageStart ? $foodCoverageStart : $data['registration_date'],
                     'quantity' => (int) $selection['quantity'],
                     'status' => StudentServiceSubscription::STATUS_ACTIVE,
                     'metadata' => $this->metadata($fee, $selection),
@@ -238,7 +266,7 @@ class QuickStudentRegistrationService
                     MealSubscription::create([
                         'enrollment_id' => $enrollment->id,
                         'meal_plan_id' => $selection['meal_plan_id'],
-                        'start_date' => $data['registration_date'],
+                        'start_date' => $foodCoverageStart ?? $data['registration_date'],
                     ]);
                 }
 
@@ -339,6 +367,50 @@ class QuickStudentRegistrationService
             }
 
             if (bccomp($paidNow, '0.00', 2) > 0) {
+                if (($data['payment_type'] ?? null) === 'calendar' && $foodService) {
+                    $remainingByItem = collect($allocations)->mapWithKeys(fn (array $line) => [
+                        (int) $line['invoice_item_id'] => (string) $line['amount'],
+                    ])->all();
+                    $periodAllocations = [];
+                    $periods = \App\Models\InstallmentCoveragePeriod::query()
+                        ->with(['coverage', 'installment'])
+                        ->whereHas('installment', fn ($query) => $query->where('invoice_id', $invoice->id))
+                        ->get()->sortBy(fn ($period) => sprintf('%08d|%08d', $period->installment->sequence, $period->coverage->invoice_item_id));
+                    foreach ($periods as $period) {
+                        $itemId = (int) $period->coverage->invoice_item_id;
+                        $remainingForItem = $remainingByItem[$itemId] ?? '0.00';
+                        if (bccomp($remainingForItem, '0.00', 2) <= 0) {
+                            continue;
+                        }
+                        $portion = bccomp($remainingForItem, (string) $period->amount, 2) >= 0
+                            ? (string) $period->amount
+                            : $remainingForItem;
+                        $periodAllocations[] = [
+                            'invoice_item_id' => $itemId,
+                            'installment_coverage_period_id' => $period->id,
+                            'amount' => $portion,
+                        ];
+                        $remainingByItem[$itemId] = bcsub($remainingForItem, $portion, 2);
+                    }
+                    if (collect($remainingByItem)->contains(fn ($remaining) => bccomp((string) $remaining, '0.00', 2) !== 0)) {
+                        throw ValidationException::withMessages(['services' => 'Оплату не удалось полностью распределить по выбранным периодам услуг.']);
+                    }
+                    $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
+                    $idempotencyKey = $outerToken
+                        ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:calendar")
+                        : (string) Str::uuid();
+                    $this->payments->record(
+                        invoiceId: $invoice->id,
+                        cashAccountId: $cashAccountId,
+                        amount: $paidNow,
+                        paymentMethod: $data['payment_method'],
+                        idempotencyKey: $idempotencyKey,
+                        actor: $actor,
+                        reference: "Быстрая регистрация {$invoice->invoice_number}",
+                        notes: $data['payment_note'] ?? null,
+                        coveragePeriodAllocations: $periodAllocations,
+                    );
+                } else {
                 // Finance V2, Phase 2B (§4 of the approved design): a
                 // calendar/custom-plan schedule can now have more than one
                 // installment, and "full payment" must settle every one of
@@ -461,6 +533,7 @@ class QuickStudentRegistrationService
                         // (Phase 1A/1C: "specify the allocation").
                         allocations: (count($toRecord) === 1 && $index === 0) ? $allocations : null,
                     );
+                }
                 }
             }
 

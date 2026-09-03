@@ -67,13 +67,35 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'services.*.transport_route_id' => ['nullable', 'integer', 'exists:transport_routes,id'],
             'services.*.transport_stop' => ['nullable', 'string', 'max:150'],
             'services.*.meal_plan_id' => ['nullable', 'integer', 'exists:meal_plans,id'],
+            // Food flexible-duration corrective pass: replaces the old
+            // month-only coverage_start_month/coverage_end_month pair.
+            // Exactly one mode's fields are required per Food line —
+            // enforced in after() below, since which fields are required
+            // depends on food_duration_mode.
+            'services.*.food_duration_mode' => ['nullable', 'string', Rule::in(['day', 'school_week', 'teaching_days', 'month', 'custom_range'])],
+            'services.*.food_date' => ['nullable', 'date_format:Y-m-d'],
+            'services.*.food_week_start' => ['nullable', 'date_format:Y-m-d'],
+            'services.*.food_start_date' => ['nullable', 'date_format:Y-m-d'],
+            'services.*.food_day_count' => ['nullable', 'integer', 'min:1'],
+            'services.*.food_month' => ['nullable', 'date_format:Y-m'],
+            'services.*.food_end_month' => ['nullable', 'date_format:Y-m'],
+            'services.*.food_range_start' => ['nullable', 'date_format:Y-m-d'],
+            'services.*.food_range_end' => ['nullable', 'date_format:Y-m-d'],
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
             'payment_method' => ['nullable', Rule::in(['cash', 'card', 'bank', 'transfer', 'instapay'])],
             'payment_note' => ['nullable', 'string', 'max:1000'],
             'payment_type' => ['required', Rule::in(['one_time', 'plan', 'calendar'])],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
             // Finance V2, Phase 2B — service-aware billing schedules.
-            'billing_period' => ['nullable', 'required_if:payment_type,calendar', Rule::in(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)],
+            // Food flexible-duration corrective pass: no longer
+            // unconditionally required_if calendar — a Food-only
+            // submission never needs a billing_period at all (Food is
+            // resolved from its own duration-mode selection, never from
+            // CalendarPeriodCalculator's month/quarter grouping); the
+            // conditional "required only when a non-Food service is also
+            // present" rule lives in after() below, where the service list
+            // is actually known.
+            'billing_period' => ['nullable', Rule::in(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)],
             // Finance V2, Phase 2B corrective pass (review finding M3): a
             // stable per-page-render token used to derive deterministic
             // installment-payment idempotency keys, so a retried submission
@@ -165,6 +187,48 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 if ($category === Fee::CATEGORY_FOOD && blank($item['meal_plan_id'] ?? null)) {
                     $validator->errors()->add("services.{$index}.meal_plan_id", 'Для питания выберите план питания.');
                 }
+                // Food flexible-duration corrective pass: replaces the old
+                // month-only coverage_start_month/coverage_end_month check.
+                // Питание still requires an explicit service period
+                // ('calendar' payment_type), but the period itself is now
+                // one of five duration modes, each with its own required
+                // fields — never forced through billing_period='monthly'.
+                if ($category === Fee::CATEGORY_FOOD) {
+                    if ($this->input('payment_type') !== 'calendar') {
+                        $validator->errors()->add('payment_type', 'Питание оформляется только с явным периодом обслуживания.');
+                    }
+                    $mode = $item['food_duration_mode'] ?? null;
+                    if (! in_array($mode, ['day', 'school_week', 'teaching_days', 'month', 'custom_range'], true)) {
+                        $validator->errors()->add("services.{$index}.food_duration_mode", 'Выберите режим периода питания.');
+                    } else {
+                        $requiredFields = match ($mode) {
+                            'day' => ['food_date'],
+                            'school_week' => ['food_week_start'],
+                            'teaching_days' => ['food_start_date', 'food_day_count'],
+                            'month' => ['food_month'],
+                            'custom_range' => ['food_range_start', 'food_range_end'],
+                        };
+                        foreach ($requiredFields as $field) {
+                            if (blank($item[$field] ?? null)) {
+                                $validator->errors()->add("services.{$index}.{$field}", 'Заполните обязательное поле периода питания.');
+                            }
+                        }
+                        if ($mode === 'custom_range' && filled($item['food_range_start'] ?? null) && filled($item['food_range_end'] ?? null)
+                            && Carbon::parse($item['food_range_end'])->lt(Carbon::parse($item['food_range_start']))) {
+                            $validator->errors()->add("services.{$index}.food_range_end", 'Дата окончания периода питания не может быть раньше даты начала.');
+                        }
+                        if ($mode === 'month' && $year && filled($item['food_month'] ?? null) && preg_match('/^\d{4}-\d{2}$/', (string) $item['food_month'])) {
+                            $endMonth = $item['food_end_month'] ?? $item['food_month'];
+                            if (preg_match('/^\d{4}-\d{2}$/', (string) $endMonth)) {
+                                $start = Carbon::createFromFormat('Y-m', $item['food_month'])->startOfMonth();
+                                $end = Carbon::createFromFormat('Y-m', $endMonth)->endOfMonth();
+                                if ($end->lt($start) || $start->lt($year->start_date) || $end->gt($year->end_date)) {
+                                    $validator->errors()->add("services.{$index}.food_end_month", 'Период питания должен находиться внутри выбранного учебного года.');
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Finance V2, Phase 2B — service-aware billing schedules: the
@@ -176,9 +240,16 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             $paymentType = $this->input('payment_type');
             if ($paymentType === 'calendar') {
                 $billingPeriod = $this->input('billing_period');
+                // Food flexible-duration corrective pass: billing_period is
+                // required, and validated against allowsBillingPeriod(),
+                // only for a non-Food service — Food never uses it at all.
+                $hasNonFoodService = $services->contains(fn ($item) => $fees->get((int) ($item['fee_id'] ?? 0))?->category !== Fee::CATEGORY_FOOD);
+                if ($hasNonFoodService && blank($billingPeriod)) {
+                    $validator->errors()->add('billing_period', 'Укажите период оплаты.');
+                }
                 foreach ($services as $index => $item) {
                     $fee = $fees->get((int) ($item['fee_id'] ?? 0));
-                    if ($fee && $billingPeriod && ! $fee->allowsBillingPeriod($billingPeriod)) {
+                    if ($fee && $fee->category !== Fee::CATEGORY_FOOD && $billingPeriod && ! $fee->allowsBillingPeriod($billingPeriod)) {
                         $periodLabel = \App\Models\FeeBillingPeriod::PERIOD_LABELS[$billingPeriod] ?? $billingPeriod;
                         $validator->errors()->add('billing_period', "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}».");
                     }

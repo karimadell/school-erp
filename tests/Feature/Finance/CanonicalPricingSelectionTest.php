@@ -328,12 +328,13 @@ class CanonicalPricingSelectionTest extends TestCase
             'option_type' => 'zone', 'option_value' => 'Зона 1',
         ]);
         DB::table('transport_routes')->insert(['name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now()]);
+        \App\Models\AcademicCalendar::create(['academic_year_id' => $this->year->id, 'weekly_days_off' => ['fri', 'sat']]);
         $food = $this->fee('Питание', Fee::CATEGORY_FOOD);
         $mealPlan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => MealPlan::TYPE_LUNCH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '300.00', 'is_active' => true]);
         FeePrice::create([
             'fee_id' => $food->id, 'academic_year_id' => $this->year->id, 'amount' => '300.00', 'currency' => 'EGP',
             'start_date' => '2026-09-01', 'end_date' => $this->year->end_date, 'is_active' => true,
-            'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id,
+            'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id, 'payment_period' => 'daily',
         ]);
         $uniform = $this->fee('Футболка', Fee::CATEGORY_UNIFORM);
         FeePrice::create([

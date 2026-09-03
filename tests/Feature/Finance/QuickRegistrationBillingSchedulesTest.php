@@ -235,20 +235,20 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         $this->assertSame(11, Invoice::sole()->installments()->count());
     }
 
-    public function test_food_yearly_schedule_via_quick_registration(): void
+    /**
+     * Food flexible-duration corrective pass: Food no longer has any
+     * concept of a yearly/quarterly "collection cadence" at all — it is
+     * never routed through billing_period/CalendarPeriodCalculator. There
+     * is structurally no way to select 'quarterly'/'yearly' as a Food
+     * duration mode (Rule::in(['day','school_week','teaching_days','month',
+     * 'custom_range']) excludes them outright) — the only remaining way a
+     * legacy "yearly package" submission (no food_duration_mode at all)
+     * could reach the server is rejected as a missing required field.
+     */
+    public function test_food_yearly_schedule_is_rejected_in_v1(): void
     {
         $mealPlan = MealPlan::create(['name_ru' => 'Полный день', 'meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '900.00', 'is_active' => true]);
         $food = $this->fee('Питание', Fee::CATEGORY_FOOD, '900.00', ['yearly']);
-        // The actual yearly-collected package price (charged tariff).
-        FeePrice::create([
-            'fee_id' => $food->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '900.00', 'currency' => 'EGP',
-            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
-            'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id, 'payment_period' => 'yearly',
-        ]);
-        // A SEPARATE daily tariff as automatic coverage's adjustment basis
-        // (Phase 2D corrective pass, P0 Blocker 2/3 — Food's coverage
-        // granularity is always daily, independent of collection cadence,
-        // and must never be invented by dividing the yearly package price).
         FeePrice::create([
             'fee_id' => $food->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '45.00', 'currency' => 'EGP',
             'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
@@ -256,27 +256,36 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         ]);
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'yearly',
-            'services' => [['fee_id' => $food->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $mealPlan->id, 'payment_period' => 'yearly']],
+            // Deliberately no food_duration_mode — the legacy "single
+            // yearly package" shape this V1 no longer accepts.
+            'services' => [['fee_id' => $food->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $mealPlan->id]],
         ]);
 
-        $response->assertSessionHasNoErrors()->assertRedirect();
-        $invoice = Invoice::sole();
-        $this->assertSame(1, $invoice->installments()->count());
-        $this->assertSame('900.00', $invoice->installments()->sole()->amount);
+        $response->assertSessionHasErrors('services.0.food_duration_mode');
+        $this->assertSame(0, Invoice::count());
     }
 
+    /**
+     * A stray billing_period on the request (left over from a bundled
+     * non-Food service, or a client bug) never rescues an otherwise-
+     * invalid Food submission and never gets consulted for Food pricing —
+     * only food_duration_mode governs Food's own period.
+     */
     public function test_food_does_not_inherit_transport_or_tuition_allowed_periods(): void
     {
-        // Food is only granted 'monthly' — 'quarterly' (allowed for a
-        // DIFFERENT fee elsewhere in the suite) must not leak across.
         $mealPlan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_MONTHLY, 'price' => '400.00', 'is_active' => true]);
         $food = $this->fee('Питание', Fee::CATEGORY_FOOD, '400.00', ['monthly']);
+        FeePrice::create([
+            'fee_id' => $food->id, 'academic_year_id' => $this->base['academic_year_id'], 'amount' => '20.00', 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+            'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id, 'payment_period' => 'daily',
+        ]);
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'quarterly',
             'services' => [['fee_id' => $food->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $mealPlan->id]],
         ]);
 
-        $response->assertSessionHasErrors('billing_period');
+        $response->assertSessionHasErrors('services.0.food_duration_mode');
         $this->assertDatabaseCount('invoices', 0);
     }
 
@@ -322,9 +331,7 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         $this->assertSame(11, $installments->count());
         $this->assertTrue($installments->every(fn ($i) => bccomp((string) $i->remaining_amount, '0.00', 2) === 0), 'every installment must be fully settled');
         $this->assertSame(Invoice::STATUS_PAID, $invoice->fresh()->status);
-        // One InvoicePayment per settled installment (see the service's own
-        // §4 note: each installment needs its own invoice_installment_id-
-        // tied InvoicePayment row).
+        // One InvoicePayment per settled installment (legacy non-Food behavior).
         $this->assertSame(11, InvoicePayment::count());
         $this->assertSame('11000.00', bcadd((string) InvoicePayment::sum('amount'), '0', 2));
     }
@@ -371,8 +378,7 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         // duplicating," it now genuinely does nothing new at all.
         $second->assertSessionHasNoErrors()->assertRedirect();
 
-        // No duplication anywhere: same single invoice, same 11 payments —
-        // not 2 invoices, not 22 payments, not 2 students.
+        // No duplication anywhere: same single invoice and same 11 payments.
         $this->assertSame(1, Invoice::count(), 'the retry must create nothing new at all');
         $this->assertSame(1, \App\Models\Student::count());
         $this->assertSame($firstInvoiceId, Invoice::sole()->id);

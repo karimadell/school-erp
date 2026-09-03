@@ -9,13 +9,17 @@ use App\Models\EnrollmentMode;
 use App\Models\Grade;
 use App\Models\Invoice;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
 
 class InvoiceCalculationService
 {
     public const CURRENCY = 'EGP';
 
-    public function __construct(private CalendarPeriodCalculator $periods)
+    public function __construct(
+        private CalendarPeriodCalculator $periods,
+        private FoodBillableDayCalculator $foodDays,
+    )
     {
     }
 
@@ -71,6 +75,7 @@ class InvoiceCalculationService
         ?int $academicYearId = null,
         ?string $calendarBillingPeriod = null,
         ?string $academicYearEndDate = null,
+        ?string $calendarStartDate = null,
     ): array {
         $pricingDate ??= now()->toDateString();
         $feeIds = collect($items)->pluck('fee_id')->map(fn ($id) => (int) $id)->all();
@@ -86,7 +91,7 @@ class InvoiceCalculationService
             if ($academicYearEndDate === null) {
                 throw ValidationException::withMessages(['billing_period' => 'Не указана дата окончания учебного года для расчёта периодов.']);
             }
-            $calendarPeriods = $this->periods->resolve($calendarBillingPeriod, $pricingDate, $academicYearEndDate);
+            $calendarPeriods = $this->periods->resolve($calendarBillingPeriod, $calendarStartDate ?? $pricingDate, $academicYearEndDate);
         }
 
         /** @var Collection<int, Fee> $fees */
@@ -118,7 +123,46 @@ class InvoiceCalculationService
                 ]);
             }
 
-            $resolvedPrice = $this->resolvePrice($fee, $item, $pricingDate, $academicYearId, $modeCache);
+            // Food resolves its own [start,end] range directly from its
+            // duration-mode selection (day/school_week/teaching_days/
+            // month/custom_range) BEFORE calculate() runs — via
+            // FoodBillableDayCalculator::resolveFromDurationSelection(),
+            // called once by the caller (InvoiceIssuanceService::issue()
+            // or the live-pricing preview controller) and attached here as
+            // $item['food_resolution']. Independent of $calendarPeriods/
+            // $calendarBillingPeriod entirely — a Food-only invoice needs
+            // no billing_period concept at all.
+            //
+            // Deliberately a TWO-TIER requirement, not a blanket one:
+            // priceFoodDailyLine() below (the actual day-count/segment/
+            // billable-AMOUNT computation over a real coverage range) only
+            // ever runs when $foodResolution is present — that's the part
+            // that must never silently fall back to a caller-submitted
+            // quantity/amount. Plain dimensional TARIFF lookup (finding
+            // which FeePrice matches this Food Fee's option_type/
+            // option_value, exactly like every other category already
+            // resolves via resolvePrice()/dimensionalCandidates() below)
+            // needs no date range at all and is intentionally allowed
+            // through without $foodResolution — e.g.
+            // SchoolPriceListImportTest verifying an imported Food tariff
+            // resolves by meal-plan dimension, independent of and prior to
+            // any actual purchase. The REAL issuance fail-closed guarantee
+            // does not live here — it lives in every caller that actually
+            // builds a billable invoice line: InvoiceIssuanceService::
+            // issue() and QuickStudentRegistrationController::price()
+            // both unconditionally resolve and attach food_resolution via
+            // FoodBillableDayCalculator::resolveFromDurationSelection()
+            // (which itself throws on a missing/invalid duration mode)
+            // before ever calling calculate() — and MassBillingEligibilityService::
+            // classify() explicitly skips Food (see that class) rather
+            // than ever reaching calculate() without one, since Mass
+            // Billing has no duration-mode selection concept at all.
+            $foodResolution = $item['food_resolution'] ?? null;
+            $foodPricing = null;
+            if ($fee->category === Fee::CATEGORY_FOOD && $foodResolution !== null) {
+                $foodPricing = $this->priceFoodDailyLine($fee, $item, $foodResolution, $academicYearId, $modeCache);
+            }
+            $resolvedPrice = $foodPricing['resolved_price'] ?? $this->resolvePrice($fee, $item, $pricingDate, $academicYearId, $modeCache);
             $submittedQuantity = (int) ($item['quantity'] ?? 1);
 
             if (bccomp($resolvedPrice['amount'], '0.00', 2) <= 0) {
@@ -195,6 +239,41 @@ class InvoiceCalculationService
                 $lineMetadata['coverage_start'] = $calendarPeriods['periods'][0]['start'];
                 $lineMetadata['coverage_end'] = $calendarPeriods['periods'][array_key_last($calendarPeriods['periods'])]['end'];
                 $lineMetadata['line_total'] = $amount;
+            } elseif ($foodPricing !== null) {
+                // Food always gets its OWN dedicated lump-sum installment
+                // (InvoiceIssuanceService::createFoodInstallmentAndCoverage())
+                // — it never participates in the shared calendar-billed
+                // schedule below (period_amounts/$groupAmounts stays null,
+                // exactly like every other non-calendar-billed line),
+                // regardless of how many calendar months its resolved
+                // range happens to span (business rule: a multi-month Food
+                // purchase is not automatically split into monthly
+                // installments — payment schedule stays a separate concept
+                // from service coverage).
+                $quantity = $foodPricing['billable_day_count'];
+                $unitPrice = $foodPricing['first_daily_amount'];
+                $amount = $foodPricing['amount'];
+                $groupAmounts = null;
+
+                // The billable day count is always system-computed from
+                // the real school calendar — a client-submitted quantity
+                // that disagrees with it is rejected loudly, matching the
+                // non-Food calendar branch above, never silently ignored
+                // or silently honoured.
+                if ($submittedQuantity !== 1 && $submittedQuantity !== $quantity) {
+                    throw ValidationException::withMessages([
+                        'services' => "Количество дней питания для услуги «{$fee->name_ru}» определяется учебным календарём и не может быть указано вручную.",
+                    ]);
+                }
+
+                $lineMetadata = array_merge($lineMetadata, $foodPricing['metadata'], [
+                    'unit_tariff' => $unitPrice,
+                    'billing_unit' => 'daily',
+                    'unit_count' => (string) $quantity,
+                    'coverage_start' => $foodResolution['coverage_start'],
+                    'coverage_end' => $foodResolution['coverage_end'],
+                    'line_total' => $amount,
+                ]);
             } elseif ($calendarPeriods !== null) {
                 // Food (daily-priced) on a calendar-billed invoice: charge
                 // amount is untouched (no period multiplication), but its
@@ -309,7 +388,16 @@ class InvoiceCalculationService
         // value is $lines[$i]['metadata']['final_discounted_amount'] —
         // schedule/coverage-capacity reconciliation code must always
         // read THAT, never assume amount is already discounted.
-        if ($calendarPeriods !== null) {
+        // Extended (Food flexible-duration corrective pass): also runs for
+        // a Food-only invoice with NO calendar billing_period at all
+        // ($calendarPeriods === null) — Food's own line still needs its
+        // final_discounted_amount/amount set correctly so the dedicated
+        // lump-sum installment/ServiceCoverage/InstallmentCoveragePeriod
+        // InvoiceIssuanceService::createFoodInstallmentAndCoverage()
+        // creates from it reflects any discount, exactly like every other
+        // reconciled line.
+        $hasFoodLine = collect($lines)->contains(fn (array $line) => ($line['metadata']['billing_unit'] ?? null) === 'daily' && $line['period_amounts'] === null);
+        if ($calendarPeriods !== null || $hasFoodLine) {
             $lines = $this->allocateDiscountAcrossLines($lines, $subtotal, $discount, $discountType, $discountValue);
         }
 
@@ -320,6 +408,14 @@ class InvoiceCalculationService
         // is what InstallmentPlanService::generateCalendarSchedule()
         // actually bills per period, so it must reflect the discount.
         $scheduleAmounts = null;
+        // Food flexible-duration corrective pass: the shared calendar
+        // schedule's own expected total is no longer necessarily the
+        // WHOLE invoice total (Food is always excluded from it) — this is
+        // returned so InvoiceIssuanceService::issue() can pass it to
+        // InstallmentPlanService::generateCalendarSchedule() as the
+        // correct reconciliation target, instead of that method assuming
+        // $invoice->total_amount unconditionally.
+        $scheduleableTotal = null;
         if ($calendarPeriods !== null) {
             $scheduleAmounts = array_fill(0, $calendarPeriods['count'], '0.00');
             foreach ($lines as $line) {
@@ -337,8 +433,10 @@ class InvoiceCalculationService
             }
 
             $lineTotal = array_reduce($lines, fn ($carry, $line) => bcadd($carry, $line['amount'], 2), '0.00');
+            $unscheduledTotal = array_reduce($lines, fn ($carry, $line) => $line['period_amounts'] === null ? bcadd($carry, $line['amount'], 2) : $carry, '0.00');
+            $scheduleableTotal = bcsub($total, $unscheduledTotal, 2);
             $scheduleTotal = array_reduce($scheduleAmounts, fn ($carry, $amount) => bcadd($carry, $amount, 2), '0.00');
-            if (bccomp($lineTotal, $total, 2) !== 0 || bccomp($scheduleTotal, $total, 2) !== 0) {
+            if (bccomp($lineTotal, $total, 2) !== 0 || bccomp($scheduleTotal, $scheduleableTotal, 2) !== 0) {
                 throw new \App\Exceptions\Finance\DiscountReconciliationException('Calendar lines and schedule do not reconcile to the invoice total.');
             }
         }
@@ -368,6 +466,96 @@ class InvoiceCalculationService
             // — null for every non-calendar-billed call. Corrective pass
             // #4: now always POST-discount.
             'schedule_amounts' => $scheduleAmounts,
+            // Food flexible-duration corrective pass: the total
+            // $schedule_amounts must reconcile to — the whole invoice
+            // total MINUS whatever is settled outside the shared schedule
+            // (Food's own dedicated lump-sum installment). Null whenever
+            // $schedule_amounts itself is null.
+            'scheduleable_total' => $scheduleableTotal,
+        ];
+    }
+
+    /** @param array{periods:array<int,array{start:string,end:string,months:int}>} $calendarPeriods */
+    /**
+     * Prices every individual billable date in an already-resolved Food
+     * range ($foodResolution — the return shape of
+     * FoodBillableDayCalculator::calculate()/resolveForwardFromCount()/
+     * resolveFromDurationSelection()) against whichever daily tariff is
+     * effective on that specific date, building contiguous
+     * food_tariff_segments per distinct FeePrice — so a tariff change
+     * mid-purchase produces an exact segmented amount (e.g. 4 days at 170
+     * + 6 days at 190), never a blended rate.
+     *
+     * Deliberately takes ONE already-resolved [start,end] range, never a
+     * $calendarPeriods month-chunk array — Food's day/week/N-teaching-day/
+     * month/multi-month/custom-range purchase is resolved ONCE, by the
+     * caller (InvoiceIssuanceService::issue() for real issuance, or
+     * QuickStudentRegistrationController::price() for the live preview —
+     * both via the SAME FoodBillableDayCalculator::resolveFromDurationSelection()
+     * entry point), independent of CalendarPeriodCalculator's calendar-
+     * month grouping, which exists only for Tuition/Transport's
+     * monthly/quarterly/yearly billing_period concept and cannot
+     * represent a non-month-aligned Food purchase without corrupting its
+     * own period boundaries (CalendarPeriodCalculator::resolve()
+     * unconditionally snaps to startOfMonth()).
+     */
+    private function priceFoodDailyLine(Fee $fee, array $selection, array $foodResolution, int $academicYearId, array &$modeCache): array
+    {
+        $selection['payment_period'] = Fee::PERIOD_DAILY;
+        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $modeCache);
+        if ($candidates->isEmpty()) {
+            throw ValidationException::withMessages(['fees' => "Для услуги «{$fee->name_ru}» отсутствует дневной тариф питания."]);
+        }
+
+        $segments = [];
+        $total = '0.00';
+        $firstPrice = null;
+        $firstAmount = null;
+        foreach ($foodResolution['billable_dates'] as $date) {
+            $price = $this->selectAmongCandidates($candidates, $date);
+            $sameDimensionMatches = $price ? $candidates
+                ->filter(fn (FeePrice $candidate) => $this->dimensionSignature($candidate) === $this->dimensionSignature($price))
+                ->filter(fn (FeePrice $candidate) => $candidate->start_date->toDateString() <= $date
+                    && (! $candidate->end_date || $candidate->end_date->toDateString() >= $date)) : collect();
+            if (! $price || $sameDimensionMatches->count() !== 1) {
+                throw ValidationException::withMessages(['fees' => "Для услуги «{$fee->name_ru}» нет единственного дневного тарифа на {$date}."]);
+            }
+            $dailyAmount = $this->money($price->getRawOriginal('amount'));
+            $firstPrice ??= $price;
+            $firstAmount ??= $dailyAmount;
+            $total = bcadd($total, $dailyAmount, 2);
+            $last = array_key_last($segments);
+            if ($last !== null && $segments[$last]['fee_price_id'] === $price->id) {
+                $segments[$last]['end'] = $date;
+                $segments[$last]['billable_day_count']++;
+                $segments[$last]['amount'] = bcadd($segments[$last]['amount'], $dailyAmount, 2);
+            } else {
+                $segments[] = ['fee_price_id' => $price->id, 'start' => $date, 'end' => $date,
+                    'daily_amount' => $dailyAmount, 'billable_day_count' => 1, 'amount' => $dailyAmount];
+            }
+        }
+
+        if ($firstPrice === null) {
+            throw ValidationException::withMessages(['fees' => "Для услуги «{$fee->name_ru}» выбранный период не содержит ни одного учебного дня."]);
+        }
+
+        return [
+            'resolved_price' => ['amount' => $firstAmount, 'valid_from' => $firstPrice->start_date->toDateString(),
+                'valid_to' => $firstPrice->end_date?->toDateString(), 'metadata' => $this->priceMetadata($firstPrice, $foodResolution['coverage_start'])],
+            'amount' => $total,
+            'first_daily_amount' => $firstAmount,
+            'billable_day_count' => $foodResolution['billable_day_count'],
+            'metadata' => [
+                'food_billable_day_count' => $foodResolution['billable_day_count'],
+                'food_excluded_day_count' => $foodResolution['excluded_day_count'],
+                'food_calendar_id' => $foodResolution['calendar_id'],
+                'food_calendar_rule_version' => $foodResolution['rule_version'],
+                'food_tariff_segments' => $segments,
+                'food_coverage_start' => $foodResolution['coverage_start'],
+                'food_coverage_end' => $foodResolution['coverage_end'],
+                'food_duration_mode' => $foodResolution['duration_mode'] ?? null,
+                'food_requested_day_count' => $foodResolution['requested_day_count'] ?? null,
+            ],
         ];
     }
 

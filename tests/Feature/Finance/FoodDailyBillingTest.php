@@ -333,6 +333,83 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         $this->assertSame('750.00', $invoice->total_amount);
     }
 
+    /**
+     * Business policy, authoritative: FUTURE SERVICE PREPAYMENT = YES,
+     * FUTURE TARIFF BACKDATING = NO. Food pricing is keyed purely on the
+     * SERVICE date vs. each tariff's own effective window — never on the
+     * purchase/request date (confirmed by inspection: priceFoodDailyLine()
+     * never reads $pricingDate at all, only $foodResolution['billable_dates']).
+     * A tariff that is itself "in the future" relative to today is a
+     * perfectly valid, un-exceptional match for a service date that falls
+     * inside its own window; what must never happen is a tariff being
+     * applied to a service day BEFORE its own effective_from, no matter how
+     * "purchase happens ahead of time" that day's request otherwise is.
+     */
+    public function test_future_prepayment_case_a_a_sole_tariff_effective_for_the_requested_future_service_date_is_allowed(): void
+    {
+        $tariff = $this->price('190.00', '2026-10-01', '2027-06-30');
+        $invoice = $this->issue('2026-10-01', '2026-10-10', itemOverrides: [
+            'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-10-01', 'food_range_end' => '2026-10-10',
+        ]);
+
+        $expectedDays = app(FoodBillableDayCalculator::class)->calculate($this->year, '2026-10-01', '2026-10-10')['billable_day_count'];
+        $item = $invoice->items()->sole();
+        $this->assertSame(bcmul((string) $expectedDays, '190.00', 2), $invoice->total_amount);
+        $segments = $item->metadata['food_tariff_segments'];
+        $this->assertCount(1, $segments);
+        $this->assertSame($tariff->id, $segments[0]['fee_price_id']);
+        $this->assertSame($expectedDays, $segments[0]['billable_day_count']);
+    }
+
+    public function test_future_prepayment_case_b_a_range_crossing_a_scheduled_future_tariff_change_is_segmented_exactly(): void
+    {
+        $old = $this->price('170.00', '2026-08-01', '2026-09-30');
+        $new = $this->price('190.00', '2026-10-01', '2027-06-30');
+        $invoice = $this->issue('2026-09-20', '2026-10-10', itemOverrides: [
+            'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-20', 'food_range_end' => '2026-10-10',
+        ]);
+
+        $septDays = app(FoodBillableDayCalculator::class)->calculate($this->year, '2026-09-20', '2026-09-30')['billable_day_count'];
+        $octDays = app(FoodBillableDayCalculator::class)->calculate($this->year, '2026-10-01', '2026-10-10')['billable_day_count'];
+        $expected = bcadd(bcmul((string) $septDays, '170.00', 2), bcmul((string) $octDays, '190.00', 2), 2);
+
+        $item = $invoice->items()->sole();
+        $this->assertSame($expected, $item->amount);
+        $this->assertSame($expected, $invoice->total_amount);
+        $segments = $item->metadata['food_tariff_segments'];
+        $this->assertCount(2, $segments);
+        $this->assertSame($old->id, $segments[0]['fee_price_id']);
+        $this->assertSame($septDays, $segments[0]['billable_day_count']);
+        $this->assertSame($new->id, $segments[1]['fee_price_id']);
+        $this->assertSame($octDays, $segments[1]['billable_day_count']);
+    }
+
+    public function test_future_prepayment_case_c_a_lone_future_tariff_must_never_be_backdated_onto_earlier_service_days(): void
+    {
+        // Only an October tariff exists. September service days inside the
+        // same requested range must NOT silently borrow it — even though
+        // it is the sole candidate for this dimension, which is exactly
+        // the "sole candidate usable before its own start_date" prepayment
+        // exemption every OTHER Fee category gets. priceFoodDailyLine()'s
+        // own stricter per-date window recheck must reject this.
+        $this->price('190.00', '2026-10-01', '2027-06-30');
+
+        $this->expectException(ValidationException::class);
+        $this->issue('2026-09-20', '2026-10-10', itemOverrides: [
+            'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-20', 'food_range_end' => '2026-10-10',
+        ]);
+    }
+
+    public function test_future_prepayment_case_d_a_future_range_with_no_covering_tariff_at_all_fails_closed(): void
+    {
+        // No Food tariff exists at all yet — must fail closed, never guess
+        // or carry forward an unrelated tariff.
+        $this->expectException(ValidationException::class);
+        $this->issue('2026-10-01', '2026-10-31', itemOverrides: [
+            'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-10-01', 'food_range_end' => '2026-10-31',
+        ]);
+    }
+
     public function test_full_prepayment_is_one_payment_explicitly_mapped_to_the_single_period(): void
     {
         $this->price();

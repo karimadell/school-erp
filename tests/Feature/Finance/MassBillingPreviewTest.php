@@ -8,8 +8,10 @@ use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\MealPlan;
 use App\Models\SchoolClass;
 use App\Models\Student;
+use App\Services\Finance\MassBillingEligibilityService;
 use App\Services\Finance\MassBillingPreviewService;
 use Illuminate\Support\Collection;
 
@@ -139,6 +141,64 @@ class MassBillingPreviewTest extends MassBillingTestCase
 
         $this->assertFalse($this->row($result, $student)['eligible']);
         $this->assertSame(MassBillingPreviewService::SKIP_NO_TARIFF, $this->row($result, $student)['skip_reason']);
+    }
+
+    public function test_food_is_skipped_as_not_supported_by_mass_billing(): void
+    {
+        // Final independent review, MEDIUM finding: Mass Billing has no
+        // duration-mode selection (no per-student day/school_week/
+        // teaching_days/month/custom_range choice), so Food must always
+        // be rejected here fail-closed — even when a fully active Food
+        // Fee with a real daily tariff exists, proving the rule is
+        // unconditional rather than a fallback for missing pricing.
+        $mealPlan = MealPlan::create([
+            'name_ru' => 'Полный рацион', 'meal_type' => 'both', 'period' => 'daily',
+            'price' => '100.00', 'is_active' => true,
+        ]);
+        $food = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '1.00', 'is_active' => true]);
+        FeePrice::create([
+            'fee_id' => $food->id, 'academic_year_id' => $this->year->id,
+            'payment_period' => Fee::PERIOD_DAILY, 'option_type' => 'meal_plan', 'option_value' => (string) $mealPlan->id,
+            'amount' => '100.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+        ]);
+        $student = $this->enrolledStudent($this->classA, suffix: 'A1');
+        $batch = $this->makeBatch(classIds: [$this->classA->id], fee: $food);
+
+        $result = $this->preview($batch);
+
+        $this->assertFalse($this->row($result, $student)['eligible']);
+        $this->assertSame(MassBillingEligibilityService::SKIP_FOOD_NOT_SUPPORTED, $this->row($result, $student)['skip_reason']);
+    }
+
+    public function test_food_rejection_reason_is_shown_in_russian(): void
+    {
+        $food = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '1.00', 'is_active' => true]);
+        $this->enrolledStudent($this->classA, suffix: 'A1');
+        $batch = $this->makeBatch(classIds: [$this->classA->id], fee: $food);
+
+        $this->actingAs($this->accountant)
+            ->post(route('dashboard.finance.mass-billing.preview', $batch))
+            ->assertRedirect(route('dashboard.finance.mass-billing.show', $batch));
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.mass-billing.show', $batch))
+            ->assertOk()
+            ->assertSee(__('mass_billing.skip_reasons.food_not_supported'));
+    }
+
+    public function test_non_food_service_remains_eligible_under_mass_billing(): void
+    {
+        // Regression guard: the Food fail-closed rule must not have
+        // disabled Mass Billing globally — the smallest already-covered
+        // non-Food category (Tuition) must remain fully eligible under
+        // an otherwise-identical setup.
+        $student = $this->enrolledStudent($this->classA, suffix: 'A1');
+        $batch = $this->makeBatch(classIds: [$this->classA->id]);
+
+        $result = $this->preview($batch);
+
+        $this->assertTrue($this->row($result, $student)['eligible']);
+        $this->assertNull($this->row($result, $student)['skip_reason']);
     }
 
     public function test_registration_fee_duplicate_is_skipped(): void

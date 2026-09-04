@@ -24,10 +24,12 @@ class SchoolPriceListImportIdempotencyTest extends TestCase
         $this->assertSame(0, $second['services_created']);
         $this->assertSame(6, $second['services_reused']);
         $this->assertSame(0, $second['tariffs_created']);
-        $this->assertSame(34, $second['tariffs_skipped']);
+        // Uniform corrective pass: 34 original + 40 new individual-exact-
+        // size tariffs, all idempotently skipped on the second run.
+        $this->assertSame(74, $second['tariffs_skipped']);
         $this->assertSame([], $second['conflicts']);
         $this->assertSame(6, Fee::count());
-        $this->assertSame(34, FeePrice::count());
+        $this->assertSame(74, FeePrice::count());
         // The three MealPlan rows are also reused (firstOrCreate), never duplicated.
         $this->assertSame(3, MealPlan::count());
     }

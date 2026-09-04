@@ -22,19 +22,30 @@ class SchoolPriceListImportTest extends TestCase
         $result = app(SchoolPriceListImportService::class)->import();
 
         $this->assertSame(6, $result['services_created']);
-        $this->assertSame(34, $result['tariffs_created']);
+        // Uniform corrective pass: 40 new individual-exact-size tariff rows
+        // (3 legacy tiers x 4 items, decomposed into 3+3+4=10 exact sizes
+        // each) are now imported ALONGSIDE the original 34 — never
+        // replacing them. 34 + 40 = 74.
+        $this->assertSame(74, $result['tariffs_created']);
         $this->assertSame([], $result['conflicts']);
         $this->assertEqualsCanonicalizing(['Организационный взнос', 'Обучение', 'Питание', 'Трансфер', 'Школьная форма', 'Экстернат'], Fee::pluck('name_ru')->all());
-        $this->assertSame(34, FeePrice::count());
-        $this->assertSame(34, FeePrice::where('academic_year_id', $year->id)->where('currency', 'EGP')->where('change_reason', SchoolPriceListImportService::REASON)->count());
+        $this->assertSame(74, FeePrice::count());
+        $this->assertSame(74, FeePrice::where('academic_year_id', $year->id)->where('currency', 'EGP')->where('change_reason', SchoolPriceListImportService::REASON)->count());
         $this->assertSame(10, Fee::where('name_ru', 'Обучение')->firstOrFail()->prices()->count());
         $this->assertSame(6, Fee::where('name_ru', 'Трансфер')->firstOrFail()->prices()->count());
         $this->assertSame(3, Fee::where('name_ru', 'Питание')->firstOrFail()->prices()->count());
         $this->assertSame(2, Fee::where('name_ru', 'Экстернат')->firstOrFail()->prices()->count());
-        $this->assertSame(12, Fee::where('name_ru', 'Школьная форма')->firstOrFail()->prices()->count());
+        // 12 legacy grouped-tier rows (unchanged, never removed) + 40 new
+        // individual-exact-size rows = 52.
+        $this->assertSame(52, Fee::where('name_ru', 'Школьная форма')->firstOrFail()->prices()->count());
         $this->assertDatabaseHas('fee_prices', ['amount' => '67500.00', 'grade_group' => '9–11 классы', 'payment_period' => 'yearly']);
         $this->assertDatabaseHas('fee_prices', ['amount' => '1500.00', 'option_type' => 'zone', 'option_value' => 'Каусер, Мубарак 2, Интерконтиненталь', 'payment_period' => 'monthly']);
+        // Legacy grouped-tier row — still imported exactly as before, never removed/reinterpreted.
         $this->assertDatabaseHas('fee_prices', ['amount' => '1500.00', 'item' => 'Толстовка', 'size' => 'от S']);
+        // New individual-exact-size rows, decomposed from that same 'от S' tier's price.
+        $this->assertDatabaseHas('fee_prices', ['amount' => '1500.00', 'item' => 'Толстовка', 'size' => 'M']);
+        $this->assertDatabaseHas('fee_prices', ['amount' => '900.00', 'item' => 'Толстовка', 'size' => '6']);
+        $this->assertDatabaseHas('fee_prices', ['amount' => '1200.00', 'item' => 'Толстовка', 'size' => '12']);
         $this->assertDatabaseMissing('fee_prices', ['currency' => 'RUB']);
         $this->assertDatabaseMissing('fee_prices', ['option_type' => 'Район']);
 

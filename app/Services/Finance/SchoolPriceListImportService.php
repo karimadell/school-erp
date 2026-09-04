@@ -116,6 +116,36 @@ class SchoolPriceListImportService
                     FeePrice::create(collect($attributes)->except('option_label')->all());
                     $result['tariffs_created']++;
                 }
+
+                // Corrective pass (code review P0) — the exact-size rows
+                // above (uniformIndividualSizeVariants()) are this Fee's
+                // replacement for the legacy grouped-tier rows
+                // (uniformVariants()) for THIS SAME academic year. Once
+                // this run has processed the Uniform definition's full
+                // tariffs loop (created or confirmed-already-existing,
+                // either way — 'exact' skip and fresh create both reach
+                // here), the legacy rows must stop being selectable for
+                // NEW sales without ever deleting or rewriting them:
+                // is_active=false only, size/amount/item untouched, so
+                // every historical invoice_item snapshot referencing one
+                // stays fully readable (invoice_items never live-resolve
+                // through FeePrice.is_active). Scoped to exactly this
+                // Fee + this run's single target academic year — another
+                // year's legacy rows are never touched by this run.
+                // Idempotent: a plain WHERE ... is_active=true -> false
+                // update is a no-op on any row already deactivated by a
+                // prior run. Runs inside the same transaction as the
+                // creates above, so a thrown exception anywhere in this
+                // Fee's tariff loop rolls this back too — the legacy
+                // rows are never deactivated unless the exact-size
+                // replacements for this run genuinely completed.
+                if ($definition['category'] === Fee::CATEGORY_UNIFORM) {
+                    FeePrice::where('fee_id', $fee->id)
+                        ->where('academic_year_id', $year->id)
+                        ->whereIn('size', ['6–10', '12–16', 'от S'])
+                        ->where('is_active', true)
+                        ->update(['is_active' => false]);
+                }
             }
 
             $dryRun ? DB::rollBack() : DB::commit();
@@ -142,7 +172,7 @@ class SchoolPriceListImportService
             ], self::TRANSPORT_ZONE_OPTION_TYPE))],
             ['name' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'type' => 'service', 'service_period' => Fee::PERIOD_DAILY, 'tariffs' => $tariffs($this->mealPlanTariffs())],
             ['name' => 'Экстернат', 'category' => Fee::CATEGORY_TUITION_EXTERNAL, 'type' => 'service', 'service_period' => null, 'tariffs' => $tariffs($this->periodVariants(['1–4 классы' => ['25600.00', '3200.00']]))],
-            ['name' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM, 'type' => 'service', 'service_period' => Fee::PERIOD_PACKAGE, 'description' => 'Комплект: 2 майки + 1 поло + 1 толстовка', 'tariffs' => $tariffs($this->uniformVariants())],
+            ['name' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM, 'type' => 'service', 'service_period' => Fee::PERIOD_PACKAGE, 'description' => 'Комплект: 2 майки + 1 поло + 1 толстовка', 'tariffs' => $tariffs(array_merge($this->uniformVariants(), $this->uniformIndividualSizeVariants()))],
         ];
     }
 
@@ -219,6 +249,54 @@ class SchoolPriceListImportService
                 $rows[] = ['amount' => $amount, 'payment_period' => Fee::PERIOD_ONCE, 'size' => $size, 'item' => $item];
             }
         }
+        return $rows;
+    }
+
+    /**
+     * Corrective pass — Uniform Procurement Report gap (business
+     * requirement: factory procurement needs Item + EXACT size + quantity,
+     * never a size range). uniformVariants() above is NEVER modified or
+     * removed by this method — those 3 grouped-tier rows remain importable
+     * exactly as before, so any historical FeePrice/invoice_item already
+     * carrying '6–10'/'12–16'/'от S' stays fully readable and untouched
+     * (requirement 5: legacy grouped values are preserved as historical
+     * data, never silently reinterpreted). This method is purely additive:
+     * new FeePrice rows, one per (item, individual exact size), imported
+     * side by side with the legacy rows via the SAME idempotent per-
+     * dimension upsert import() already performs — re-running import()
+     * never duplicates or rewrites either set.
+     *
+     * Pricing note (explicit, not hidden): each exact size is priced at
+     * its ORIGINATING tier's existing flat price — no new per-size price
+     * was supplied by the business for this pass, so the safest, most
+     * conservative choice is to carry the tier price over unchanged
+     * rather than invent per-size figures. If the business later wants
+     * genuinely different pricing per exact size, that is a distinct
+     * pricing decision for someone to make explicitly, not something to
+     * assume here.
+     */
+    private function uniformIndividualSizeVariants(): array
+    {
+        $tierPricesByItem = [
+            '6–10' => ['Комплект' => '2000.00', 'Майка' => '400.00', 'Поло' => '600.00', 'Толстовка' => '900.00'],
+            '12–16' => ['Комплект' => '2500.00', 'Майка' => '500.00', 'Поло' => '700.00', 'Толстовка' => '1200.00'],
+            'от S' => ['Комплект' => '3000.00', 'Майка' => '500.00', 'Поло' => '800.00', 'Толстовка' => '1500.00'],
+        ];
+        $exactSizesByTier = [
+            '6–10' => ['6', '8', '10'],
+            '12–16' => ['12', '14', '16'],
+            'от S' => ['S', 'M', 'L', 'XL'],
+        ];
+
+        $rows = [];
+        foreach ($tierPricesByItem as $tier => $items) {
+            foreach ($exactSizesByTier[$tier] as $size) {
+                foreach ($items as $item => $amount) {
+                    $rows[] = ['amount' => $amount, 'payment_period' => Fee::PERIOD_ONCE, 'size' => $size, 'item' => $item];
+                }
+            }
+        }
+
         return $rows;
     }
 

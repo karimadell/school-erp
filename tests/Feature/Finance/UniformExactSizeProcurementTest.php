@@ -410,6 +410,138 @@ class UniformExactSizeProcurementTest extends TestCase
         $this->assertTrue($unrelatedLegacyRow->fresh()->is_active, "a different academic year's legacy row must never be touched by import()");
     }
 
+    /**
+     * P0 regression (code review) — the real gap the completeness check
+     * exists to catch: the importer's own $exact-match check (line ~93 of
+     * SchoolPriceListImportService) does NOT filter by is_active, so a
+     * pre-existing INACTIVE row that happens to match the import's
+     * proposed amount/dates/currency exactly is treated as "already
+     * exists" and silently skipped — creating NOTHING and leaving that
+     * exact (item, size) combination with ZERO active FeePrice rows after
+     * the loop. (A genuine ACTIVE overlap conflict, by contrast, always
+     * leaves an active row in place — the pre-existing one — so it never
+     * actually creates a coverage gap; see the follow-up test below,
+     * which documents this distinction explicitly rather than assuming
+     * it.) This is the scenario that must prevent legacy deactivation.
+     */
+    public function test_incomplete_exact_size_replacement_prevents_legacy_deactivation(): void
+    {
+        $year = AcademicYear::firstOrCreate(
+            ['name' => SchoolPriceListImportService::YEAR],
+            ['start_date' => now()->subMonths(6)->toDateString(), 'end_date' => now()->addMonths(6)->toDateString(), 'is_active' => true],
+        );
+        $fee = Fee::firstOrCreate(
+            ['name_ru' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM],
+            ['amount' => '0.00', 'is_active' => true],
+        );
+        // An INACTIVE row (e.g. a previously-deactivated/archived entry)
+        // that exactly matches what the import would otherwise create for
+        // Майка + size 8 — same amount, dates, currency, dimensions. The
+        // importer's exact-match check finds it and skips creating a new
+        // row (tariffs_skipped, not a conflict), but the row it found
+        // stays inactive — nothing sellable exists for this combination.
+        $preexisting = FeePrice::create([
+            'fee_id' => $fee->id, 'academic_year_id' => $year->id, 'amount' => '400.00', 'currency' => 'EGP',
+            'start_date' => $year->start_date, 'end_date' => $year->end_date,
+            'payment_period' => Fee::PERIOD_ONCE,
+            'item' => 'Майка', 'size' => '8', 'is_active' => false, 'change_reason' => 'Архивная запись',
+        ]);
+
+        $result = $this->runRealImport();
+
+        // The exact-match skip is not a reported conflict — confirm that
+        // explicitly, so this test cannot be mistaken for the overlap case.
+        $this->assertSame([], $result['conflicts']);
+        $this->assertGreaterThanOrEqual(1, $result['tariffs_skipped']);
+
+        // The pre-existing row itself is untouched — importer never
+        // reactivates or rewrites what it silently treats as "already there".
+        $this->assertFalse($preexisting->fresh()->is_active);
+
+        [, $freshYear] = $this->uniformFeeAndYearAfterImport();
+        $exactSizes = ['6', '8', '10', '12', '14', '16', 'S', 'M', 'L', 'XL'];
+
+        // Replacement matrix incomplete: only 39 of the 40 expected exact
+        // (item, size) pairs are active — Майка+8 has none.
+        $activeExactCount = FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $freshYear->id)
+            ->whereIn('size', $exactSizes)->where('is_active', true)->count();
+        $this->assertSame(39, $activeExactCount);
+        $this->assertSame(0, FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $freshYear->id)
+            ->where('item', 'Майка')->where('size', '8')->where('is_active', true)->count());
+
+        // ALL legacy grouped rows remain active — the key P0 assertion:
+        // an incomplete replacement set must never cost this combination
+        // its only sellable fallback.
+        $legacyActiveCount = FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $freshYear->id)
+            ->whereIn('size', ['6–10', '12–16', 'от S'])->where('is_active', true)->count();
+        $this->assertSame(12, $legacyActiveCount, 'an incomplete exact-size replacement set must never deactivate the legacy fallback rows');
+
+        // Quick Registration still offers the legacy fallback rather than
+        // silently losing sellability for the affected item.
+        AcademicYear::whereKey($freshYear->id)->update(['is_active' => true]);
+        foreach (FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $freshYear->id)->where('is_active', true)->get() as $price) {
+            $this->uniformProduct($price->item, $price->size, (string) $price->getRawOriginal('amount'));
+        }
+        $page = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'));
+        $page->assertOk();
+        $page->assertSee('data-size="6–10"', false);
+
+        // Positive path: resolve the gap (activate the pre-existing row)
+        // and prove that once the COMPLETE matrix is genuinely active,
+        // the legacy rows DO become inactive on the next run.
+        $preexisting->update(['is_active' => true]);
+        app(SchoolPriceListImportService::class)->import();
+
+        $activeExactCountAfterFix = FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $freshYear->id)
+            ->whereIn('size', $exactSizes)->where('is_active', true)->count();
+        $this->assertSame(40, $activeExactCountAfterFix);
+
+        $legacyActiveCountAfterFix = FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $freshYear->id)
+            ->whereIn('size', ['6–10', '12–16', 'от S'])->where('is_active', true)->count();
+        $this->assertSame(0, $legacyActiveCountAfterFix, 'once the complete replacement matrix is active, legacy rows must become inactive');
+    }
+
+    /**
+     * Documents a distinct, discovered nuance (not a bug): a genuine
+     * ACTIVE overlap conflict — e.g. a director's manually-priced Майка
+     * size 8 — always leaves an active row in place for that exact
+     * dimension (the manual one itself), so the (item, size) combination
+     * remains genuinely sellable throughout, just at a custom price. The
+     * completeness check correctly treats this as satisfied, and it is
+     * safe for the legacy rows to be deactivated here: nothing loses
+     * sellability. Mirrors SchoolPriceListImportConflictTest's own
+     * Tuition scenario, applied to Uniform.
+     */
+    public function test_active_manual_override_satisfies_completeness_and_legacy_rows_still_deactivate(): void
+    {
+        $year = AcademicYear::firstOrCreate(
+            ['name' => SchoolPriceListImportService::YEAR],
+            ['start_date' => now()->subMonths(6)->toDateString(), 'end_date' => now()->addMonths(6)->toDateString(), 'is_active' => true],
+        );
+        $fee = Fee::firstOrCreate(
+            ['name_ru' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM],
+            ['amount' => '0.00', 'is_active' => true],
+        );
+        $manual = FeePrice::create([
+            'fee_id' => $fee->id, 'academic_year_id' => $year->id, 'amount' => '450.00', 'currency' => 'EGP',
+            'start_date' => $year->start_date, 'end_date' => $year->end_date,
+            'payment_period' => Fee::PERIOD_ONCE,
+            'item' => 'Майка', 'size' => '8', 'is_active' => true, 'change_reason' => 'Ручная цена директора',
+        ]);
+
+        $result = $this->runRealImport();
+
+        $this->assertNotEmpty($result['conflicts']);
+        $this->assertTrue(collect($result['conflicts'])->contains(fn ($c) => str_contains($c, 'пересекается')));
+        $this->assertSame('450.00', $manual->fresh()->amount);
+        $this->assertSame('Ручная цена директора', $manual->fresh()->change_reason);
+
+        [, $freshYear] = $this->uniformFeeAndYearAfterImport();
+        $legacyActiveCount = FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $freshYear->id)
+            ->whereIn('size', ['6–10', '12–16', 'от S'])->where('is_active', true)->count();
+        $this->assertSame(0, $legacyActiveCount, 'Майка size 8 remains sellable via the active manual override, so legacy deactivation is safe here');
+    }
+
     /** Minimal direct-issuance helper — bypasses the full HTTP submission for pure data setup in aggregation tests. */
     private function issueUniformInvoice(int $feeId, string $item, string $size, int $productId, int $quantity): int
     {

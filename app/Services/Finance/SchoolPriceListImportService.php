@@ -122,29 +122,12 @@ class SchoolPriceListImportService
                 // replacement for the legacy grouped-tier rows
                 // (uniformVariants()) for THIS SAME academic year. Once
                 // this run has processed the Uniform definition's full
-                // tariffs loop (created or confirmed-already-existing,
-                // either way — 'exact' skip and fresh create both reach
-                // here), the legacy rows must stop being selectable for
-                // NEW sales without ever deleting or rewriting them:
-                // is_active=false only, size/amount/item untouched, so
-                // every historical invoice_item snapshot referencing one
-                // stays fully readable (invoice_items never live-resolve
-                // through FeePrice.is_active). Scoped to exactly this
-                // Fee + this run's single target academic year — another
-                // year's legacy rows are never touched by this run.
-                // Idempotent: a plain WHERE ... is_active=true -> false
-                // update is a no-op on any row already deactivated by a
-                // prior run. Runs inside the same transaction as the
-                // creates above, so a thrown exception anywhere in this
-                // Fee's tariff loop rolls this back too — the legacy
-                // rows are never deactivated unless the exact-size
-                // replacements for this run genuinely completed.
+                // tariffs loop, the legacy rows must stop being selectable
+                // for NEW sales without ever deleting or rewriting them —
+                // but ONLY once the complete exact-size replacement matrix
+                // genuinely exists as active (see hardening note below).
                 if ($definition['category'] === Fee::CATEGORY_UNIFORM) {
-                    FeePrice::where('fee_id', $fee->id)
-                        ->where('academic_year_id', $year->id)
-                        ->whereIn('size', ['6–10', '12–16', 'от S'])
-                        ->where('is_active', true)
-                        ->update(['is_active' => false]);
+                    $this->deactivateLegacyUniformSizesIfReplacementComplete($fee, $year);
                 }
             }
 
@@ -298,6 +281,55 @@ class SchoolPriceListImportService
         }
 
         return $rows;
+    }
+
+    /**
+     * Corrective pass P0 hardening (code review) — the tariffs loop above
+     * records a genuine dimensional conflict (e.g. a director's
+     * pre-existing manual tariff for one exact item+size) by skipping
+     * that ONE row and appending to $result['conflicts'], never by
+     * throwing — so the loop can finish normally even when one or more of
+     * the 40 expected exact-size (item, size) combinations never got
+     * created this run. Deactivating the legacy grouped rows in that
+     * state would leave that one combination with NEITHER an active
+     * legacy fallback NOR an exact-size replacement — silently losing
+     * sellability for something that may be manually, legitimately
+     * priced. So the legacy rows may only become inactive once the
+     * COMPLETE expected (item, size) pair set is verified active —
+     * checked as actual dimension pairs, not merely a count of rows
+     * carrying one of the 10 exact size strings, which an unrelated or
+     * duplicate row could otherwise falsely satisfy.
+     */
+    private function deactivateLegacyUniformSizesIfReplacementComplete(Fee $fee, AcademicYear $year): void
+    {
+        $exactSizes = ['6', '8', '10', '12', '14', '16', 'S', 'M', 'L', 'XL'];
+
+        $expectedPairs = collect($this->uniformIndividualSizeVariants())
+            ->map(fn (array $row) => $row['item'].'|'.$row['size'])
+            ->unique();
+
+        $activePairs = FeePrice::where('fee_id', $fee->id)
+            ->where('academic_year_id', $year->id)
+            ->whereIn('size', $exactSizes)
+            ->where('is_active', true)
+            ->get(['item', 'size'])
+            ->map(fn (FeePrice $price) => $price->item.'|'.$price->size)
+            ->unique();
+
+        $missing = $expectedPairs->diff($activePairs);
+
+        if ($missing->isNotEmpty()) {
+            // Incomplete replacement set — a normal, expected outcome of a
+            // recorded conflict, never an error. Preserve previous
+            // sellability: legacy rows stay exactly as they were.
+            return;
+        }
+
+        FeePrice::where('fee_id', $fee->id)
+            ->where('academic_year_id', $year->id)
+            ->whereIn('size', ['6–10', '12–16', 'от S'])
+            ->where('is_active', true)
+            ->update(['is_active' => false]);
     }
 
     /** @param array<string,mixed> $attributes */

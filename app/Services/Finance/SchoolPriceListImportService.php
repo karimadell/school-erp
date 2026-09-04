@@ -40,82 +40,12 @@ class SchoolPriceListImportService
             $result = ['services_created' => 0, 'services_reused' => 0, 'tariffs_created' => 0, 'tariffs_skipped' => 0, 'conflicts' => [], 'dry_run' => $dryRun];
 
             foreach ($this->catalog() as $definition) {
-                $fee = Fee::query()->where('name_ru', $definition['name'])->lockForUpdate()->first();
-
-                if ($fee && $fee->category !== $definition['category']) {
-                    $result['conflicts'][] = "Услуга «{$definition['name']}» уже существует в другой категории.";
+                $fee = $this->resolveOrCreateFee($definition, $result);
+                if (! $fee) {
                     continue;
                 }
 
-                if ($fee) {
-                    $result['services_reused']++;
-                } else {
-                    $fee = Fee::create([
-                        'name_ru' => $definition['name'],
-                        'category' => $definition['category'],
-                        'type' => $definition['type'],
-                        'payment_period' => $definition['service_period'],
-                        'amount' => '0.00',
-                        'description' => $definition['description'] ?? null,
-                        'is_active' => true,
-                    ]);
-                    $result['services_created']++;
-                }
-
-                foreach ($definition['tariffs'] as $variant) {
-                    $attributes = array_merge([
-                        'fee_id' => $fee->id,
-                        'academic_year_id' => $year->id,
-                        'amount' => $variant['amount'],
-                        'currency' => 'EGP',
-                        'start_date' => $year->start_date->toDateString(),
-                        'end_date' => $year->end_date->toDateString(),
-                        'grade_id' => null,
-                        'grade_group' => null,
-                        'payment_period' => null,
-                        'option_type' => null,
-                        'option_value' => null,
-                        'item' => null,
-                        'size' => null,
-                        'is_active' => true,
-                        'change_reason' => self::REASON,
-                    ], $variant);
-
-                    $dimensionFields = ['grade_id', 'grade_group', 'payment_period', 'option_type', 'option_value', 'item', 'size'];
-                    $dimensions = FeePrice::query()->where('fee_id', $fee->id)->where('academic_year_id', $year->id);
-                    foreach ($dimensionFields as $field) {
-                        $attributes[$field] === null
-                            ? $dimensions->whereNull($field)
-                            : $dimensions->where($field, $attributes[$field]);
-                    }
-
-                    $existing = (clone $dimensions)->lockForUpdate()->get();
-                    $exact = $existing->first(fn (FeePrice $price) =>
-                        $price->currency === 'EGP'
-                        && bccomp((string) $price->getRawOriginal('amount'), $attributes['amount'], 2) === 0
-                        && $price->start_date->toDateString() === $attributes['start_date']
-                        && $price->end_date?->toDateString() === $attributes['end_date']
-                    );
-
-                    if ($exact) {
-                        $result['tariffs_skipped']++;
-                        continue;
-                    }
-
-                    $overlap = $existing->first(fn (FeePrice $price) =>
-                        $price->is_active
-                        && $price->start_date->lte($attributes['end_date'])
-                        && ($price->end_date === null || $price->end_date->gte($attributes['start_date']))
-                    );
-
-                    if ($overlap) {
-                        $result['conflicts'][] = "Тариф для «{$definition['name']}» ({$this->variantLabel($attributes)}) пересекается с записью №{$overlap->id}.";
-                        continue;
-                    }
-
-                    FeePrice::create(collect($attributes)->except('option_label')->all());
-                    $result['tariffs_created']++;
-                }
+                $this->processTariffs($fee, $year, $definition['tariffs'], $result);
 
                 // Corrective pass (code review P0) — the exact-size rows
                 // above (uniformIndividualSizeVariants()) are this Fee's
@@ -137,6 +67,160 @@ class SchoolPriceListImportService
         } catch (\Throwable $exception) {
             DB::rollBack();
             throw $exception;
+        }
+    }
+
+    /**
+     * Year-scoped, single-category import — Uniform only.
+     *
+     * Reuses the exact same catalog() Uniform definition, the exact same
+     * resolveOrCreateFee()/processTariffs()/deactivateLegacyUniformSizes...()
+     * logic import() itself uses for that one definition — no price data
+     * or business rule is redefined or duplicated here. The only two
+     * differences from import(): (1) the target academic year is an
+     * explicit, caller-supplied name rather than the hardcoded self::YEAR
+     * constant — there is no default, a caller must always name a real,
+     * existing year, and a missing year fails closed (throws, creates
+     * nothing, rolls back) exactly like import() already does for its own
+     * hardcoded year; (2) only the Uniform entry of catalog() is ever
+     * touched — Registration/Tuition/Transport/Food/Externat are never
+     * looked up, created, or written to by this method under any input.
+     *
+     * @return array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool}
+     */
+    public function importUniformOnly(string $academicYearName, bool $dryRun = false): array
+    {
+        DB::beginTransaction();
+
+        try {
+            $year = AcademicYear::query()->where('name', $academicYearName)->lockForUpdate()->first();
+            if (! $year) {
+                throw new RuntimeException("Учебный год «{$academicYearName}» не найден. Сначала создайте учебный год.");
+            }
+
+            $result = ['services_created' => 0, 'services_reused' => 0, 'tariffs_created' => 0, 'tariffs_skipped' => 0, 'conflicts' => [], 'dry_run' => $dryRun];
+
+            $definition = collect($this->catalog())->firstWhere('category', Fee::CATEGORY_UNIFORM);
+
+            $fee = $this->resolveOrCreateFee($definition, $result);
+            if ($fee) {
+                $this->processTariffs($fee, $year, $definition['tariffs'], $result);
+                $this->deactivateLegacyUniformSizesIfReplacementComplete($fee, $year);
+            }
+
+            $dryRun ? DB::rollBack() : DB::commit();
+
+            return $result;
+        } catch (\Throwable $exception) {
+            DB::rollBack();
+            throw $exception;
+        }
+    }
+
+    /**
+     * Fee lookup-or-create for one catalog() definition, shared by
+     * import() and importUniformOnly() — pure extraction of import()'s
+     * original inline logic, no behavior change. Returns null (having
+     * already recorded the conflict) if a same-named Fee exists under a
+     * different category; the caller must skip that definition's tariffs
+     * entirely in that case, exactly as import() always has.
+     *
+     * @param array<string,mixed> $definition
+     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     */
+    private function resolveOrCreateFee(array $definition, array &$result): ?Fee
+    {
+        $fee = Fee::query()->where('name_ru', $definition['name'])->lockForUpdate()->first();
+
+        if ($fee && $fee->category !== $definition['category']) {
+            $result['conflicts'][] = "Услуга «{$definition['name']}» уже существует в другой категории.";
+
+            return null;
+        }
+
+        if ($fee) {
+            $result['services_reused']++;
+
+            return $fee;
+        }
+
+        $fee = Fee::create([
+            'name_ru' => $definition['name'],
+            'category' => $definition['category'],
+            'type' => $definition['type'],
+            'payment_period' => $definition['service_period'],
+            'amount' => '0.00',
+            'description' => $definition['description'] ?? null,
+            'is_active' => true,
+        ]);
+        $result['services_created']++;
+
+        return $fee;
+    }
+
+    /**
+     * Per-dimension idempotent upsert for one Fee's tariff variants,
+     * shared by import() and importUniformOnly() — pure extraction of
+     * import()'s original inline loop, no behavior change.
+     *
+     * @param array<int,array<string,mixed>> $tariffs
+     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     */
+    private function processTariffs(Fee $fee, AcademicYear $year, array $tariffs, array &$result): void
+    {
+        foreach ($tariffs as $variant) {
+            $attributes = array_merge([
+                'fee_id' => $fee->id,
+                'academic_year_id' => $year->id,
+                'amount' => $variant['amount'],
+                'currency' => 'EGP',
+                'start_date' => $year->start_date->toDateString(),
+                'end_date' => $year->end_date->toDateString(),
+                'grade_id' => null,
+                'grade_group' => null,
+                'payment_period' => null,
+                'option_type' => null,
+                'option_value' => null,
+                'item' => null,
+                'size' => null,
+                'is_active' => true,
+                'change_reason' => self::REASON,
+            ], $variant);
+
+            $dimensionFields = ['grade_id', 'grade_group', 'payment_period', 'option_type', 'option_value', 'item', 'size'];
+            $dimensions = FeePrice::query()->where('fee_id', $fee->id)->where('academic_year_id', $year->id);
+            foreach ($dimensionFields as $field) {
+                $attributes[$field] === null
+                    ? $dimensions->whereNull($field)
+                    : $dimensions->where($field, $attributes[$field]);
+            }
+
+            $existing = (clone $dimensions)->lockForUpdate()->get();
+            $exact = $existing->first(fn (FeePrice $price) =>
+                $price->currency === 'EGP'
+                && bccomp((string) $price->getRawOriginal('amount'), $attributes['amount'], 2) === 0
+                && $price->start_date->toDateString() === $attributes['start_date']
+                && $price->end_date?->toDateString() === $attributes['end_date']
+            );
+
+            if ($exact) {
+                $result['tariffs_skipped']++;
+                continue;
+            }
+
+            $overlap = $existing->first(fn (FeePrice $price) =>
+                $price->is_active
+                && $price->start_date->lte($attributes['end_date'])
+                && ($price->end_date === null || $price->end_date->gte($attributes['start_date']))
+            );
+
+            if ($overlap) {
+                $result['conflicts'][] = "Тариф для «{$fee->name_ru}» ({$this->variantLabel($attributes)}) пересекается с записью №{$overlap->id}.";
+                continue;
+            }
+
+            FeePrice::create(collect($attributes)->except('option_label')->all());
+            $result['tariffs_created']++;
         }
     }
 
@@ -298,7 +382,9 @@ class SchoolPriceListImportService
      * COMPLETE expected (item, size) pair set is verified active —
      * checked as actual dimension pairs, not merely a count of rows
      * carrying one of the 10 exact size strings, which an unrelated or
-     * duplicate row could otherwise falsely satisfy.
+     * duplicate row could otherwise falsely satisfy. Reused as-is by both
+     * import() and importUniformOnly() — this method never needs to know
+     * which caller invoked it.
      */
     private function deactivateLegacyUniformSizesIfReplacementComplete(Fee $fee, AcademicYear $year): void
     {

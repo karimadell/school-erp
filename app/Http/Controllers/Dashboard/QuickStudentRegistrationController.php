@@ -48,10 +48,24 @@ class QuickStudentRegistrationController extends Controller
         // resolver itself applies, never a separate UI-only date scope.
         $academicYearIds = $academicYears->pluck('id');
         $today = now()->toDateString();
-        $fees = Fee::with(['prices' => fn ($query) => $query
-                ->active()->where('currency', 'EGP')
-                ->whereIn('academic_year_id', $academicYearIds)
-                ->orderByDesc('start_date')])
+        $fees = Fee::with([
+                'prices' => fn ($query) => $query
+                    ->active()->where('currency', 'EGP')
+                    ->whereIn('academic_year_id', $academicYearIds)
+                    ->orderByDesc('start_date'),
+                // Phase 2B/2D corrective pass — the canonical allowed-period
+                // source (see Fee::allowedBillingPeriods()), eager-loaded so
+                // the period dropdown never re-queries per Fee row.
+                'billingPeriods',
+            ])
+            // Phase 2D corrective pass (Quick Registration operator UX) —
+            // internal/test Fee records (e.g. ad-hoc UAT fixtures created
+            // directly against a live environment) must never appear as a
+            // selectable service card here. This is a display-scope filter
+            // only: is_test_data is never used to delete/deactivate a Fee,
+            // so historical invoice_items/tariff_adjustments referencing a
+            // test Fee remain completely valid and queryable regardless.
+            ->where('is_test_data', false)
             ->active()->orderBy('category')->orderBy('name_ru')->get();
         $fees->each(fn (Fee $fee) => $fee->setRelation('prices', $calculator->resolvableCandidates($fee->prices, $today)));
 
@@ -229,12 +243,30 @@ class QuickStudentRegistrationController extends Controller
         }
         $calculation = $calculator->calculate(items: [$item], pricingDate: $pricingDate->toDateString(), academicYearId: (int) $data['academic_year_id']);
 
+        // Pre-Premium-UI corrective pass (Decision 3) — the Food duration-
+        // mode summary the live preview needs (billable day count, resolved
+        // coverage span) is already computed by FoodBillableDayCalculator
+        // and already present in this SAME calculate() call's line-item
+        // metadata (see InvoiceCalculationService's Food branch: 'unit_count'
+        // = billable_day_count as a string, 'coverage_start'/'coverage_end').
+        // Never recalculated separately — this is a read of the exact same
+        // canonical result final issuance uses, just surfaced in the JSON.
+        // Scoped to genuinely daily-billed (Food) lines only; every other
+        // category returns null here rather than reusing these same
+        // metadata keys, which calendar-billed lines (monthly/quarterly
+        // Tuition) also happen to populate for an unrelated reason.
+        $lineMetadata = $calculation['line_items'][0]['metadata'] ?? [];
+        $isFoodPreview = ($lineMetadata['billing_unit'] ?? null) === 'daily';
+
         return response()->json([
             'unit_price' => $calculation['line_items'][0]['unit_price'],
             'amount' => $calculation['line_items'][0]['amount'],
             'currency' => InvoiceCalculationService::CURRENCY,
             'valid_from' => $calculation['line_items'][0]['tariff_valid_from'],
             'valid_to' => $calculation['line_items'][0]['tariff_valid_to'],
+            'billable_day_count' => $isFoodPreview ? (int) ($lineMetadata['unit_count'] ?? 0) : null,
+            'coverage_start' => $isFoodPreview ? ($lineMetadata['coverage_start'] ?? null) : null,
+            'coverage_end' => $isFoodPreview ? ($lineMetadata['coverage_end'] ?? null) : null,
         ]);
     }
 

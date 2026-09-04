@@ -47,6 +47,7 @@ class Fee extends Model
         'is_non_refundable',
         'billing_period',
         'exempt_from_balance_block',
+        'is_test_data',
     ];
 
     protected $casts = [
@@ -56,6 +57,7 @@ class Fee extends Model
         'is_active' => 'boolean',
         'is_non_refundable' => 'boolean',
         'exempt_from_balance_block' => 'boolean',
+        'is_test_data' => 'boolean',
     ];
 
     public function invoices()
@@ -114,6 +116,27 @@ class Fee extends Model
         }
 
         return $this->billingPeriods()->where('billing_period', $period)->exists();
+    }
+
+    /**
+     * Finance V2, Phase 2B corrective pass (Quick Registration parity) —
+     * the canonical set of period strings this Fee is allowed to bill
+     * under, per FeeBillingPeriod, regardless of whether a FeePrice row
+     * happens to exist yet for every one of them. A period this Fee
+     * allows but has no explicit tariff for is still offerable — the
+     * pricing resolver (InvoiceCalculationService) derives a quarterly
+     * amount from monthly × 3 in that exact case. Uses the loaded
+     * billingPeriods relation if already eager-loaded (no extra query).
+     *
+     * @return \Illuminate\Support\Collection<int, string>
+     */
+    public function allowedBillingPeriods(): \Illuminate\Support\Collection
+    {
+        if ($this->relationLoaded('billingPeriods')) {
+            return $this->billingPeriods->pluck('billing_period')->unique()->values();
+        }
+
+        return $this->billingPeriods()->pluck('billing_period')->unique()->values();
     }
 
     /**

@@ -108,8 +108,20 @@
                             <div class="service-fields row g-3 mt-1 d-none">
                                 @if($groupKey !== 'uniform')<input type="hidden" name="services[{{ $index }}][quantity]" value="1" class="quantity">@endif
                                 @if($groupKey === 'tuition')
+                                    @php
+                                        // Corrective pass — a period this Fee allows (FeeBillingPeriod,
+                                        // the Phase 2B canonical source) must be offerable even when no
+                                        // explicit FeePrice row exists for it yet: InvoiceCalculationService
+                                        // derives quarterly = monthly × 3 in exactly that case. Scoped to
+                                        // calendar-billing periods only — 'custom_plan' is a distinct UI
+                                        // concept handled by the separate payment-plan selection below, not
+                                        // this dropdown.
+                                        $tuitionPeriodOptions = $fee->prices->pluck('payment_period')->filter()->unique()
+                                            ->merge($fee->allowedBillingPeriods()->intersect(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS))
+                                            ->unique()->values();
+                                    @endphp
                                     <div class="col-md-3"><label class="form-label">Группа классов</label><select name="services[{{ $index }}][grade_group]" class="form-select price-option"><option value="">По выбранному классу</option>@foreach($fee->prices->pluck('grade_group')->filter()->unique() as $option)<option value="{{ $option }}" @selected(($oldService['grade_group'] ?? null) === $option)>{{ $option }}</option>@endforeach</select></div>
-                                    <div class="col-md-3"><label class="form-label">Период оплаты</label><select name="services[{{ $index }}][payment_period]" class="form-select price-option"><option value="">Стандартный</option>@foreach($fee->prices->pluck('payment_period')->filter()->unique() as $option)<option value="{{ $option }}" @selected(($oldService['payment_period'] ?? null) === $option)>{{ $periodLabels[$option] ?? $option }}</option>@endforeach</select></div>
+                                    <div class="col-md-3"><label class="form-label">Период оплаты</label><select name="services[{{ $index }}][payment_period]" class="form-select price-option"><option value="">Стандартный</option>@foreach($tuitionPeriodOptions as $option)<option value="{{ $option }}" @selected(($oldService['payment_period'] ?? null) === $option)>{{ $periodLabels[$option] ?? $option }}</option>@endforeach</select></div>
                                     <div class="col-md-3 form-check mt-5"><input type="checkbox" value="1" name="services[{{ $index }}][first_last_month]" class="form-check-input price-option" id="first-last-{{ $fee->id }}" @checked(!empty($oldService['first_last_month']))><label for="first-last-{{ $fee->id }}">Первый и последний месяц</label></div>
                                 @elseif($groupKey === 'transport')
                                     @php

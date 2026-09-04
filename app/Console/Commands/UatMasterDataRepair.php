@@ -215,9 +215,22 @@ class UatMasterDataRepair extends Command
     private function planUniform(AcademicYear $year): array
     {
         $uniformFeeIds = Fee::where('category', Fee::CATEGORY_UNIFORM)->pluck('id');
+        // Corrective pass P1 (code review) — only CURRENTLY SELLABLE
+        // (active) FeePrice rows should ever produce/reactivate a
+        // uniform_products catalog entry. Without this filter, a legacy
+        // grouped-size FeePrice deactivated by SchoolPriceListImportService
+        // (e.g. '6–10') would still generate/reactivate an "active"
+        // uniform_products row for a combination nothing can actually be
+        // sold against anymore — a stale, misleading catalog entry, even
+        // though Quick Registration's own selector independently
+        // cross-checks against active FeePrice sellability and would
+        // never actually offer it. This does not delete or deactivate any
+        // existing uniform_products row — it only narrows which FeePrice
+        // rows are read as the CURRENT source of truth here.
         $rows = FeePrice::whereIn('fee_id', $uniformFeeIds)
             ->where('academic_year_id', $year->id)
             ->whereNotNull('item')->whereNotNull('size')
+            ->where('is_active', true)
             ->get();
 
         $pairs = $rows->groupBy(fn (FeePrice $p) => $p->item.'|'.$p->size);

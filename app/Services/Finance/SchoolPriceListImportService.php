@@ -116,6 +116,19 @@ class SchoolPriceListImportService
                     FeePrice::create(collect($attributes)->except('option_label')->all());
                     $result['tariffs_created']++;
                 }
+
+                // Corrective pass (code review P0) — the exact-size rows
+                // above (uniformIndividualSizeVariants()) are this Fee's
+                // replacement for the legacy grouped-tier rows
+                // (uniformVariants()) for THIS SAME academic year. Once
+                // this run has processed the Uniform definition's full
+                // tariffs loop, the legacy rows must stop being selectable
+                // for NEW sales without ever deleting or rewriting them —
+                // but ONLY once the complete exact-size replacement matrix
+                // genuinely exists as active (see hardening note below).
+                if ($definition['category'] === Fee::CATEGORY_UNIFORM) {
+                    $this->deactivateLegacyUniformSizesIfReplacementComplete($fee, $year);
+                }
             }
 
             $dryRun ? DB::rollBack() : DB::commit();
@@ -142,7 +155,7 @@ class SchoolPriceListImportService
             ], self::TRANSPORT_ZONE_OPTION_TYPE))],
             ['name' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'type' => 'service', 'service_period' => Fee::PERIOD_DAILY, 'tariffs' => $tariffs($this->mealPlanTariffs())],
             ['name' => 'Экстернат', 'category' => Fee::CATEGORY_TUITION_EXTERNAL, 'type' => 'service', 'service_period' => null, 'tariffs' => $tariffs($this->periodVariants(['1–4 классы' => ['25600.00', '3200.00']]))],
-            ['name' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM, 'type' => 'service', 'service_period' => Fee::PERIOD_PACKAGE, 'description' => 'Комплект: 2 майки + 1 поло + 1 толстовка', 'tariffs' => $tariffs($this->uniformVariants())],
+            ['name' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM, 'type' => 'service', 'service_period' => Fee::PERIOD_PACKAGE, 'description' => 'Комплект: 2 майки + 1 поло + 1 толстовка', 'tariffs' => $tariffs(array_merge($this->uniformVariants(), $this->uniformIndividualSizeVariants()))],
         ];
     }
 
@@ -220,6 +233,103 @@ class SchoolPriceListImportService
             }
         }
         return $rows;
+    }
+
+    /**
+     * Corrective pass — Uniform Procurement Report gap (business
+     * requirement: factory procurement needs Item + EXACT size + quantity,
+     * never a size range). uniformVariants() above is NEVER modified or
+     * removed by this method — those 3 grouped-tier rows remain importable
+     * exactly as before, so any historical FeePrice/invoice_item already
+     * carrying '6–10'/'12–16'/'от S' stays fully readable and untouched
+     * (requirement 5: legacy grouped values are preserved as historical
+     * data, never silently reinterpreted). This method is purely additive:
+     * new FeePrice rows, one per (item, individual exact size), imported
+     * side by side with the legacy rows via the SAME idempotent per-
+     * dimension upsert import() already performs — re-running import()
+     * never duplicates or rewrites either set.
+     *
+     * Pricing note (explicit, not hidden): each exact size is priced at
+     * its ORIGINATING tier's existing flat price — no new per-size price
+     * was supplied by the business for this pass, so the safest, most
+     * conservative choice is to carry the tier price over unchanged
+     * rather than invent per-size figures. If the business later wants
+     * genuinely different pricing per exact size, that is a distinct
+     * pricing decision for someone to make explicitly, not something to
+     * assume here.
+     */
+    private function uniformIndividualSizeVariants(): array
+    {
+        $tierPricesByItem = [
+            '6–10' => ['Комплект' => '2000.00', 'Майка' => '400.00', 'Поло' => '600.00', 'Толстовка' => '900.00'],
+            '12–16' => ['Комплект' => '2500.00', 'Майка' => '500.00', 'Поло' => '700.00', 'Толстовка' => '1200.00'],
+            'от S' => ['Комплект' => '3000.00', 'Майка' => '500.00', 'Поло' => '800.00', 'Толстовка' => '1500.00'],
+        ];
+        $exactSizesByTier = [
+            '6–10' => ['6', '8', '10'],
+            '12–16' => ['12', '14', '16'],
+            'от S' => ['S', 'M', 'L', 'XL'],
+        ];
+
+        $rows = [];
+        foreach ($tierPricesByItem as $tier => $items) {
+            foreach ($exactSizesByTier[$tier] as $size) {
+                foreach ($items as $item => $amount) {
+                    $rows[] = ['amount' => $amount, 'payment_period' => Fee::PERIOD_ONCE, 'size' => $size, 'item' => $item];
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Corrective pass P0 hardening (code review) — the tariffs loop above
+     * records a genuine dimensional conflict (e.g. a director's
+     * pre-existing manual tariff for one exact item+size) by skipping
+     * that ONE row and appending to $result['conflicts'], never by
+     * throwing — so the loop can finish normally even when one or more of
+     * the 40 expected exact-size (item, size) combinations never got
+     * created this run. Deactivating the legacy grouped rows in that
+     * state would leave that one combination with NEITHER an active
+     * legacy fallback NOR an exact-size replacement — silently losing
+     * sellability for something that may be manually, legitimately
+     * priced. So the legacy rows may only become inactive once the
+     * COMPLETE expected (item, size) pair set is verified active —
+     * checked as actual dimension pairs, not merely a count of rows
+     * carrying one of the 10 exact size strings, which an unrelated or
+     * duplicate row could otherwise falsely satisfy.
+     */
+    private function deactivateLegacyUniformSizesIfReplacementComplete(Fee $fee, AcademicYear $year): void
+    {
+        $exactSizes = ['6', '8', '10', '12', '14', '16', 'S', 'M', 'L', 'XL'];
+
+        $expectedPairs = collect($this->uniformIndividualSizeVariants())
+            ->map(fn (array $row) => $row['item'].'|'.$row['size'])
+            ->unique();
+
+        $activePairs = FeePrice::where('fee_id', $fee->id)
+            ->where('academic_year_id', $year->id)
+            ->whereIn('size', $exactSizes)
+            ->where('is_active', true)
+            ->get(['item', 'size'])
+            ->map(fn (FeePrice $price) => $price->item.'|'.$price->size)
+            ->unique();
+
+        $missing = $expectedPairs->diff($activePairs);
+
+        if ($missing->isNotEmpty()) {
+            // Incomplete replacement set — a normal, expected outcome of a
+            // recorded conflict, never an error. Preserve previous
+            // sellability: legacy rows stay exactly as they were.
+            return;
+        }
+
+        FeePrice::where('fee_id', $fee->id)
+            ->where('academic_year_id', $year->id)
+            ->whereIn('size', ['6–10', '12–16', 'от S'])
+            ->where('is_active', true)
+            ->update(['is_active' => false]);
     }
 
     /** @param array<string,mixed> $attributes */

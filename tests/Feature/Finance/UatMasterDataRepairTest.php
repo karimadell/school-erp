@@ -234,6 +234,23 @@ class UatMasterDataRepairTest extends TestCase
         $this->assertEquals($uniformBefore, FeePrice::where('fee_id', $this->uniformFee->id)->get()->toArray());
     }
 
+    // ----- 6b. Inactive (e.g. deactivated legacy) FeePrice rows do not produce/reactivate a uniform_products entry (P1 corrective pass) --
+
+    public function test_inactive_uniform_fee_price_does_not_produce_a_catalog_row(): void
+    {
+        // An inactive combination — e.g. exactly what SchoolPriceListImportService's
+        // legacy-grouped-size deactivation leaves behind for '6–10' once
+        // exact-size replacements exist.
+        $this->uniformPrice('900.00', 'Толстовка', '6–10')->update(['is_active' => false]);
+
+        Artisan::call('finance:uat-master-data-repair', ['--year' => '2026/2027', '--apply' => true]);
+
+        $this->assertDatabaseMissing('uniform_products', ['name_ru' => 'Толстовка', 'size' => '6–10']);
+        // The active fixtures (Комплект/Майка, both '6–10') still produce their rows.
+        $this->assertDatabaseHas('uniform_products', ['name_ru' => 'Комплект', 'size' => '6–10']);
+        $this->assertDatabaseHas('uniform_products', ['name_ru' => 'Майка', 'size' => '6–10']);
+    }
+
     // ----- 7. No invoice/payment/cash rows are created ---------------------------
 
     public function test_no_invoice_payment_or_cash_rows_are_created(): void

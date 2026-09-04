@@ -85,8 +85,19 @@ class ImportUniformExactSizes extends Command
         // Reported fresh from the DB after the run (not from $result, which
         // only counts this run's own creates/skips) so the operator always
         // sees the true current state — including rows created by an
-        // earlier run.
-        [$activeExactCount, $activeLegacyCount] = $this->currentCounts($academicYearName);
+        // earlier run. Resolves the operational Fee the SAME way
+        // importUniformOnly() itself does (category + is_test_data=false,
+        // never by the catalog's hardcoded name_ru) — otherwise this
+        // reporting could stay wrong (e.g. always "0 из 40") even after a
+        // genuinely successful apply, purely because the real Fee's
+        // name_ru differs in capitalization from the catalog string.
+        $counts = $this->currentCounts($academicYearName);
+        if ($counts === null) {
+            $this->error('Найдено несколько активных услуг категории «uniform» — не удалось однозначно определить, какую отчитывать. Обратитесь к разработчику перед повторным запуском.');
+
+            return self::FAILURE;
+        }
+        [$activeExactCount, $activeLegacyCount] = $counts;
         $this->newLine();
         $this->line("Активных точных комбинаций товар+размер: {$activeExactCount} из 40.");
         $this->line('Активных устаревших сгруппированных размеров (6–10 / 12–16 / от S): '.$activeLegacyCount.'.');
@@ -95,16 +106,39 @@ class ImportUniformExactSizes extends Command
             $this->warn('Полная замена точными размерами ещё не завершена — устаревшие сгруппированные тарифы остаются активными как резервный вариант продажи. Это ожидаемое, безопасное поведение, а не ошибка.');
         }
 
-        $this->line($dryRun ? 'Проверка завершена. База данных не изменена.' : 'Импорт завершён. Исторические счета и платежи не изменялись; затронута только категория «Школьная форма».');
+        // Dry-run note: these counts reflect the ACTUAL current database
+        // state after the transaction was rolled back — never a preview
+        // of what would have been persisted. In dry-run mode they will
+        // typically look unchanged from before the run (e.g. still 0/40
+        // on a first-ever dry-run against a brand-new Fee, since nothing
+        // was kept) — that is correct, not a bug in this reporting.
+        $this->line($dryRun ? 'Проверка завершена. База данных не изменена — счётчики выше отражают фактическое состояние БД ПОСЛЕ отката транзакции, а не то, что было бы создано при реальном запуске.' : 'Импорт завершён. Исторические счета и платежи не изменялись; затронута только категория «Школьная форма».');
 
         return $result['conflicts'] === [] ? self::SUCCESS : self::FAILURE;
     }
 
-    /** @return array{0:int,1:int} */
-    private function currentCounts(string $academicYearName): array
+    /**
+     * Resolves the SAME operational Uniform Fee identity
+     * importUniformOnly() itself resolves (category + is_test_data=false,
+     * never by the catalog's hardcoded name_ru — see
+     * SchoolPriceListImportService::resolveOperationalUniformFee()) so
+     * this reporting can never disagree with what the import actually
+     * acted on. Returns null if more than one eligible candidate exists —
+     * this is read-only reporting, so it never guesses, it just refuses
+     * to report a possibly-wrong number.
+     *
+     * @return array{0:int,1:int}|null
+     */
+    private function currentCounts(string $academicYearName): ?array
     {
         $year = AcademicYear::where('name', $academicYearName)->first();
-        $fee = Fee::where('name_ru', 'Школьная форма')->where('category', Fee::CATEGORY_UNIFORM)->first();
+        $candidates = Fee::where('category', Fee::CATEGORY_UNIFORM)->where('is_test_data', false)->get();
+
+        if ($candidates->count() > 1) {
+            return null;
+        }
+
+        $fee = $candidates->first();
 
         if (! $year || ! $fee) {
             return [0, 0];

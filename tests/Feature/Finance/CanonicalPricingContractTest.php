@@ -51,6 +51,11 @@ class CanonicalPricingContractTest extends FinanceOperationsTestCase
         $this->year->update(['is_active' => false]);
         app(SchoolPriceListImportService::class)->import();
 
+        // Food flexible-duration corrective pass: the live-pricing preview
+        // endpoint resolves Food's range via FoodBillableDayCalculator,
+        // which requires an AcademicCalendar for the year plus an explicit
+        // duration-mode selection.
+        \App\Models\AcademicCalendar::create(['academic_year_id' => $importYear->id, 'weekly_days_off' => ['fri', 'sat']]);
         $food = Fee::where('category', Fee::CATEGORY_FOOD)->firstOrFail();
         $breakfast = MealPlan::where('name_ru', 'Завтрак')->firstOrFail();
         $price = FeePrice::where('fee_id', $food->id)->where('option_value', (string) $breakfast->id)->firstOrFail();
@@ -62,12 +67,26 @@ class CanonicalPricingContractTest extends FinanceOperationsTestCase
             'enrollment_mode_id' => $this->makeActiveEnrollmentMode()->id,
             'meal_plan_id' => $breakfast->id,
             'pricing_date' => '2025-09-15',
+            'food_duration_mode' => 'day',
+            'food_date' => '2025-09-15',
         ]);
 
         $response->assertOk()->assertJsonPath('unit_price', $price->amount);
     }
 
-    public function test_food_tariff_resolves_in_the_classic_invoice_create_screen(): void
+    /**
+     * Food flexible-duration corrective pass: Food can no longer be
+     * bought through the classic one-time invoice screen at all — it
+     * requires an explicit duration-mode selection (day/school_week/
+     * teaching_days/month/custom_range) only Quick Registration's
+     * calendar payment_type offers, and InvoiceController::create()
+     * already excludes Food from this screen's own fee dropdown
+     * (Fee::CATEGORY_FOOD is filtered out there). This test now confirms
+     * the server-side guard behind that exclusion actually holds — a
+     * direct POST attempting to buy Food here is rejected, never silently
+     * priced.
+     */
+    public function test_food_cannot_be_purchased_through_the_classic_invoice_create_screen(): void
     {
         $food = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '1.00', 'is_active' => true]);
         $plan = MealPlan::create(['name_ru' => 'Обед', 'meal_type' => 'lunch', 'period' => 'daily', 'price' => '100.00', 'is_active' => true]);
@@ -88,10 +107,8 @@ class CanonicalPricingContractTest extends FinanceOperationsTestCase
             'initial_payment_amount' => '0.00',
         ]);
 
-        $response->assertSessionHasNoErrors();
-        $item = Invoice::with('items')->sole()->items->sole();
-        $this->assertSame('100.00', $item->unit_price);
-        $this->assertSame('meal_plan', $item->metadata['option_type'] ?? null);
+        $response->assertSessionHasErrors();
+        $this->assertSame(0, Invoice::count());
     }
 
     public function test_a_sellable_uniform_item_and_size_combination_resolves(): void

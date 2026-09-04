@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Finance;
 
+use App\Models\AcademicCalendar;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
@@ -108,12 +109,15 @@ class Phase2TariffAdjustmentAndPromiseTest extends FinanceOperationsTestCase
 
     public function test_food_daily_coverage_uses_daily_effective_interval(): void
     {
+        AcademicCalendar::create(['academic_year_id' => $this->year->id, 'weekly_days_off' => ['fri', 'sat']]);
         $food = Fee::create(['name_ru' => 'Питание', 'category' => Fee::CATEGORY_FOOD, 'amount' => '1.00', 'is_active' => true]);
         $old = $this->price($food, '70.00', '2026-09-01', '2027-01-09', ['option_type' => 'meal_plan', 'option_value' => 'Завтрак', 'payment_period' => 'daily']);
         $new = $this->price($food, '80.00', '2027-01-10', '2027-06-30', ['option_type' => 'meal_plan', 'option_value' => 'Завтрак', 'payment_period' => 'daily']);
         $coverage = $this->coverage($food, $old, '2027-01-10', '2027-01-14', 'daily');
         $preview = app(TariffAdjustmentService::class)->preview($coverage, $new);
 
+        // 2027-01-10..2027-01-14 is Sun-Thu — all 5 days are teaching days
+        // under weekly_days_off=['fri','sat'] with no holiday in range.
         $this->assertSame(5, $preview['units']);
         $this->assertSame('50.00', $preview['total_difference']);
     }

@@ -60,26 +60,38 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
 
     public function test_multi_service_invoice_creates_one_canonical_snapshot_per_selected_service(): void
     {
+        // Food flexible-duration corrective pass: Food can no longer be
+        // purchased through this classic one-time invoice route at all
+        // (InvoiceController::create()/StudentInvoiceController::create()
+        // both exclude it from their fee dropdowns — Food requires an
+        // explicit duration-mode selection only Quick Registration's
+        // calendar payment_type offers). Transport is the substitute
+        // option_type/option_value-dimensioned category here — StoreInvoiceRequest
+        // only accepts those fields for Tuition/Transport/Food/Uniform, so
+        // an arbitrary category (e.g. Activity) cannot stand in for Food's
+        // exact field shape — it exercises the identical "independent
+        // canonical snapshot per selected service" behavior this test
+        // targets.
         [$ordinary, $ordinaryPrice] = $this->service('Кружок', Fee::CATEGORY_OTHER, '300.00');
-        [$food, $foodPrice] = $this->service('Питание', Fee::CATEGORY_FOOD, '450.00', ['option_type' => 'meal_plan', 'option_value' => 'monthly']);
+        [$transport, $transportPrice] = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '450.00', ['option_type' => 'zone', 'option_value' => 'Зона 1']);
 
         $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store', $this->student),
-            $this->payload([$this->fee, $ordinary, $food], [$ordinaryPrice, $foodPrice], [
-                'option_type' => [$food->id => 'meal_plan'],
-                'option_value' => [$food->id => 'monthly'],
-            ]))->assertRedirect();
+            $this->payload([$this->fee, $ordinary, $transport], [$ordinaryPrice, $transportPrice], [
+                'option_type' => [$transport->id => 'zone'],
+                'option_value' => [$transport->id => 'Зона 1'],
+            ]))->assertSessionHasNoErrors()->assertRedirect();
 
         $invoice = Invoice::with('items')->sole();
         $this->assertSame('1950.00', $invoice->total_amount);
         $this->assertSame('1950.00', $invoice->items->reduce(fn ($sum, $item) => bcadd($sum, $item->amount, 2), '0.00'));
         $this->assertCount(3, $invoice->items);
-        $this->assertEqualsCanonicalizing(['Обучение', 'Кружок', 'Питание'], $invoice->items->pluck('description')->all());
-        $foodItem = $invoice->items->firstWhere('fee_id', $food->id);
-        $this->assertSame('450.00', $foodItem->unit_price);
-        $this->assertSame(1, $foodItem->quantity);
-        $this->assertSame('monthly', $foodItem->metadata['option_value']);
-        $this->assertSame($foodPrice->id, $foodItem->metadata['fee_price_id']);
-        $this->assertSame('2026-09-01', $foodItem->metadata['pricing_date']);
+        $this->assertEqualsCanonicalizing(['Обучение', 'Кружок', 'Трансфер'], $invoice->items->pluck('description')->all());
+        $transportItem = $invoice->items->firstWhere('fee_id', $transport->id);
+        $this->assertSame('450.00', $transportItem->unit_price);
+        $this->assertSame(1, $transportItem->quantity);
+        $this->assertSame('Зона 1', $transportItem->metadata['option_value']);
+        $this->assertSame($transportPrice->id, $transportItem->metadata['fee_price_id']);
+        $this->assertSame('2026-09-01', $transportItem->metadata['pricing_date']);
     }
 
     public function test_tuition_and_transport_keep_independent_context_and_deselected_service_is_ignored(): void
@@ -242,36 +254,41 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
         $this->assertSame('300.00', $invoice->items->sole()->amount);
     }
 
-    public function test_tuition_transport_food_and_uniform_context_is_persisted_from_tariffs(): void
+    // Food flexible-duration corrective pass: renamed from "...food and
+    // uniform..." — Food is no longer purchasable through this classic
+    // one-time invoice route (see the docblock on the multi-service
+    // snapshot test above); Tuition/Transport/Uniform alone already
+    // exercise every distinct context-persistence field shape
+    // (grade_group+payment_period, option_type+option_value+payment_period,
+    // item+size) StoreInvoiceRequest supports, so no substitute for Food
+    // is needed here.
+    public function test_tuition_transport_and_uniform_context_is_persisted_from_tariffs(): void
     {
         [$tuition, $tuitionPrice] = $this->service('Обучение 1–4', Fee::CATEGORY_TUITION, '1000.00', ['grade_group' => '1–4 классы', 'payment_period' => 'yearly']);
         [$transport, $transportPrice] = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT, '200.00', ['option_type' => 'zone', 'option_value' => 'A', 'payment_period' => 'monthly']);
-        [$food, $foodPrice] = $this->service('Питание', Fee::CATEGORY_FOOD, '150.00', ['option_type' => 'meal_plan', 'option_value' => 'monthly']);
         [$uniform, $uniformPrice] = $this->service('Форма', Fee::CATEGORY_UNIFORM, '250.00', ['item' => 'polo', 'size' => 'M']);
-        $fees = [$tuition, $transport, $food, $uniform];
-        $prices = [$tuitionPrice, $transportPrice, $foodPrice, $uniformPrice];
+        $fees = [$tuition, $transport, $uniform];
+        $prices = [$tuitionPrice, $transportPrice, $uniformPrice];
 
         $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store', $this->student),
             $this->payload($fees, $prices, [
                 'grade_group' => [$tuition->id => '1–4 классы'],
                 'payment_period' => [$tuition->id => 'yearly', $transport->id => 'monthly'],
-                'option_type' => [$transport->id => 'zone', $food->id => 'meal_plan'],
-                'option_value' => [$transport->id => 'A', $food->id => 'monthly'],
+                'option_type' => [$transport->id => 'zone'],
+                'option_value' => [$transport->id => 'A'],
                 'uniform_item' => [$uniform->id => 'polo'],
                 'uniform_size' => [$uniform->id => 'M'],
-            ]))->assertRedirect();
+            ]))->assertSessionHasNoErrors()->assertRedirect();
 
         $invoice = Invoice::with('items')->sole();
         $items = $invoice->items->keyBy('fee_id');
         $this->assertSame(['1–4 классы', 'yearly'], [$items[$tuition->id]->metadata['grade_group'], $items[$tuition->id]->metadata['payment_period']]);
         $this->assertSame(['zone', 'A', 'monthly'], [$items[$transport->id]->metadata['option_type'], $items[$transport->id]->metadata['option_value'], $items[$transport->id]->metadata['payment_period']]);
-        $this->assertSame(['meal_plan', 'monthly'], [$items[$food->id]->metadata['option_type'], $items[$food->id]->metadata['option_value']]);
         $this->assertSame(['polo', 'M'], [$items[$uniform->id]->metadata['item'], $items[$uniform->id]->metadata['size']]);
 
         $this->get(route('dashboard.invoices.show', $invoice))->assertOk()
             ->assertSee('1–4 классы')->assertSee('yearly')
             ->assertSee('zone')->assertSee('A')
-            ->assertSee('meal_plan')->assertSee('monthly')
             ->assertSee('polo')->assertSee('M')
             ->assertDontSee('fee_price_id');
     }

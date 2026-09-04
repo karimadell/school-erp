@@ -34,6 +34,14 @@ class MassBillingEligibilityService
     public const SKIP_REGISTRATION_DUPLICATE = 'registration_duplicate';
     public const SKIP_NO_TARIFF = 'no_tariff';
     public const SKIP_PRICING_ERROR = 'pricing_error';
+    // Food flexible-duration corrective pass: Mass Billing has no
+    // duration-mode selection UI/concept at all (no per-student day/
+    // school_week/teaching_days/month/custom_range choice) — Food is
+    // therefore always skipped here, fail-closed, rather than ever
+    // reaching InvoiceCalculationService::calculate() without a
+    // food_resolution and silently pricing off whatever quantity this
+    // service happens to submit (never a real day-count).
+    public const SKIP_FOOD_NOT_SUPPORTED = 'food_not_supported';
 
     private const TUITION_CATEGORIES = [
         Fee::CATEGORY_TUITION,
@@ -102,6 +110,10 @@ class MassBillingEligibilityService
 
         if ($fee->category === Fee::CATEGORY_REGISTRATION && $registrationDuplicate) {
             return $this->skip(self::SKIP_REGISTRATION_DUPLICATE);
+        }
+
+        if ($fee->category === Fee::CATEGORY_FOOD) {
+            return $this->skip(self::SKIP_FOOD_NOT_SUPPORTED);
         }
 
         try {

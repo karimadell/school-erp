@@ -90,6 +90,7 @@ class FinanceConfigurationReadinessService
                 $activeMealPlanIds,
                 $activeUniformCombinations,
                 $hasUsableRoute,
+                $year->academicCalendar()->exists(),
             ),
         ]);
     }
@@ -100,7 +101,7 @@ class FinanceConfigurationReadinessService
         $prices = FeePrice::query()->where('fee_id', $fee->id)->active()->where('currency', 'EGP')->where('academic_year_id', $year->id)->get();
         $resolvable = $this->calculator->resolvableCandidates($prices, now()->toDateString());
 
-        return $this->assess($fee, $resolvable, $this->activeMealPlanIds(), $this->activeUniformCombinations(), $this->hasUsableTransportRoute());
+        return $this->assess($fee, $resolvable, $this->activeMealPlanIds(), $this->activeUniformCombinations(), $this->hasUsableTransportRoute(), $year->academicCalendar()->exists());
     }
 
     private function activeMealPlanIds(): Collection
@@ -184,10 +185,11 @@ class FinanceConfigurationReadinessService
         Collection $activeMealPlanIds,
         Collection $activeUniformCombinations,
         bool $hasUsableRoute,
+        bool $hasAcademicCalendar,
     ): array {
         return match ($fee->category) {
             Fee::CATEGORY_TRANSPORT => $this->assessTransport($prices, $hasUsableRoute),
-            Fee::CATEGORY_FOOD => $this->assessFood($prices, $activeMealPlanIds),
+            Fee::CATEGORY_FOOD => $this->assessFood($prices, $activeMealPlanIds, $hasAcademicCalendar),
             Fee::CATEGORY_UNIFORM => $this->assessUniform($prices, $activeUniformCombinations),
             default => $this->assessDefault($prices),
         };
@@ -233,13 +235,15 @@ class FinanceConfigurationReadinessService
      *
      * @return array{ready: bool, reason: ?string}
      */
-    private function assessFood(Collection $prices, Collection $activeMealPlanIds): array
+    private function assessFood(Collection $prices, Collection $activeMealPlanIds, bool $hasAcademicCalendar): array
     {
-        $ready = $prices->where('option_type', 'meal_plan')->contains(
+        $ready = $hasAcademicCalendar && $prices->where('payment_period', Fee::PERIOD_DAILY)->where('option_type', 'meal_plan')->contains(
             fn (FeePrice $price) => is_numeric($price->option_value) && $activeMealPlanIds->contains((int) $price->option_value)
         );
 
-        return ['ready' => $ready, 'reason' => $ready ? null : 'Нет активного плана питания с настроенной ценой.'];
+        return ['ready' => $ready, 'reason' => $ready ? null : ($hasAcademicCalendar
+            ? 'Нет активного плана питания с дневным тарифом.'
+            : 'Для питания не настроен учебный календарь.')];
     }
 
     /**

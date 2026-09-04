@@ -36,9 +36,20 @@ class QuickRegistrationAvailabilityGatingTest extends QuickRegistrationUxTestCas
         return str_contains($matches[1], 'disabled');
     }
 
+    /**
+     * Food flexible-duration corrective pass: FinanceConfigurationReadinessService::
+     * assessFood() (already-established, pre-existing behavior — not
+     * introduced by the duration-mode work) additionally requires an
+     * AcademicCalendar for the year, since Food's own day-count calculator
+     * needs one, and requires the resolved tariff's payment_period to be
+     * genuinely 'daily'. Both tests below configure an AcademicCalendar so
+     * they exercise the actual tariff-presence gating they're named for,
+     * rather than being masked by the calendar-missing reason.
+     */
     public function test_food_is_disabled_when_no_meal_plan_backed_tariff_exists(): void
     {
         [$year] = $this->structure();
+        \App\Models\AcademicCalendar::create(['academic_year_id' => $year->id, 'weekly_days_off' => ['fri', 'sat']]);
         $food = $this->fee('Питание', Fee::CATEGORY_FOOD);
         MealPlan::create(['name_ru' => 'Завтрак', 'meal_type' => 'breakfast', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
         // A meal plan exists, but no FeePrice was ever configured for it.
@@ -47,12 +58,13 @@ class QuickRegistrationAvailabilityGatingTest extends QuickRegistrationUxTestCas
             ->assertOk()->getContent();
 
         $this->assertTrue($this->isServiceCheckboxDisabled($html, $food));
-        $this->assertStringContainsString('Нет активного плана питания с настроенной ценой.', $html);
+        $this->assertStringContainsString('Нет активного плана питания с дневным тарифом.', $html);
     }
 
     public function test_food_is_enabled_when_a_meal_plan_backed_tariff_exists(): void
     {
         [$year] = $this->structure();
+        \App\Models\AcademicCalendar::create(['academic_year_id' => $year->id, 'weekly_days_off' => ['fri', 'sat']]);
         $food = $this->fee('Питание', Fee::CATEGORY_FOOD);
         $plan = MealPlan::create(['name_ru' => 'Завтрак', 'meal_type' => 'breakfast', 'period' => 'daily', 'price' => '70.00', 'is_active' => true]);
         $this->price($food, $year, ['option_type' => 'meal_plan', 'option_value' => (string) $plan->id, 'payment_period' => 'daily']);

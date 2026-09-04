@@ -3,6 +3,8 @@
 namespace App\Services\Finance;
 
 use App\Models\FeePrice;
+use App\Models\AcademicYear;
+use App\Models\Fee;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\ServiceCoverage;
@@ -17,7 +19,10 @@ use Illuminate\Validation\ValidationException;
 
 class TariffAdjustmentService
 {
-    public function __construct(private InstallmentPlanService $installments) {}
+    public function __construct(
+        private InstallmentPlanService $installments,
+        private FoodBillableDayCalculator $foodDays,
+    ) {}
 
     public function previewAffected(FeePrice $newPrice): \Illuminate\Support\Collection
     {
@@ -40,6 +45,12 @@ class TariffAdjustmentService
     public function preview(ServiceCoverage $coverage, FeePrice $newPrice): array
     {
         $this->validatePrice($coverage, $newPrice);
+        if ($coverage->fee?->category === Fee::CATEGORY_FOOD
+            && collect($coverage->metadata['food_tariff_segments'] ?? [])->contains(
+                fn (array $segment) => (int) ($segment['fee_price_id'] ?? 0) === $newPrice->id
+            )) {
+            return $this->result($coverage, $newPrice, $newPrice, null, 0, '0.00', '0.00');
+        }
         $prices = $this->canonicalPrices($coverage);
         $previous = (clone $prices)
             ->whereDate('start_date', '<', $newPrice->start_date)
@@ -67,7 +78,14 @@ class TariffAdjustmentService
 
         $units = match ($coverage->billing_unit) {
             'monthly' => $start->copy()->startOfMonth()->diffInMonths($end->copy()->startOfMonth()) + 1,
-            'daily' => $start->diffInDays($end) + 1,
+            'daily' => $coverage->fee?->category === Fee::CATEGORY_FOOD
+                ? $this->foodDays->calculate(
+                    AcademicYear::findOrFail($newPrice->academic_year_id),
+                    $start->toDateString(),
+                    $end->toDateString(),
+                    requireBillableDay: false,
+                )['billable_day_count']
+                : $start->diffInDays($end) + 1,
             default => throw ValidationException::withMessages(['billing_unit' => 'Единица покрытия не поддерживает перерасчёт.']),
         };
         $difference = bcsub((string) $newPrice->amount, (string) $previous->amount, 2);

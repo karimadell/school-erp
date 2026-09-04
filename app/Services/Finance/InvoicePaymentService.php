@@ -67,6 +67,7 @@ class InvoicePaymentService
         ?string $notes = null,
         ?int $installmentId = null,
         ?array $allocations = null,
+        ?array $coveragePeriodAllocations = null,
     ): InvoicePayment {
         $amount = $this->money($amount);
         if (! Str::isUuid($idempotencyKey)) {
@@ -76,14 +77,14 @@ class InvoicePaymentService
             throw ValidationException::withMessages(['payment_method' => 'Выбран недопустимый способ оплаты.']);
         }
         $legacyHash = hash('sha256', implode('|', [$invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod]));
-        $allocationMeaning = $this->canonicalPaymentAllocations($allocations, $installmentId);
+        $allocationMeaning = $this->canonicalPaymentAllocations($allocations, $installmentId, $coveragePeriodAllocations);
         $hash = hash('sha256', json_encode([
             'invoice_id' => $invoiceId, 'installment_id' => $installmentId,
             'cash_account_id' => $cashAccountId, 'amount' => $amount,
             'payment_method' => $paymentMethod, 'allocations' => $allocationMeaning,
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $legacyHash, $allocationMeaning, $allocations) {
+        return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $legacyHash, $allocationMeaning, $allocations, $coveragePeriodAllocations) {
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
                 return $this->replay($existing, $hash, $legacyHash, $allocationMeaning);
@@ -134,6 +135,9 @@ class InvoicePaymentService
             // given; omitted allocations auto-resolve only when the
             // invoice has exactly one item (no ambiguity to guess at).
             $invoiceItems = $invoice->items()->get();
+            if ($coveragePeriodAllocations !== null) {
+                $allocations = $this->validateCoveragePeriodAllocations($coveragePeriodAllocations, $invoice, $amount);
+            }
             if ($allocations !== null) {
                 $this->validateAllocations($allocations, $invoice, $invoiceItems, $amount);
             } elseif ($invoiceItems->count() === 1) {
@@ -179,7 +183,7 @@ class InvoicePaymentService
                 ]);
                 $installmentId = $installment->id;
             }
-            if ($invoice->installments()->exists()) {
+            if ($invoice->installments()->exists() && $coveragePeriodAllocations === null) {
                 if ($installmentId === null) {
                     $outstandingInstallments = $invoice->installments()->where('remaining_amount','>','0')->lockForUpdate()->get();
                     if ($outstandingInstallments->count() === 1) $installmentId = $outstandingInstallments->first()->id;
@@ -266,7 +270,10 @@ class InvoicePaymentService
                 // error) when the item has no automatic coverage at all
                 // (e.g. Registration, or any non-calendar-billed Fee) —
                 // there is nothing to link.
-                if ($installment) {
+                if ($coveragePeriodAllocations !== null) {
+                    $period = InstallmentCoveragePeriod::query()->findOrFail((int) $allocation['_period_id']);
+                    $this->linkAllocationToCoveragePeriod($paymentAllocation, $period, $allocationAmount);
+                } elseif ($installment) {
                     $coverage = ServiceCoverage::where('invoice_item_id', $itemId)->first();
                     $period = $coverage
                         ? InstallmentCoveragePeriod::where('invoice_installment_id', $installment->id)
@@ -301,6 +308,12 @@ class InvoicePaymentService
             ])->save();
 
             $installment?->refreshStatus();
+            if ($coveragePeriodAllocations !== null) {
+                InstallmentCoveragePeriod::query()
+                    ->whereIn('id', collect($coveragePeriodAllocations)->pluck('installment_coverage_period_id'))
+                    ->pluck('invoice_installment_id')->unique()
+                    ->each(fn ($id) => InvoiceInstallment::query()->lockForUpdate()->findOrFail((int) $id)->refreshCoverageStatus());
+            }
 
             AuditLog::create([
                 'user_id' => $actor?->id,
@@ -343,8 +356,15 @@ class InvoicePaymentService
         return $payment;
     }
 
-    private function canonicalPaymentAllocations(?array $allocations, ?int $installmentId): ?array
+    private function canonicalPaymentAllocations(?array $allocations, ?int $installmentId, ?array $coveragePeriodAllocations = null): ?array
     {
+        if ($coveragePeriodAllocations !== null) {
+            return collect($coveragePeriodAllocations)->map(fn (array $line) => [
+                'invoice_item_id' => (int) $line['invoice_item_id'],
+                'installment_coverage_period_id' => (int) $line['installment_coverage_period_id'],
+                'amount' => $this->money((string) $line['amount']),
+            ])->sortBy(fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_coverage_period_id'], $line['amount']))->values()->all();
+        }
         if ($allocations === null) {
             return null;
         }
@@ -356,6 +376,38 @@ class InvoicePaymentService
         ])->sortBy(fn ($line) => sprintf('%020d|%020d|%s', $line['invoice_item_id'], $line['installment_id'] ?? 0, $line['amount']))->values()->all();
 
         return $canonical;
+    }
+
+    private function validateCoveragePeriodAllocations(array $periodAllocations, Invoice $invoice, string $amount): array
+    {
+        if ($periodAllocations === []) {
+            throw ValidationException::withMessages(['allocations' => 'Укажите распределение платежа по периодам услуги.']);
+        }
+        $seen = [];
+        $total = '0.00';
+        foreach ($periodAllocations as $line) {
+            $itemId = (int) ($line['invoice_item_id'] ?? 0);
+            $periodId = (int) ($line['installment_coverage_period_id'] ?? 0);
+            $lineAmount = $this->money((string) ($line['amount'] ?? '0'));
+            if (isset($seen[$periodId]) || bccomp($lineAmount, '0.00', 2) <= 0) {
+                throw ValidationException::withMessages(['allocations' => 'Период платежа указан повторно или с некорректной суммой.']);
+            }
+            $seen[$periodId] = true;
+            $period = InstallmentCoveragePeriod::with('coverage')->lockForUpdate()->find($periodId);
+            if (! $period || $period->installment()->value('invoice_id') !== $invoice->id || $period->coverage?->invoice_item_id !== $itemId) {
+                throw ValidationException::withMessages(['allocations' => 'Период распределения не принадлежит выбранной услуге и счёту.']);
+            }
+            $total = bcadd($total, $lineAmount, 2);
+        }
+        if (bccomp($total, $amount, 2) !== 0) {
+            throw ValidationException::withMessages(['allocations' => 'Сумма распределения по периодам должна совпадать с суммой платежа.']);
+        }
+
+        return collect($periodAllocations)->map(fn (array $line) => [
+            'invoice_item_id' => (int) $line['invoice_item_id'],
+            'amount' => $this->money((string) $line['amount']),
+            '_period_id' => (int) $line['installment_coverage_period_id'],
+        ])->values()->all();
     }
 
     /**

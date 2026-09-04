@@ -162,5 +162,6 @@ return [
         'registration_duplicate' => 'The registration fee has already been charged.',
         'no_tariff' => 'No tariff is configured for the selected date.',
         'pricing_error' => 'The price could not be calculated.',
+        'food_not_supported' => 'Food is not supported by mass billing — use Quick Registration instead.',
     ],
 ];

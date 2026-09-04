@@ -108,9 +108,19 @@ class InstallmentPlanService
      * about individual Fees/items.
      *
      * @param  ?array<int, string>  $scheduleAmounts  See above.
+     * @param  ?string  $expectedTotal  Food flexible-duration corrective
+     *         pass: what $scheduleAmounts must sum to. Defaults to
+     *         $invoice->total_amount (every pre-existing caller's
+     *         behavior, unchanged) — InvoiceIssuanceService::issue()
+     *         passes InvoiceCalculationService::calculate()'s own
+     *         'scheduleable_total' instead whenever Food is bundled on the
+     *         same invoice, since Food is always excluded from this
+     *         shared schedule (it gets its own dedicated lump-sum
+     *         installment) and therefore $scheduleAmounts correctly sums
+     *         to LESS than the whole invoice total in that case.
      * @return array<int, array{installment: InvoiceInstallment, period_start: string, period_end: string}>
      */
-    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate, ?array $scheduleAmounts = null): array
+    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate, ?array $scheduleAmounts = null, ?string $expectedTotal = null): array
     {
         if ($billingPeriod === 'yearly') {
             $this->generateSingle($invoice, $startDate);
@@ -135,9 +145,18 @@ class InstallmentPlanService
         }
 
         $total = bcadd((string) $invoice->total_amount, '0', 2);
+        // Food flexible-duration corrective pass: reconcile against the
+        // caller-supplied $expectedTotal (defaulting to the whole invoice
+        // total, every pre-existing caller's behavior) rather than always
+        // assuming $scheduleAmounts covers the entire invoice — Food is
+        // always excluded from this shared schedule (it gets its own
+        // dedicated lump-sum installment), so when Food is bundled
+        // alongside a calendar-billed Fee, $scheduleAmounts correctly sums
+        // to LESS than the whole invoice total.
+        $reconciliationTarget = $expectedTotal !== null ? bcadd($expectedTotal, '0', 2) : $total;
         if ($scheduleAmounts !== null) {
             $scheduleTotal = array_reduce($scheduleAmounts, fn ($carry, $amount) => bcadd($carry, (string) $amount, 2), '0.00');
-            if (bccomp($scheduleTotal, $total, 2) !== 0) {
+            if (bccomp($scheduleTotal, $reconciliationTarget, 2) !== 0) {
                 throw ValidationException::withMessages(['services' => 'Сумма календарного графика не совпадает с итоговой суммой счёта.']);
             }
         }

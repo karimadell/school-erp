@@ -23,6 +23,7 @@ use App\Services\Finance\CashSessionService;
 use App\Services\Finance\InvoiceIssuanceService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -236,7 +237,6 @@ class QuickRegistrationMixedBillingTest extends TestCase
         ]))->assertSessionHasNoErrors();
 
         $invoice = Invoice::sole();
-        file_put_contents('/tmp/debug_items.json', json_encode(InvoiceItem::all()->map(fn($i)=>['fee_id'=>$i->fee_id,'unit_price'=>$i->unit_price,'quantity'=>$i->quantity,'amount'=>$i->amount])->all(), JSON_PRETTY_PRINT));
         // 7000 + (2000x9=18000) + (1500x3=4500) + 500 = 30000.
         $this->assertSame('30000.00', $invoice->total_amount);
         $this->assertDatabaseCount('invoice_items', 4);
@@ -447,5 +447,232 @@ class QuickRegistrationMixedBillingTest extends TestCase
         $invoice = Invoice::sole();
         $this->assertSame('18000.00', $invoice->total_amount);
         $this->assertSame(9, $invoice->installments()->count());
+    }
+
+    // ------------------------------------------------------------------
+    // O. Retry/idempotency across the new two-InvoicePayment mixed
+    // settlement path (once bucket + calendar bucket, both non-zero).
+    // ------------------------------------------------------------------
+    public function test_retry_with_same_idempotency_token_does_not_duplicate_the_two_payment_mixed_settlement(): void
+    {
+        $this->openCashSession();
+        $registration = $this->registrationFee('7000.00');
+        $tuition = $this->tuitionFee('2000.00');
+        $uniform = $this->uniformFee();
+        $productId = $this->sellableUniformItem($uniform, 'Майка', '14', '500.00');
+
+        $payload = $this->payload([
+            ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '7000.00'],
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '1200.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
+            ['fee_id' => $uniform->id, 'paid_now' => '500.00', 'uniform_items' => [['uniform_product_id' => $productId, 'quantity' => 1]]],
+        ], [
+            'payment_method' => 'cash', 'cash_account_id' => $this->account->id,
+            'idempotency_token' => 'test-mixed-retry-token-0001',
+        ]);
+
+        $first = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $payload);
+        $first->assertSessionHasNoErrors()->assertRedirect();
+
+        $invoice = Invoice::sole();
+        // Sanity: once bucket (Registration 7000 + Uniform 500 = 7500,
+        // fully settling the once installment) AND periods bucket
+        // (Tuition's 1200 partial payment) are both non-zero — this
+        // scenario must actually exercise BOTH InvoicePayment rows the
+        // mixed-settlement path can create, not just one.
+        $this->assertSame(2, InvoicePayment::where('invoice_id', $invoice->id)->count(), 'sanity: scenario must exercise both mixed-settlement payment buckets');
+
+        $studentCountBefore = Student::count();
+        $itemCountBefore = InvoiceItem::count();
+        $installmentCountBefore = InvoiceInstallment::count();
+        $coverageCountBefore = ServiceCoverage::count();
+        $paymentCountBefore = InvoicePayment::count();
+        $allocationSumBefore = (string) DB::table('payment_allocations')->sum('amount');
+        $invoice->refresh();
+        $totalAmountBefore = $invoice->total_amount;
+        $paidAmountBefore = $invoice->paid_amount;
+
+        $second = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $payload);
+        $second->assertSessionHasNoErrors()->assertRedirect();
+
+        $this->assertSame($studentCountBefore, Student::count(), 'retry must not create a second student');
+        $this->assertSame(1, Invoice::count(), 'retry must not create a second invoice');
+        $this->assertSame($itemCountBefore, InvoiceItem::count(), 'retry must not duplicate invoice items');
+        $this->assertSame($installmentCountBefore, InvoiceInstallment::count(), 'retry must not duplicate installments');
+        $this->assertSame($coverageCountBefore, ServiceCoverage::count(), 'retry must not duplicate coverage rows');
+        $this->assertSame($paymentCountBefore, InvoicePayment::count(), 'retry must not duplicate either of the two mixed-settlement payment rows');
+        $this->assertSame(0, bccomp((string) DB::table('payment_allocations')->sum('amount'), $allocationSumBefore, 2), 'retry must not duplicate payment allocations');
+
+        $invoice->refresh();
+        $this->assertSame($totalAmountBefore, $invoice->total_amount, 'total amount must be unchanged after retry');
+        $this->assertSame($paidAmountBefore, $invoice->paid_amount, 'paid amount must be unchanged after retry');
+    }
+
+    // ------------------------------------------------------------------
+    // P. Yearly mixed group — once-group and yearly-group installments
+    // never blend, unique sequence numbers, payment allocation still
+    // valid.
+    // ------------------------------------------------------------------
+    public function test_yearly_mixed_group_installment_uses_only_its_own_group_amount(): void
+    {
+        $this->openCashSession();
+        $registration = $this->registrationFee('7000.00');
+        $tuition = Fee::create(['name_ru' => 'Обучение (год)', 'category' => Fee::CATEGORY_TUITION, 'amount' => '0.00', 'is_active' => true]);
+        $tuition->billingPeriods()->create(['billing_period' => 'yearly']);
+        // Yearly billing derives its ServiceCoverage basis from a MONTHLY
+        // tariff (createAutomaticCoverage() always uses billing_unit=
+        // 'monthly') — an existing, unchanged requirement, not something
+        // Phase 1 invents; both this monthly basis and the explicit
+        // yearly charge amount are configured, same as a real yearly
+        // Tuition tariff would be.
+        FeePrice::create([
+            'fee_id' => $tuition->id, 'academic_year_id' => $this->year->id, 'amount' => '1500.00', 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'payment_period' => 'monthly', 'grade_group' => '1–4 классы',
+        ]);
+        FeePrice::create([
+            'fee_id' => $tuition->id, 'academic_year_id' => $this->year->id, 'amount' => '15000.00', 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'payment_period' => 'yearly', 'grade_group' => '1–4 классы',
+        ]);
+        $uniform = $this->uniformFee();
+        $productId = $this->sellableUniformItem($uniform, 'Майка', '14', '500.00');
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '7000.00'],
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '10000.00', 'billing_strategy' => 'calendar', 'payment_period' => 'yearly', 'grade_group' => '1–4 классы'],
+            ['fee_id' => $uniform->id, 'paid_now' => '500.00', 'uniform_items' => [['uniform_product_id' => $productId, 'quantity' => 1]]],
+        ], ['payment_method' => 'cash', 'cash_account_id' => $this->account->id]))->assertSessionHasNoErrors();
+
+        $invoice = Invoice::sole();
+        // 7000 (Registration) + 15000 (Tuition yearly) + 500 (Uniform) = 22500.
+        $this->assertSame('22500.00', $invoice->total_amount);
+
+        $installments = $invoice->installments()->orderBy('sequence')->get();
+        $this->assertCount(2, $installments, 'exactly 1 once installment + 1 yearly installment, no blending');
+        $this->assertSame([1, 2], $installments->pluck('sequence')->all(), 'unique, contiguous sequence numbers, no collision');
+
+        $once = $installments->firstWhere('name_ru', InvoiceIssuanceService::MIXED_ONCE_INSTALLMENT_NAME);
+        $this->assertNotNull($once);
+        $this->assertSame('7500.00', $once->amount, 'once installment = Registration(7000) + Uniform(500) only — never the yearly Tuition amount');
+
+        $yearly = $installments->reject(fn (InvoiceInstallment $i) => $i->id === $once->id)->sole();
+        $this->assertSame('15000.00', $yearly->amount, "yearly installment = Tuition's own group total only — never blended with the once group");
+
+        // paid_now sums 7000+10000+500=17500. The once bucket (7500) is
+        // fully settled; the remaining 10000 goes to the yearly
+        // installment's own coverage-period allocation — still valid,
+        // never exceeding the item's own canonical amount.
+        $tuitionItem = InvoiceItem::where('fee_id', $tuition->id)->sole();
+        $this->assertSame('10000.00', $tuitionItem->paid_amount);
+        $this->assertLessThanOrEqual(0, bccomp($tuitionItem->paid_amount, $tuitionItem->amount, 2));
+
+        $this->assertSame(1, ServiceCoverage::where('invoice_item_id', $tuitionItem->id)->count(), 'yearly Tuition still gets monthly-unit coverage — same pre-existing rule createAutomaticCoverage() already applies');
+        $this->assertSame('monthly', ServiceCoverage::where('invoice_item_id', $tuitionItem->id)->sole()->billing_unit);
+    }
+
+    // ------------------------------------------------------------------
+    // Q. Partial payment crossing from the once bucket into a calendar
+    // bucket — explicitly documents/protects the two-InvoicePayment-rows
+    // behavior the independent review flagged as high-risk.
+    // ------------------------------------------------------------------
+    public function test_partial_payment_crosses_from_once_bucket_into_calendar_bucket(): void
+    {
+        $this->openCashSession();
+        $registration = $this->registrationFee('7000.00');
+        $tuition = $this->tuitionFee('2000.00');
+
+        // once group total = 7000 (paid in full); calendar (monthly
+        // Tuition) first installment = 2000, paid only 1200 of it —
+        // paid_now crosses from fully settling the once group into
+        // partially settling ONLY the first calendar installment.
+        $paidNow = '8200.00';
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '7000.00'],
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '1200.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
+        ], ['payment_method' => 'cash', 'cash_account_id' => $this->account->id]))->assertSessionHasNoErrors();
+
+        $invoice = Invoice::sole()->fresh();
+        $this->assertSame(Invoice::STATUS_PARTIAL, $invoice->status);
+        $this->assertSame($paidNow, $invoice->paid_amount);
+        // total = 7000 + (2000x9=18000) = 25000; remaining = 25000-8200=16800.
+        $this->assertSame('25000.00', $invoice->total_amount);
+        $this->assertSame('16800.00', $invoice->remaining_amount);
+
+        $installments = $invoice->installments()->orderBy('sequence')->get();
+        $once = $installments->firstWhere('name_ru', InvoiceIssuanceService::MIXED_ONCE_INSTALLMENT_NAME);
+        $this->assertNotNull($once);
+        $this->assertSame('0.00', $once->remaining_amount, 'the once installment must be fully settled first');
+
+        $monthly = $installments->reject(fn (InvoiceInstallment $i) => $i->id === $once->id)->sortBy('sequence')->values();
+        $this->assertCount(9, $monthly);
+        $this->assertSame('800.00', $monthly->first()->remaining_amount, 'first monthly installment partially settled: 2000 - 1200 = 800 remaining');
+        $this->assertTrue($monthly->slice(1)->every(fn (InvoiceInstallment $i) => $i->remaining_amount === $i->amount), 'every later monthly installment must be completely untouched');
+
+        $registrationItem = InvoiceItem::where('fee_id', $registration->id)->sole();
+        $tuitionItem = InvoiceItem::where('fee_id', $tuition->id)->sole();
+        $this->assertSame('7000.00', $registrationItem->paid_amount);
+        $this->assertSame('1200.00', $tuitionItem->paid_amount);
+        // No item ever receives more than its own canonical amount.
+        foreach ([$registrationItem, $tuitionItem] as $item) {
+            $this->assertLessThanOrEqual(0, bccomp($item->paid_amount, $item->amount, 2));
+        }
+
+        // Auditable: persisted per-item allocations sum exactly to paid_now.
+        $allocatedTotal = DB::table('payment_allocations')
+            ->join('invoice_payments', 'invoice_payments.id', '=', 'payment_allocations.invoice_payment_id')
+            ->where('invoice_payments.invoice_id', $invoice->id)
+            ->sum('payment_allocations.amount');
+        $this->assertSame(0, bccomp((string) $allocatedTotal, $paidNow, 2), 'persisted per-item allocations must sum exactly to paid_now');
+
+        // Explicitly document/protect the two-InvoicePayment-rows design:
+        // crossing from the once bucket into a calendar bucket in ONE
+        // operator payment action creates exactly two InvoicePayment
+        // rows (one per bucket) — mathematically correct and auditable,
+        // but a real accounting/receipt-clarity characteristic any
+        // caller or receipt view must be aware of.
+        $this->assertSame(2, InvoicePayment::where('invoice_id', $invoice->id)->count(), 'crossing once+calendar buckets in one operator payment creates two InvoicePayment rows by design — protect/document this explicitly');
+    }
+
+    // ------------------------------------------------------------------
+    // R. Uniform procurement report is unaffected by mixed billing — the
+    // report reads InvoiceItem.metadata['item']/['size'] directly and has
+    // no knowledge of payment_type at all.
+    // ------------------------------------------------------------------
+    public function test_mixed_invoice_uniform_procurement_report_unaffected_by_mixed_billing(): void
+    {
+        $tuition = $this->tuitionFee('2000.00');
+        $uniform = $this->uniformFee();
+        $productId = $this->sellableUniformItem($uniform, 'Майка', '14', '500.00');
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
+            ['fee_id' => $uniform->id, 'paid_now' => '0.00', 'uniform_items' => [['uniform_product_id' => $productId, 'quantity' => 2]]],
+        ]))->assertSessionHasNoErrors();
+
+        $invoiceItem = InvoiceItem::where('fee_id', $uniform->id)->sole();
+        $this->assertSame('Майка', $invoiceItem->metadata['item']);
+        $this->assertSame('14', $invoiceItem->metadata['size']);
+        $this->assertSame(2, $invoiceItem->quantity);
+
+        $exitCode = Artisan::call('finance:uniform-procurement-report', ['--year' => $this->year->name]);
+        $output = Artisan::output();
+        $this->assertSame(0, $exitCode);
+
+        $rows = [];
+        foreach (explode("\n", $output) as $line) {
+            $line = trim($line);
+            if ($line === '' || ! str_starts_with($line, '|')) {
+                continue;
+            }
+            $cells = array_map('trim', explode('|', trim($line, '|')));
+            if (count($cells) < 3 || $cells[0] === 'item') {
+                continue;
+            }
+            $rows[$cells[0].'|'.$cells[1]] = $cells[2];
+        }
+
+        $this->assertSame('2', $rows['Майка|14'] ?? null, "expected exact-size row missing or wrong quantity in report output:\n{$output}");
+        $this->assertArrayNotHasKey('Майка|6–10', $rows, 'mixed billing must never produce a legacy grouped-size row');
+        $this->assertCount(1, $rows, "mixed billing must not fragment or duplicate the procurement report's per-size aggregation:\n{$output}");
     }
 }

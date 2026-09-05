@@ -713,15 +713,22 @@ class InvoiceIssuanceService
      * createFoodInstallmentAndCoverage() call, unconditionally, exactly
      * as every other payment_type already does.
      *
-     * Quarterly/yearly ServiceCoverage: NOT created, on purpose.
-     * ServiceCoverage.billing_unit is a hard enum('monthly','daily') at
-     * the schema level — a quarterly/yearly-billed Fee gets its
-     * installment schedule (correct amounts, correct due dates) but no
-     * ServiceCoverage/tariff-adjustment eligibility, exactly the same
-     * documented scope boundary the single-strategy 'calendar' path
-     * already has today (createAutomaticCoverage() below is reused
-     * unchanged, so this limitation is not new or invented — it is
-     * inherited verbatim).
+     * Quarterly/yearly ServiceCoverage: IS still created here, exactly as
+     * it already is for the pre-existing single-strategy 'calendar' path
+     * — createAutomaticCoverage() below is reused completely unchanged,
+     * and it unconditionally derives $billingUnit as 'monthly' (or
+     * 'daily' for Food, which never reaches this method) regardless of
+     * the group's own billing_period. So a quarterly/yearly-billed Fee in
+     * a mixed group gets a normal ServiceCoverage row using the schema's
+     * existing 'monthly' billing_unit as its basis — provided that Fee
+     * has its own monthly-denominated basis FeePrice configured (the
+     * same pre-existing requirement createAutomaticCoverage() already
+     * enforces today; see resolveCoverageBasisPrice()). This is not a
+     * new coverage semantic introduced by Phase 1 and does not widen
+     * ServiceCoverage.billing_unit's hard enum('monthly','daily') —
+     * Phase 1 only changes HOW MANY TIMES createAutomaticCoverage() is
+     * called per invoice (once per distinct billing_period group instead
+     * of once for the whole invoice), never what it does internally.
      *
      * @param  array<string, array{schedule_amounts: ?array<int,string>, scheduleable_total: string, fee_ids: array<int,int>, calendar_start: string, calendar_end: string}>  $mixedGroups
      * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees

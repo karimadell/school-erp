@@ -160,7 +160,8 @@ class QuickStudentRegistrationService
             ]);
 
             $feesById = [];
-            $normalizedServices = collect($data['services'])->flatMap(function (array $service) use ($grade, $mode, &$feesById) {
+            $paymentType = $data['payment_type'] ?? 'one_time';
+            $normalizedServices = collect($data['services'])->flatMap(function (array $service) use ($grade, $mode, &$feesById, $paymentType) {
                 $fee = Fee::query()->lockForUpdate()->findOrFail($service['fee_id']);
                 $feesById[$fee->id] = $fee;
 
@@ -185,6 +186,35 @@ class QuickStudentRegistrationService
                     },
                     'payment_period' => $fee->category === Fee::CATEGORY_FOOD ? Fee::PERIOD_DAILY : ($service['payment_period'] ?? null),
                 ];
+
+                // Finance V2 Phase 1 — per-service billing strategy,
+                // resolved and re-validated server-side (never trusted
+                // from the client alone, even though the request already
+                // checked it) only when payment_type=mixed. Every other
+                // payment_type never computes this — '_billing_strategy'/
+                // '_billing_period' simply don't exist on $common for
+                // 'one_time'/'calendar'/'plan', so InvoiceIssuanceService's
+                // existing single-strategy path (unchanged) never sees
+                // them and behaves exactly as before.
+                if ($paymentType === 'mixed' && $fee->category !== Fee::CATEGORY_FOOD) {
+                    $strategy = $service['billing_strategy'] ?? 'once';
+                    $calendarCapable = $fee->allowedBillingPeriods()->intersect(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)->isNotEmpty();
+
+                    if ($strategy === 'calendar') {
+                        if (! $calendarCapable) {
+                            throw ValidationException::withMessages(['services' => "Услуга «{$fee->name_ru}» не поддерживает периодическую оплату."]);
+                        }
+                        $period = $service['payment_period'] ?? null;
+                        if (blank($period) || ! in_array($period, \App\Models\FeeBillingPeriod::CALENDAR_PERIODS, true) || ! $fee->allowsBillingPeriod($period)) {
+                            throw ValidationException::withMessages(['services' => "Недопустимый период оплаты для услуги «{$fee->name_ru}»."]);
+                        }
+                        $common['_billing_strategy'] = 'calendar';
+                        $common['_billing_period'] = $period;
+                    } else {
+                        $common['_billing_strategy'] = 'once';
+                        $common['_billing_period'] = null;
+                    }
+                }
 
                 // Multi-item Uniform corrective pass — an employee may select
                 // several distinct Uniform items (each its own exact size) in
@@ -430,7 +460,107 @@ class QuickStudentRegistrationService
             }
 
             if (bccomp($paidNow, '0.00', 2) > 0) {
-                if (($data['payment_type'] ?? null) === 'calendar' && $foodService) {
+                if (($data['payment_type'] ?? null) === 'mixed') {
+                    // Finance V2 Phase 1 — per-service billing strategy.
+                    // Item-level attribution ($allocations, already
+                    // computed above by the exact same generic loop every
+                    // other payment_type uses — it is oblivious to
+                    // installment/schedule grouping entirely) is settled
+                    // in up to two record() calls: one direct
+                    // installmentId+allocations call for the single
+                    // 'once'-group lump sum (unambiguous — it always
+                    // settles in exactly one installment, the same
+                    // condition InvoicePaymentService::record() already
+                    // requires for that combination), and one
+                    // coveragePeriodAllocations call — generalizing the
+                    // exact mechanism the pre-existing 'calendar'+Food
+                    // branch below already uses — covering every
+                    // calendar-group and Food installment together,
+                    // however many of either exist. No InvoiceItem is
+                    // ever allocated more than its own $allocations
+                    // amount; a genuine shortfall against either bucket
+                    // fails closed exactly like the pre-existing branches
+                    // below already do.
+                    $remainingByItem = collect($allocations)->mapWithKeys(fn (array $line) => [
+                        (int) $line['invoice_item_id'] => (string) $line['amount'],
+                    ])->all();
+                    $onceItemIds = [];
+                    foreach ($orderedInvoiceItems as $position => $item) {
+                        $selection = $normalizedServices[$position];
+                        if (($selection['_fee_category'] ?? null) !== Fee::CATEGORY_FOOD
+                            && ($selection['_billing_strategy'] ?? 'once') === 'once') {
+                            $onceItemIds[] = $item->id;
+                        }
+                    }
+                    $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
+
+                    $onceAllocations = collect($onceItemIds)
+                        ->map(fn (int $id) => ['invoice_item_id' => $id, 'amount' => $remainingByItem[$id] ?? '0.00'])
+                        ->filter(fn (array $line) => bccomp($line['amount'], '0.00', 2) > 0)
+                        ->values()->all();
+                    $onceAmount = collect($onceAllocations)->reduce(fn (string $sum, array $line) => bcadd($sum, $line['amount'], 2), '0.00');
+                    if (bccomp($onceAmount, '0.00', 2) > 0) {
+                        $onceInstallment = $invoice->installments()->where('name_ru', InvoiceIssuanceService::MIXED_ONCE_INSTALLMENT_NAME)->firstOrFail();
+                        $this->payments->record(
+                            invoiceId: $invoice->id,
+                            cashAccountId: $cashAccountId,
+                            amount: $onceAmount,
+                            paymentMethod: $data['payment_method'],
+                            idempotencyKey: $outerToken
+                                ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:mixed-once")
+                                : (string) Str::uuid(),
+                            actor: $actor,
+                            reference: "Быстрая регистрация {$invoice->invoice_number}",
+                            notes: $data['payment_note'] ?? null,
+                            installmentId: $onceInstallment->id,
+                            allocations: $onceAllocations,
+                        );
+                    }
+                    foreach ($onceItemIds as $id) {
+                        unset($remainingByItem[$id]);
+                    }
+
+                    $periodsAmount = bcsub($paidNow, $onceAmount, 2);
+                    if (bccomp($periodsAmount, '0.00', 2) > 0) {
+                        $periodAllocations = [];
+                        $periods = \App\Models\InstallmentCoveragePeriod::query()
+                            ->with(['coverage', 'installment'])
+                            ->whereHas('installment', fn ($query) => $query->where('invoice_id', $invoice->id))
+                            ->get()->sortBy(fn ($period) => sprintf('%08d|%08d', $period->installment->sequence, $period->coverage->invoice_item_id));
+                        foreach ($periods as $period) {
+                            $itemId = (int) $period->coverage->invoice_item_id;
+                            $remainingForItem = $remainingByItem[$itemId] ?? '0.00';
+                            if (bccomp($remainingForItem, '0.00', 2) <= 0) {
+                                continue;
+                            }
+                            $portion = bccomp($remainingForItem, (string) $period->amount, 2) >= 0
+                                ? (string) $period->amount
+                                : $remainingForItem;
+                            $periodAllocations[] = [
+                                'invoice_item_id' => $itemId,
+                                'installment_coverage_period_id' => $period->id,
+                                'amount' => $portion,
+                            ];
+                            $remainingByItem[$itemId] = bcsub($remainingForItem, $portion, 2);
+                        }
+                        if (collect($remainingByItem)->contains(fn ($remaining) => bccomp((string) $remaining, '0.00', 2) !== 0)) {
+                            throw ValidationException::withMessages(['services' => 'Оплату не удалось полностью распределить по выбранным периодам услуг.']);
+                        }
+                        $this->payments->record(
+                            invoiceId: $invoice->id,
+                            cashAccountId: $cashAccountId,
+                            amount: $periodsAmount,
+                            paymentMethod: $data['payment_method'],
+                            idempotencyKey: $outerToken
+                                ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:mixed-periods")
+                                : (string) Str::uuid(),
+                            actor: $actor,
+                            reference: "Быстрая регистрация {$invoice->invoice_number}",
+                            notes: $data['payment_note'] ?? null,
+                            coveragePeriodAllocations: $periodAllocations,
+                        );
+                    }
+                } elseif (($data['payment_type'] ?? null) === 'calendar' && $foodService) {
                     $remainingByItem = collect($allocations)->mapWithKeys(fn (array $line) => [
                         (int) $line['invoice_item_id'] => (string) $line['amount'],
                     ])->all();

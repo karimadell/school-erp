@@ -104,7 +104,32 @@ class SchoolPriceListImportService
 
             $fee = $this->resolveOperationalUniformFee($definition, $result);
             if ($fee) {
-                $this->processTariffs($fee, $year, $definition['tariffs'], $result);
+                // Corrective pass (confirmed live on UAT) — Fee #7's 12
+                // pre-existing legacy grouped-tier rows were never created
+                // by this importer's own catalog (their name_ru casing
+                // proves that too — see resolveOperationalUniformFee()) and
+                // carry payment_period=NULL, not this catalog's 'once'.
+                // processTariffs()'s exact-value dimension match would
+                // therefore never recognise them as already-existing and
+                // would create 12 unwanted duplicates. Split the merged
+                // tariffs list so ONLY the 3 legacy-size definitions go
+                // through a relaxed, Uniform-only-import-scoped matcher
+                // that additionally accepts an existing NULL payment_period
+                // row as equivalent coverage; the 40 exact-size definitions
+                // continue through the completely unmodified, shared
+                // processTariffs() — the same one import() itself uses for
+                // every other category — so no relaxation can ever reach
+                // an exact size or any non-Uniform tariff.
+                $legacySizes = ['6–10', '12–16', 'от S'];
+                $legacyTariffs = collect($definition['tariffs'])
+                    ->filter(fn (array $t) => in_array($t['size'] ?? null, $legacySizes, true))
+                    ->values()->all();
+                $exactTariffs = collect($definition['tariffs'])
+                    ->reject(fn (array $t) => in_array($t['size'] ?? null, $legacySizes, true))
+                    ->values()->all();
+
+                $this->processLegacyUniformTariffsWithNullPaymentPeriodCompatibility($fee, $year, $legacyTariffs, $result);
+                $this->processTariffs($fee, $year, $exactTariffs, $result);
                 $this->deactivateLegacyUniformSizesIfReplacementComplete($fee, $year);
             }
 
@@ -287,6 +312,98 @@ class SchoolPriceListImportService
                     ? $dimensions->whereNull($field)
                     : $dimensions->where($field, $attributes[$field]);
             }
+
+            $existing = (clone $dimensions)->lockForUpdate()->get();
+            $exact = $existing->first(fn (FeePrice $price) =>
+                $price->currency === 'EGP'
+                && bccomp((string) $price->getRawOriginal('amount'), $attributes['amount'], 2) === 0
+                && $price->start_date->toDateString() === $attributes['start_date']
+                && $price->end_date?->toDateString() === $attributes['end_date']
+            );
+
+            if ($exact) {
+                $result['tariffs_skipped']++;
+                continue;
+            }
+
+            $overlap = $existing->first(fn (FeePrice $price) =>
+                $price->is_active
+                && $price->start_date->lte($attributes['end_date'])
+                && ($price->end_date === null || $price->end_date->gte($attributes['start_date']))
+            );
+
+            if ($overlap) {
+                $result['conflicts'][] = "Тариф для «{$fee->name_ru}» ({$this->variantLabel($attributes)}) пересекается с записью №{$overlap->id}.";
+                continue;
+            }
+
+            FeePrice::create(collect($attributes)->except('option_label')->all());
+            $result['tariffs_created']++;
+        }
+    }
+
+    /**
+     * Uniform-only legacy-tariff compatibility matcher — used ONLY by
+     * importUniformOnly(), and only for the 3 legacy grouped-size
+     * definitions ('6–10', '12–16', 'от S'). Never called by import(),
+     * never called for the 40 exact-size definitions (those are routed
+     * to the unmodified processTariffs() above).
+     *
+     * Confirmed live on real UAT (Fee #7): its 12 pre-existing legacy
+     * rows have payment_period=NULL, while this catalog's legacy
+     * definitions carry payment_period=Fee::PERIOD_ONCE ('once'). Every
+     * other canonical dimension already matches exactly (fee_id,
+     * academic_year_id, item, size, amount, currency, dates, grade_id,
+     * grade_group, option_type, option_value) — payment_period is the
+     * one, narrowly-scoped exception this method exists to bridge. This
+     * is identical in every other respect to processTariffs() — same
+     * defaults, same $exact/$overlap logic, same create call — the ONLY
+     * difference is that the payment_period dimension filter accepts
+     * "NULL OR the catalog's value" instead of requiring an exact value
+     * match. A pre-existing row is still matched only when EVERY other
+     * dimension, amount, and date lines up exactly — a genuine amount or
+     * date mismatch still falls through to the identical overlap/conflict
+     * or fresh-create path, never silently treated as equivalent
+     * coverage. No existing row is ever UPDATEd here — only matched (and
+     * skipped) or, when genuinely absent, created.
+     *
+     * @param array<int,array<string,mixed>> $tariffs
+     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     */
+    private function processLegacyUniformTariffsWithNullPaymentPeriodCompatibility(Fee $fee, AcademicYear $year, array $tariffs, array &$result): void
+    {
+        foreach ($tariffs as $variant) {
+            $attributes = array_merge([
+                'fee_id' => $fee->id,
+                'academic_year_id' => $year->id,
+                'amount' => $variant['amount'],
+                'currency' => 'EGP',
+                'start_date' => $year->start_date->toDateString(),
+                'end_date' => $year->end_date->toDateString(),
+                'grade_id' => null,
+                'grade_group' => null,
+                'payment_period' => null,
+                'option_type' => null,
+                'option_value' => null,
+                'item' => null,
+                'size' => null,
+                'is_active' => true,
+                'change_reason' => self::REASON,
+            ], $variant);
+
+            // payment_period is deliberately excluded from this list — it
+            // gets its own relaxed clause below instead of an exact-value
+            // whereNull()/where() match.
+            $dimensionFields = ['grade_id', 'grade_group', 'option_type', 'option_value', 'item', 'size'];
+            $dimensions = FeePrice::query()->where('fee_id', $fee->id)->where('academic_year_id', $year->id);
+            foreach ($dimensionFields as $field) {
+                $attributes[$field] === null
+                    ? $dimensions->whereNull($field)
+                    : $dimensions->where($field, $attributes[$field]);
+            }
+            $dimensions->where(function ($query) use ($attributes) {
+                $query->whereNull('payment_period')->orWhere('payment_period', $attributes['payment_period']);
+            });
 
             $existing = (clone $dimensions)->lockForUpdate()->get();
             $exact = $existing->first(fn (FeePrice $price) =>

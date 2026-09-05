@@ -3,16 +3,19 @@
 namespace Tests\Feature\Finance;
 
 use App\Models\AcademicYear;
+use App\Models\CashAccount;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\InvoicePayment;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\User;
+use App\Services\Finance\CashSessionService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -85,9 +88,18 @@ class QuickRegistrationMultiUniformTest extends TestCase
         ]);
     }
 
-    private function payload(array $services): array
+    private function payload(array $services, array $overrides = []): array
     {
-        return $this->base + ['services' => $services];
+        return array_replace($this->base + ['services' => $services], $overrides);
+    }
+
+    /** Opens a cash drawer session and returns the operating CashAccount — needed only by tests that submit paid_now > 0. */
+    private function openCashSession(): CashAccount
+    {
+        $account = CashAccount::operating();
+        app(CashSessionService::class)->open($account, $this->accountant);
+
+        return $account;
     }
 
     private function uniformService(array $items, string $paidNow = '0.00'): array
@@ -199,6 +211,105 @@ class QuickRegistrationMultiUniformTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // P1 regression (independent review) — paid_now for the single
+    // Uniform services[] entry covers the ENTIRE selection (there is no
+    // per-item payment field in the UI), so the server must deterministically
+    // distribute it across the sibling InvoiceItem lines it expands into.
+    // Documents the CURRENT, intended allocation: greedy, in submission
+    // order, each line capped at its own resolved amount — never a line
+    // receiving more than its own amount, never silently dropping or
+    // duplicating payment across siblings.
+    //
+    // Full payment: paid_now equals the exact grand total (2700 = 500 +
+    // 700 + 1500) — every line must be fully settled.
+    // ------------------------------------------------------------------
+    public function test_full_payment_settles_all_three_uniform_lines(): void
+    {
+        $account = $this->openCashSession();
+        $majka = $this->sellableUniformItem('Майка', '14', '500.00');
+        $polo = $this->sellableUniformItem('Поло', '16', '700.00');
+        $tolstovka = $this->sellableUniformItem('Толстовка', 'S', '1500.00');
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            $this->uniformService([
+                ['uniform_product_id' => $majka, 'quantity' => 1],
+                ['uniform_product_id' => $polo, 'quantity' => 1],
+                ['uniform_product_id' => $tolstovka, 'quantity' => 1],
+            ], '2700.00'),
+        ], ['payment_method' => 'cash', 'cash_account_id' => $account->id]))->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('invoice_items', 3);
+        $items = InvoiceItem::where('fee_id', $this->uniform->id)->get()->keyBy(fn (InvoiceItem $i) => $i->metadata['item']);
+
+        // Every line fully settled — none paid more than its own canonical amount.
+        foreach (['Майка' => '500.00', 'Поло' => '700.00', 'Толстовка' => '1500.00'] as $name => $amount) {
+            $this->assertSame($amount, $items[$name]->amount, "{$name} amount drifted from canonical price");
+            $this->assertSame($amount, $items[$name]->paid_amount, "{$name} must be fully paid");
+            $this->assertSame('0.00', $items[$name]->remaining_amount, "{$name} must have zero remaining");
+            $this->assertSame(0, bccomp($items[$name]->paid_amount, $items[$name]->amount, 2), "{$name} paid must never exceed its own canonical amount");
+        }
+
+        $invoice = Invoice::sole();
+        $this->assertSame(Invoice::STATUS_PAID, $invoice->status);
+        $this->assertSame('0.00', $invoice->remaining_amount);
+        // One atomic payment record for the whole registration, auditable
+        // against the invoice it settled — not one payment per line.
+        $payment = InvoicePayment::sole();
+        $this->assertSame('2700.00', $payment->amount);
+        $this->assertSame($invoice->id, $payment->invoice_id);
+    }
+
+    // ------------------------------------------------------------------
+    // Partial payment: paid_now (1200.00) exactly covers Майка(500) +
+    // Поло(700) in submission order, leaving nothing for Толстовка(1500)
+    // — documents the deterministic greedy/submission-order allocation,
+    // never an even split and never over-allocating a later line.
+    // ------------------------------------------------------------------
+    public function test_partial_payment_covers_first_two_lines_in_submission_order(): void
+    {
+        $account = $this->openCashSession();
+        $majka = $this->sellableUniformItem('Майка', '14', '500.00');
+        $polo = $this->sellableUniformItem('Поло', '16', '700.00');
+        $tolstovka = $this->sellableUniformItem('Толстовка', 'S', '1500.00');
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            $this->uniformService([
+                ['uniform_product_id' => $majka, 'quantity' => 1],
+                ['uniform_product_id' => $polo, 'quantity' => 1],
+                ['uniform_product_id' => $tolstovka, 'quantity' => 1],
+            ], '1200.00'),
+        ], ['payment_method' => 'cash', 'cash_account_id' => $account->id]))->assertSessionHasNoErrors();
+
+        $items = InvoiceItem::where('fee_id', $this->uniform->id)->get()->keyBy(fn (InvoiceItem $i) => $i->metadata['item']);
+        $this->assertSame('500.00', $items['Майка']->paid_amount, 'first submitted line must be fully paid first');
+        $this->assertSame('0.00', $items['Майка']->remaining_amount);
+        $this->assertSame('700.00', $items['Поло']->paid_amount, 'second submitted line must be fully paid next');
+        $this->assertSame('0.00', $items['Поло']->remaining_amount);
+        $this->assertSame('0.00', $items['Толстовка']->paid_amount, 'third submitted line must receive nothing once the payment is exhausted');
+        $this->assertSame('1500.00', $items['Толстовка']->remaining_amount);
+
+        // No line ever allocated more than its own canonical amount.
+        foreach ($items as $item) {
+            $this->assertLessThanOrEqual(0, bccomp($item->paid_amount, $item->amount, 2), "{$item->metadata['item']} paid must never exceed its own amount");
+        }
+
+        $invoice = Invoice::sole();
+        $this->assertSame(Invoice::STATUS_PARTIAL, $invoice->status);
+        $this->assertSame('1500.00', $invoice->remaining_amount);
+        // The allocation is auditable directly from persisted records: one
+        // payment for the exact submitted amount, and the per-line
+        // paid/remaining split above accounts for all of it with nothing
+        // left unaccounted for.
+        $payment = InvoicePayment::sole();
+        $this->assertSame('1200.00', $payment->amount);
+        $this->assertSame(
+            0,
+            bccomp($payment->amount, (string) $items->sum('paid_amount'), 2),
+            'the recorded payment must exactly equal the sum of what was actually allocated per line'
+        );
+    }
+
+    // ------------------------------------------------------------------
     // D. Quantity > 1 — unit price stays canonical, line total scales,
     // and the procurement report sees the real quantity.
     // ------------------------------------------------------------------
@@ -249,6 +360,36 @@ class QuickRegistrationMultiUniformTest extends TestCase
 
         $this->assertDatabaseCount('students', 0);
         $this->assertDatabaseCount('invoice_items', 0);
+    }
+
+    // ------------------------------------------------------------------
+    // P1 regression (independent review) — the same uniform_product_id
+    // submitted twice inside one uniform_items array must be rejected at
+    // the request boundary (services.*.uniform_items.*.uniform_product_id
+    // carries a `distinct` rule), never silently deduplicated, doubled, or
+    // allowed through to create ambiguous invoice lines. No Student,
+    // Invoice, InvoiceItem, or payment side effect may exist afterward —
+    // the whole registration must fail before the transaction opens.
+    // ------------------------------------------------------------------
+    public function test_duplicate_uniform_product_id_submission_is_rejected(): void
+    {
+        $productId = $this->sellableUniformItem('Майка', '14', '500.00');
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            $this->uniformService([
+                ['uniform_product_id' => $productId, 'quantity' => 1],
+                ['uniform_product_id' => $productId, 'quantity' => 2],
+            ]),
+        ]))
+            ->assertSessionHasErrors([
+                'services.0.uniform_items.0.uniform_product_id',
+                'services.0.uniform_items.1.uniform_product_id',
+            ]);
+
+        $this->assertDatabaseCount('students', 0);
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
+        $this->assertDatabaseCount('invoice_payments', 0);
     }
 
     // ------------------------------------------------------------------

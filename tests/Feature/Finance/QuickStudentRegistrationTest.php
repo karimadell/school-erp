@@ -163,8 +163,13 @@ class QuickStudentRegistrationTest extends TestCase
             'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
             'item' => 'Футболка', 'size' => 'M',
         ]);
+        // Multi-item Uniform corrective pass — a single selection is now the
+        // degenerate (1-entry) case of the nested uniform_items shape; a
+        // single-item, single-size Uniform submission must remain
+        // functionally identical to before (see QuickRegistrationMultiUniformTest
+        // for the multi-item behavior this shape exists for).
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            $this->service($uniform, '100.00', ['quantity' => 2, 'uniform_product_id' => $productId]),
+            $this->service($uniform, '100.00', ['uniform_items' => [['uniform_product_id' => $productId, 'quantity' => 2]]]),
         ]))->assertSessionHasNoErrors();
         $item = InvoiceItem::sole();
         $this->assertSame(2, $item->quantity);

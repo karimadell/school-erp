@@ -26,6 +26,18 @@
     $serviceIsAvailable = fn ($fee) => ! in_array($fee->category, $gatedCategories, true)
         || ($serviceReadiness[$fee->id]['ready'] ?? false);
     $unavailableReason = fn ($fee) => $serviceReadiness[$fee->id]['reason'] ?? null;
+
+    // Multi-item Uniform corrective pass — one compact row per Uniform
+    // ITEM (Комплект/Майка/Поло/Толстовка), not one per item+size
+    // combination (that would be 40 rows). $uniformProducts already
+    // carries only sellable (active FeePrice-backed) rows — see the
+    // controller's own filter — so this grouping can never expose a
+    // legacy grouped size or an item+size with no active tariff. Sizes are
+    // ordered by the catalog's own real-world sequence, never
+    // alphabetically (a plain string sort would put "10" before "6").
+    $uniformSizeOrder = ['6', '8', '10', '12', '14', '16', 'S', 'M', 'L', 'XL'];
+    $uniformProductsByItem = $uniformProducts->groupBy('name_ru')
+        ->map(fn ($products) => $products->sortBy(fn ($p) => array_search($p->size, $uniformSizeOrder, true))->values());
 @endphp
 <div class="container-fluid py-4">
 @if($registrationSuccess)
@@ -170,8 +182,31 @@
                                         <div class="col-6"><label class="form-label">Окончание *</label><input type="date" name="services[{{ $index }}][food_range_end]" value="{{ $oldService['food_range_end'] ?? '' }}" class="form-control price-option food-field" data-food-mode="custom_range"></div>
                                     </div>
                                 @elseif($groupKey === 'uniform')
-                                    <div class="col-md-4"><label class="form-label">Изделие и размер *</label><select name="services[{{ $index }}][uniform_product_id]" class="form-select price-option uniform-product"><option value="">Выберите изделие</option>@foreach($uniformProducts as $product)<option value="{{ $product->id }}" data-item="{{ $product->name_ru }}" data-size="{{ $product->size }}" @selected((string) ($oldService['uniform_product_id'] ?? '') === (string) $product->id)>{{ $product->name_ru }} — {{ $product->size }}</option>@endforeach</select></div>
-                                    <div class="col-md-2"><label class="form-label">Количество *</label><input type="number" min="1" max="100" name="services[{{ $index }}][quantity]" value="{{ $oldService['quantity'] ?? 1 }}" class="form-control quantity"></div>
+                                    <div class="col-12">
+                                        <label class="form-label mb-1">Изделия и размеры *</label>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-borderless align-middle mb-0 uniform-items-table">
+                                                <tbody>
+                                                @foreach($uniformProductsByItem as $itemName => $sizeOptions)
+                                                    <tr class="uniform-item-row" data-uniform-item="{{ $itemName }}">
+                                                        <td style="width:2rem"><input type="checkbox" class="form-check-input uniform-item-toggle"></td>
+                                                        <td>{{ $itemName }}</td>
+                                                        <td style="width:6rem">
+                                                            <select name="services[{{ $index }}][uniform_items][{{ $loop->index }}][uniform_product_id]" class="form-select form-select-sm uniform-item-size" disabled>
+                                                                @foreach($sizeOptions as $product)
+                                                                    <option value="{{ $product->id }}" data-size="{{ $product->size }}">{{ $product->size }}</option>
+                                                                @endforeach
+                                                            </select>
+                                                        </td>
+                                                        <td style="width:5rem"><input type="number" min="1" max="100" name="services[{{ $index }}][uniform_items][{{ $loop->index }}][quantity]" value="1" class="form-control form-control-sm uniform-item-qty" disabled></td>
+                                                        <td style="width:6rem" class="uniform-item-unit text-nowrap small text-muted">—</td>
+                                                        <td style="width:6rem" class="uniform-item-total text-nowrap fw-semibold">—</td>
+                                                    </tr>
+                                                @endforeach
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
                                 @endif
                                 <div class="col-md-2"><label class="form-label">Цена</label><div class="resolved-unit fw-semibold">0.00 EGP</div></div>
                                 <div class="col-md-2"><label class="form-label">Стоимость</label><div class="resolved-total fw-semibold">0.00 EGP</div></div>
@@ -270,14 +305,124 @@ function syncFoodDurationMode(row) {
     });
 }
 
+// Multi-item Uniform corrective pass — each compact item row's size/qty
+// inputs are governed by that row's OWN checkbox, never by the blanket
+// Fee-level enable/disable below (which would otherwise re-enable every
+// item's fields the instant the Uniform Fee checkbox is checked,
+// regardless of which items are actually selected).
+function syncUniformItemRow(itemRow) {
+    const checked = itemRow.querySelector('.uniform-item-toggle').checked;
+    itemRow.querySelector('.uniform-item-size').disabled = !checked;
+    itemRow.querySelector('.uniform-item-qty').disabled = !checked;
+    if (!checked) {
+        itemRow.querySelector('.uniform-item-unit').textContent = '—';
+        itemRow.querySelector('.uniform-item-total').textContent = '—';
+    }
+}
+
+// Resolves each checked item row's own canonical price independently (one
+// /price call per selected item — never a client-computed total) and sums
+// them into the SAME row.dataset.total/paid/remaining + resolved-total/
+// remaining fields every other category already populates, so
+// updateSummary() and the submit guard need no changes at all.
+async function updateUniformRow(row) {
+    const itemRows = [...row.querySelectorAll('.uniform-item-row')];
+    itemRows.forEach(syncUniformItemRow);
+    const checkedRows = itemRows.filter(itemRow => itemRow.querySelector('.uniform-item-toggle').checked);
+
+    if (!checkedRows.length) {
+        row.dataset.pricingAvailable = 'false';
+        row.dataset.total = row.dataset.paid = row.dataset.remaining = '0';
+        row.querySelector('.resolved-unit').textContent = '—';
+        row.querySelector('.resolved-total').textContent = 'Выберите изделие';
+        row.querySelector('.remaining').textContent = '—';
+        row.querySelector('.tariff-period').textContent = '';
+        updateSummary();
+        return;
+    }
+
+    let totalCents = 0, allOk = true, tariffPeriod = '';
+    for (const itemRow of checkedRows) {
+        const option = itemRow.querySelector('.uniform-item-size').selectedOptions[0];
+        const qty = itemRow.querySelector('.uniform-item-qty').value || 1;
+        const body = new FormData();
+        body.append('_token', document.querySelector('input[name="_token"]').value);
+        body.append('fee_id', row.dataset.feeId);
+        body.append('quantity', qty);
+        body.append('item', itemRow.dataset.uniformItem);
+        body.append('size', option?.dataset.size || '');
+        body.append('academic_year_id', document.querySelector('[name="academic_year_id"]').value);
+        body.append('enrollment_mode_id', enrollmentMode.value);
+        if (registrationDate.value) body.append('registration_date', registrationDate.value);
+
+        let unit = null, lineTotal = null;
+        try {
+            const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {'Accept': 'application/json'}});
+            if (response.ok) {
+                const result = await response.json();
+                unit = Number(result.unit_price);
+                lineTotal = Number(result.amount);
+                if (result.valid_from) {
+                    const displayDate = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU') : null;
+                    tariffPeriod = `Действует с ${displayDate(result.valid_from)}${result.valid_to ? ` по ${displayDate(result.valid_to)}` : ''}`;
+                }
+            }
+        } catch (e) { /* unit/lineTotal stay null — reported as unresolved below */ }
+
+        if (unit === null || lineTotal === null) {
+            allOk = false;
+            itemRow.querySelector('.uniform-item-unit').textContent = 'Ошибка';
+            itemRow.querySelector('.uniform-item-total').textContent = '—';
+            continue;
+        }
+        itemRow.querySelector('.uniform-item-unit').textContent = money(unit);
+        itemRow.querySelector('.uniform-item-total').textContent = money(lineTotal);
+        totalCents += cents(lineTotal);
+    }
+
+    row.querySelector('.tariff-period').textContent = tariffPeriod;
+    if (!allOk) {
+        row.dataset.pricingAvailable = 'false';
+        row.dataset.total = row.dataset.paid = row.dataset.remaining = '0';
+        row.querySelector('.resolved-unit').textContent = '—';
+        row.querySelector('.resolved-total').textContent = 'Не удалось рассчитать стоимость.';
+        row.querySelector('.remaining').textContent = '—';
+        updateSummary();
+        return;
+    }
+
+    row.dataset.pricingAvailable = 'true';
+    const paidInput = row.querySelector('.paid-now');
+    const paid = Number(paidInput?.value || 0);
+    const overpaid = cents(paid) > totalCents;
+    paidInput?.classList.toggle('is-invalid', overpaid);
+    const remaining = Math.max((totalCents - cents(paid)) / 100, 0);
+    row.dataset.total = (totalCents / 100).toFixed(2);
+    row.dataset.paid = (cents(paid) / 100).toFixed(2);
+    row.dataset.remaining = remaining.toFixed(2);
+    row.querySelector('.resolved-unit').textContent = '—';
+    row.querySelector('.resolved-total').textContent = money(totalCents / 100);
+    row.querySelector('.remaining').textContent = money(remaining);
+    updateSummary();
+}
+
 async function updateRow(row) {
     syncTransportPeriods(row);
     syncFoodDurationMode(row);
     const selected = row.querySelector('.service-toggle').checked;
     const fields = row.querySelector('.service-fields');
     fields.classList.toggle('d-none', !selected);
-    fields.querySelectorAll('input, select').forEach(field => field.disabled = !selected);
-    if (!selected) { row.dataset.total = row.dataset.paid = row.dataset.remaining = '0'; updateSummary(); return; }
+    fields.querySelectorAll('input, select').forEach(field => {
+        if (field.matches('.uniform-item-size, .uniform-item-qty')) return; // governed by syncUniformItemRow instead
+        field.disabled = !selected;
+    });
+    if (!selected) {
+        fields.querySelectorAll('.uniform-item-size, .uniform-item-qty').forEach(field => field.disabled = true);
+        row.dataset.total = row.dataset.paid = row.dataset.remaining = '0';
+        updateSummary();
+        return;
+    }
+    if (row.dataset.category === 'uniform') { await updateUniformRow(row); return; }
 
     const body = new FormData();
     body.append('_token', document.querySelector('input[name="_token"]').value);
@@ -297,7 +442,6 @@ async function updateRow(row) {
             if (input.value) body.append(input.name.match(/\[([a-z_]+)\]$/)[1], input.value);
         });
     }
-    const product = row.querySelector('.uniform-product')?.selectedOptions[0]; if (product?.value) { body.append('item', product.dataset.item); body.append('size', product.dataset.size); }
 
     let unit = null, total = null, errorMessage = 'Тариф не настроен.';
     const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {'Accept': 'application/json'}});

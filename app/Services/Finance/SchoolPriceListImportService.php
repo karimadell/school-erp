@@ -102,7 +102,7 @@ class SchoolPriceListImportService
 
             $definition = collect($this->catalog())->firstWhere('category', Fee::CATEGORY_UNIFORM);
 
-            $fee = $this->resolveOrCreateFee($definition, $result);
+            $fee = $this->resolveOperationalUniformFee($definition, $result);
             if ($fee) {
                 $this->processTariffs($fee, $year, $definition['tariffs'], $result);
                 $this->deactivateLegacyUniformSizesIfReplacementComplete($fee, $year);
@@ -156,6 +156,99 @@ class SchoolPriceListImportService
         $result['services_created']++;
 
         return $fee;
+    }
+
+    /**
+     * Uniform-only identity resolution — used ONLY by importUniformOnly(),
+     * never by import() (the shared resolveOrCreateFee() above remains
+     * the sole resolution path for the other 5 catalog() categories,
+     * completely unchanged by this method).
+     *
+     * The catalog()'s hardcoded Uniform name ('Школьная форма') is an
+     * exact, case-sensitive string match under this project's Postgres
+     * collation — a real deployed environment's Uniform Fee row may
+     * legitimately be stored under different capitalization (e.g.
+     * "ШКОЛЬНАЯ ФОРМА") for reasons entirely unrelated to this importer
+     * (manual creation, an older import path, etc.). Matching by name
+     * alone would then silently create a SECOND, duplicate Uniform Fee
+     * every time this method runs — the exact defect this method exists
+     * to close. Resolution is instead category-first:
+     *
+     *   - category = Fee::CATEGORY_UNIFORM
+     *   - is_test_data = false (an operator's ad-hoc test fixture must
+     *     never be selected as "the" real Uniform service — see
+     *     finance:mark-test-fees, the established convention for exactly
+     *     this class of exclusion elsewhere in this codebase)
+     *
+     * is_active is deliberately NOT part of this filter — matching
+     * resolveOrCreateFee()'s own existing behavior immediately above,
+     * which reuses whatever same-named Fee it finds regardless of its
+     * is_active state (line ~141: no is_active check before reuse).
+     * There is no reason for the Uniform-only path to be stricter about
+     * this than the shared path already is; an inactive-but-real
+     * operational Uniform Fee is still the correct one to reuse, not a
+     * reason to spawn a second Fee.
+     *
+     * - Exactly one eligible candidate: reused as-is. name_ru (or any
+     *   other identity field) is NEVER written here — only the row's id
+     *   is ever used.
+     * - Zero eligible candidates: falls through to the existing
+     *   name-based resolveOrCreateFee(), preserving current behavior for
+     *   a genuinely fresh environment that has no Uniform Fee at all yet
+     *   (e.g. this project's own test suites, which start from an empty
+     *   database) — EXCEPT when resolveOrCreateFee()'s own name-only
+     *   lookup would land on a test-data fixture that happens to share
+     *   the catalog's exact name_ru (resolveOrCreateFee() has no concept
+     *   of is_test_data at all, since import()'s other 5 categories never
+     *   need one). That specific case is guarded against explicitly
+     *   below — a test fixture must never be selected as "the"
+     *   operational Fee merely because nothing else exists yet; a
+     *   genuinely new, real Fee is created instead, and the test fixture
+     *   is left completely untouched.
+     * - More than one eligible candidate: fails closed — an automatic
+     *   choice between two real, non-test Uniform Fees would be a guess,
+     *   never a safe default. Nothing is created or written in this
+     *   case; the surrounding transaction is rolled back by the caller's
+     *   existing catch block.
+     *
+     * @param array<string,mixed> $definition
+     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     */
+    private function resolveOperationalUniformFee(array $definition, array &$result): ?Fee
+    {
+        $candidates = Fee::where('category', Fee::CATEGORY_UNIFORM)
+            ->where('is_test_data', false)
+            ->lockForUpdate()
+            ->get();
+
+        if ($candidates->count() > 1) {
+            throw new RuntimeException('Найдено несколько активных услуг категории «uniform» — автоматический выбор невозможен, требуется ручное вмешательство.');
+        }
+
+        $fee = $candidates->first();
+        if ($fee) {
+            $result['services_reused']++;
+
+            return $fee;
+        }
+
+        $nameMatch = Fee::where('name_ru', $definition['name'])->where('category', $definition['category'])->lockForUpdate()->first();
+        if ($nameMatch && $nameMatch->is_test_data) {
+            $fee = Fee::create([
+                'name_ru' => $definition['name'],
+                'category' => $definition['category'],
+                'type' => $definition['type'],
+                'payment_period' => $definition['service_period'],
+                'amount' => '0.00',
+                'description' => $definition['description'] ?? null,
+                'is_active' => true,
+            ]);
+            $result['services_created']++;
+
+            return $fee;
+        }
+
+        return $this->resolveOrCreateFee($definition, $result);
     }
 
     /**

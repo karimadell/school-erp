@@ -121,8 +121,13 @@ class QuickRegistrationAvailabilityGatingTest extends QuickRegistrationUxTestCas
 
         $html = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))->assertOk()->getContent();
 
-        $this->assertStringContainsString('Комплект — 6-10', $html);
-        $this->assertStringNotContainsString('Комплект — 12-16', $html);
+        // Multi-item Uniform corrective pass — one compact row per item
+        // (item name as plain text), with a size dropdown listing only
+        // that item's own sellable sizes (data-size per <option>) — never
+        // a combined "item — size" string.
+        $this->assertStringContainsString('data-uniform-item="Комплект"', $html);
+        $this->assertStringContainsString('data-size="6-10"', $html);
+        $this->assertStringNotContainsString('data-size="12-16"', $html);
     }
 
     public function test_transport_is_disabled_when_no_zone_tariff_exists(): void

@@ -281,14 +281,18 @@ class InvoiceIssuanceService
             // items — same edge case the original per-item query handled —
             // still sees the subscription created for the first occurrence.
             $activeSubscriptionsByFee = $enrollment->serviceSubscriptions()->where('status', 'active')->get()->keyBy('fee_id');
-            // Batched into one attach() call after the loop when every line
-            // has a distinct fee_id (the overwhelming common case — the Quick
-            // Registration UI can't submit the same fee twice). If a caller's
-            // payload ever does repeat a fee_id, fall back to the original
-            // one-attach()-per-line behaviour so pivot rows are never
-            // silently collapsed.
+            // Batched into one attach() call after the loop. invoice_fee
+            // carries a UNIQUE(invoice_id, fee_id) constraint (see that
+            // migration's own "prevent duplicate fee in same invoice"
+            // intent) — it is a one-row-per-Fee compatibility summary, never
+            // a per-line table, regardless of how many InvoiceItem rows a
+            // Fee produces. Multi-item Uniform selection is the one case
+            // that legitimately produces several $calculation['line_items']
+            // sharing one fee_id — handled below by summing into that
+            // single row rather than attempting a second attach() for the
+            // same (invoice_id, fee_id), which the unique constraint would
+            // reject outright.
             $feePivotRows = [];
-            $hasDuplicateFeeLines = collect($calculation['line_items'])->pluck('fee_id')->duplicates()->isNotEmpty();
             // Finance V2, Phase 2D: the just-created InvoiceItem per Fee,
             // needed below to wire automatic ServiceCoverage creation for
             // calendar-billed invoices. Only meaningful when fee_id isn't
@@ -302,9 +306,18 @@ class InvoiceIssuanceService
             // OWN "full settlement" amount for THAT specific service.
             $periodAmountsByFeeId = [];
 
-            foreach ($calculation['line_items'] as $line) {
+            foreach ($calculation['line_items'] as $lineIndex => $line) {
                 $periodAmountsByFeeId[$line['fee_id']] = $line['period_amounts'] ?? null;
-                $selection = collect($items)->firstWhere('fee_id', $line['fee_id']);
+                // Multi-item Uniform corrective pass — positional
+                // correspondence, not a fee_id search: calculate() builds
+                // $calculation['line_items'] in the exact same order $items
+                // was submitted in, so line N always came from $items[N]. A
+                // fee_id search cannot distinguish between several lines
+                // that legitimately share one fee_id (Uniform multi-item
+                // selection selects the same Fee more than once, each with
+                // its own item/size) — every sibling would otherwise resolve
+                // to the SAME (first) selection.
+                $selection = $items[$lineIndex] ?? [];
                 $fee = $resolveFee((int) $line['fee_id']);
                 $subscriptionId = $activeSubscriptionsByFee->get($line['fee_id'])?->id;
                 if (! $subscriptionId && $subscriptionResolver) {
@@ -391,14 +404,24 @@ class InvoiceIssuanceService
                         'food_requested_day_count'=>$line['metadata']['food_requested_day_count'] ?? null,
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
-                $pivotData = [
-                    'amount'=>$line['amount'], 'item'=>$line['item'], 'size'=>$line['size'],
-                    'option_type'=>$line['option_type'], 'option_value'=>$line['option_value'],
-                ];
-                if ($hasDuplicateFeeLines) {
-                    $invoice->fees()->attach($line['fee_id'], $pivotData);
+                if (isset($feePivotRows[$line['fee_id']])) {
+                    // A sibling line for this same Fee already staged a row
+                    // (Uniform multi-item selection) — sum the amount into
+                    // it; item/size/option_type/option_value cannot
+                    // represent more than one sibling's values, so they are
+                    // cleared here rather than silently kept as only the
+                    // first sibling's — the real per-line detail already
+                    // lives on each InvoiceItem row created above.
+                    $feePivotRows[$line['fee_id']]['amount'] = bcadd((string) $feePivotRows[$line['fee_id']]['amount'], (string) $line['amount'], 2);
+                    $feePivotRows[$line['fee_id']]['item'] = null;
+                    $feePivotRows[$line['fee_id']]['size'] = null;
+                    $feePivotRows[$line['fee_id']]['option_type'] = null;
+                    $feePivotRows[$line['fee_id']]['option_value'] = null;
                 } else {
-                    $feePivotRows[$line['fee_id']] = $pivotData;
+                    $feePivotRows[$line['fee_id']] = [
+                        'amount'=>$line['amount'], 'item'=>$line['item'], 'size'=>$line['size'],
+                        'option_type'=>$line['option_type'], 'option_value'=>$line['option_value'],
+                    ];
                 }
             }
             if ($feePivotRows) {

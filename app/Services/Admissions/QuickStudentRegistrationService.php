@@ -160,19 +160,71 @@ class QuickStudentRegistrationService
             ]);
 
             $feesById = [];
-            $normalizedServices = collect($data['services'])->map(function (array $service) use ($grade, $mode, &$feesById) {
+            $normalizedServices = collect($data['services'])->flatMap(function (array $service) use ($grade, $mode, &$feesById) {
                 $fee = Fee::query()->lockForUpdate()->findOrFail($service['fee_id']);
                 $feesById[$fee->id] = $fee;
-                $product = null;
+
+                $common = [
+                    '_fee_category' => $fee->category,
+                    'enrollment_mode_id' => $mode->id,
+                    'grade_id' => in_array($fee->category, [
+                        Fee::CATEGORY_TUITION,
+                        Fee::CATEGORY_TUITION_REGULAR,
+                        Fee::CATEGORY_TUITION_FAMILY,
+                        Fee::CATEGORY_TUITION_EXTERNAL,
+                    ], true) && blank($service['grade_group'] ?? null) ? $grade->id : null,
+                    'option_type' => match ($fee->category) {
+                        Fee::CATEGORY_TRANSPORT => 'zone',
+                        Fee::CATEGORY_FOOD => 'meal_plan',
+                        default => null,
+                    },
+                    'option_value' => match ($fee->category) {
+                        Fee::CATEGORY_TRANSPORT => $service['transport_area'] ?? null,
+                        Fee::CATEGORY_FOOD => isset($service['meal_plan_id']) ? (string) $service['meal_plan_id'] : null,
+                        default => null,
+                    },
+                    'payment_period' => $fee->category === Fee::CATEGORY_FOOD ? Fee::PERIOD_DAILY : ($service['payment_period'] ?? null),
+                ];
+
+                // Multi-item Uniform corrective pass — an employee may select
+                // several distinct Uniform items (each its own exact size) in
+                // one Quick Registration; each becomes its own independent
+                // invoice line, never collapsed into one opaque total
+                // (finance:uniform-procurement-report needs each item + exact
+                // size + quantity separately). This ONE submitted service
+                // entry (fee_id is still `distinct` at the request level, so
+                // there is still exactly one Uniform entry) fans out into N
+                // normalized entries here — one per selected uniform_items
+                // row. The single paid_now this submission carries for the
+                // whole Fee is placed on the FIRST generated line only (never
+                // duplicated across siblings, which would double-count the
+                // invoice-wide total below) — the reconciliation loop after
+                // issuance redistributes it across siblings, each capped at
+                // its own resolved amount.
+                if ($fee->category === Fee::CATEGORY_UNIFORM) {
+                    $uniformItems = $service['uniform_items'] ?? [];
+                    if (empty($uniformItems)) {
+                        throw ValidationException::withMessages(['services' => 'Для школьной формы выберите хотя бы одно изделие и размер.']);
+                    }
+
+                    return collect($uniformItems)->map(function (array $row, int $position) use ($service, $common) {
+                        $product = DB::table('uniform_products')->where('is_active', true)->lockForUpdate()->find($row['uniform_product_id']);
+                        if (! $product) {
+                            throw ValidationException::withMessages(['services' => 'Выбранное изделие школьной формы больше не доступно.']);
+                        }
+
+                        return array_merge($service, $common, [
+                            'quantity' => (int) $row['quantity'],
+                            'item' => $product->name_ru,
+                            'size' => $product->size,
+                            'uniform_product_id' => $product->id,
+                            'paid_now' => $position === 0 ? ($service['paid_now'] ?? '0.00') : '0.00',
+                        ]);
+                    })->values();
+                }
+
                 $route = null;
                 $mealPlan = null;
-
-                if ($fee->category === Fee::CATEGORY_UNIFORM) {
-                    $product = DB::table('uniform_products')->where('is_active', true)->lockForUpdate()->find($service['uniform_product_id']);
-                    if (! $product) {
-                        throw ValidationException::withMessages(['services' => 'Выбранное изделие школьной формы больше не доступно.']);
-                    }
-                }
                 if ($fee->category === Fee::CATEGORY_TRANSPORT) {
                     $route = DB::table('transport_routes')->lockForUpdate()->find($service['transport_route_id']);
                     if (! $route) {
@@ -186,33 +238,14 @@ class QuickStudentRegistrationService
                     }
                 }
 
-                return array_merge($service, [
-                    '_fee_category' => $fee->category,
-                    'enrollment_mode_id' => $mode->id,
+                return collect([array_merge($service, $common, [
                     'quantity' => (int) $service['quantity'],
-                    'grade_id' => in_array($fee->category, [
-                        Fee::CATEGORY_TUITION,
-                        Fee::CATEGORY_TUITION_REGULAR,
-                        Fee::CATEGORY_TUITION_FAMILY,
-                        Fee::CATEGORY_TUITION_EXTERNAL,
-                    ], true) && blank($service['grade_group'] ?? null) ? $grade->id : null,
-                    'item' => $product?->name_ru,
-                    'size' => $product?->size,
+                    'item' => null,
+                    'size' => null,
                     'transport_route_name' => $route?->name,
                     'meal_plan_name' => $mealPlan?->name_ru,
-                    'option_type' => match ($fee->category) {
-                        Fee::CATEGORY_TRANSPORT => 'zone',
-                        Fee::CATEGORY_FOOD => 'meal_plan',
-                        default => null,
-                    },
-                    'option_value' => match ($fee->category) {
-                        Fee::CATEGORY_TRANSPORT => $service['transport_area'] ?? null,
-                        Fee::CATEGORY_FOOD => isset($service['meal_plan_id']) ? (string) $service['meal_plan_id'] : null,
-                        default => null,
-                    },
-                    'payment_period' => $fee->category === Fee::CATEGORY_FOOD ? Fee::PERIOD_DAILY : ($service['payment_period'] ?? null),
-                ]);
-            });
+                ])]);
+            })->values();
             $items = $normalizedServices->all();
 
             // Food flexible-duration corrective pass: $items already
@@ -298,41 +331,71 @@ class QuickStudentRegistrationService
             // Collected here and passed to InvoicePaymentService::record()
             // below; zero-paid lines are skipped (nothing to allocate).
             $allocations = [];
-            foreach ($invoice->items as $item) {
-                // Bug fix (2026-08-29): fee_id arrives here as a string
-                // (every HTML form field is a string over HTTP) while
-                // $item->fee_id is an int (InvoiceItem has no cast on this
-                // column, so Eloquent returns whatever the driver gives —
-                // an int on every driver we run against). A strict === used
-                // to never match, so search() always returned false, and
-                // $normalizedServices[false] silently coerced to index 0 —
-                // every line after the first quietly reused the *first*
-                // submitted service's paid_now instead of its own. Compare
-                // both sides as int, and fail loudly instead of guessing if
-                // an invoice item still can't be matched to any submitted
-                // line — that indicates a real inconsistency, not something
-                // safe to paper over with index 0.
-                $index = $normalizedServices->search(fn (array $service) => (int) $service['fee_id'] === (int) $item->fee_id);
-                if ($index === false) {
+            // Multi-item Uniform corrective pass — matching by fee_id alone
+            // (the previous approach) cannot distinguish between several
+            // lines that legitimately share one fee_id: every sibling
+            // Uniform line has the identical fee_id, so a fee_id search
+            // would always resolve to the SAME (first) sibling for every one
+            // of them. InvoiceCalculationService::calculate() and
+            // InvoiceIssuanceService::issue() both build their line items/
+            // InvoiceItem rows in the exact same order $normalizedServices
+            // was submitted in (see InvoiceIssuanceService::issue()'s own
+            // parallel fix) — so the item at position N always came from
+            // $normalizedServices[N]. Ordered explicitly by id (this
+            // relation carries no default order) so that positional
+            // correspondence is guaranteed, not just usually true.
+            $orderedInvoiceItems = $invoice->items->sortBy('id')->values();
+            $feeLineCounts = $normalizedServices->pluck('fee_id')->map(fn ($id) => (int) $id)->countBy();
+            $remainingPaidByFeeId = [];
+            foreach ($orderedInvoiceItems as $position => $item) {
+                $selection = $normalizedServices[$position] ?? null;
+                if ($selection === null || (int) $selection['fee_id'] !== (int) $item->fee_id) {
                     throw ValidationException::withMessages([
                         'services' => "Не удалось сопоставить строку счёта с выбранной услугой (fee_id: {$item->fee_id}).",
                     ]);
                 }
-                $selection = $normalizedServices[$index];
                 $fee = $feesById[$item->fee_id];
                 $metadata = $this->metadata($fee, $selection);
-                $linePaid = bcadd((string) $selection['paid_now'], '0', 2);
 
-                // Same check the old, separate preview calculate() pass used
-                // to run before anything was persisted — folded in here
-                // against the invoice's own just-issued line amount instead
-                // of pricing every line twice. Still runs (and can still
-                // throw) before payment is attempted, so a violation rolls
-                // back the whole outer transaction exactly as before.
-                if (bccomp($linePaid, $item->amount, 2) > 0) {
-                    throw ValidationException::withMessages([
-                        "services.{$index}.paid_now" => 'Оплата по услуге не может превышать её рассчитанную стоимость.',
-                    ]);
+                $feeId = (int) $item->fee_id;
+                if (($feeLineCounts[$feeId] ?? 1) > 1) {
+                    // Multiple lines share this Fee (Uniform multi-item
+                    // selection) — the ONE paid_now this submission carries
+                    // for the whole Fee is distributed greedily across its
+                    // sibling lines, in submission order, each capped at its
+                    // own resolved amount — never duplicated across
+                    // siblings, never silently dropped.
+                    if (! array_key_exists($feeId, $remainingPaidByFeeId)) {
+                        $remainingPaidByFeeId[$feeId] = $normalizedServices
+                            ->filter(fn (array $service) => (int) $service['fee_id'] === $feeId)
+                            ->reduce(fn (string $sum, array $service) => bcadd($sum, (string) $service['paid_now'], 2), '0.00');
+                    }
+                    $linePaid = bccomp($remainingPaidByFeeId[$feeId], $item->amount, 2) >= 0
+                        ? $item->amount
+                        : $remainingPaidByFeeId[$feeId];
+                    $remainingPaidByFeeId[$feeId] = bcsub($remainingPaidByFeeId[$feeId], $linePaid, 2);
+                } else {
+                    $linePaid = bcadd((string) $selection['paid_now'], '0', 2);
+
+                    // Same check the old, separate preview calculate() pass
+                    // used to run before anything was persisted — folded in
+                    // here against the invoice's own just-issued line amount
+                    // instead of pricing every line twice. Still runs (and
+                    // can still throw) before payment is attempted, so a
+                    // violation rolls back the whole outer transaction
+                    // exactly as before. Scoped to the single-line-per-fee
+                    // case only — the multi-line Uniform case above already
+                    // guarantees a line is never allocated more than its own
+                    // amount, by construction, so an explicit throw there
+                    // would only fire for a total genuinely exceeding the
+                    // sum of every sibling's amount, which the request-level
+                    // decimal validation on paid_now cannot itself express
+                    // as cleanly as this per-line cap does.
+                    if (bccomp($linePaid, $item->amount, 2) > 0) {
+                        throw ValidationException::withMessages([
+                            "services.{$position}.paid_now" => 'Оплата по услуге не может превышать её рассчитанную стоимость.',
+                        ]);
+                    }
                 }
                 $lineRemaining = bcsub($item->amount, $linePaid, 2);
 

@@ -98,18 +98,22 @@ class InvoiceIssuanceServicePerformanceRegressionTest extends FinanceOperationsT
     }
 
     /**
-     * Safety-net parity check for the attach() batching fallback: a fee_id
-     * repeated across two lines is already impossible today — invoice_fee
-     * has a unique (invoice_id, fee_id) constraint, so even the original
-     * one-attach()-per-line code fails on the second row. What this proves
-     * is that the batching optimization did not change *how* it fails: the
-     * duplicate-detection in issue() correctly routes repeated fee_ids to
-     * the original per-line attach() path instead of silently collapsing
-     * them into one row via a PHP array key collision on the batched path
-     * (which would have failed differently — or worse, "succeeded" having
-     * silently dropped a row instead of throwing).
+     * Multi-item Uniform corrective pass — a fee_id repeated across two
+     * lines is now a real, supported case (Quick Registration Uniform
+     * multi-item selection: several distinct items, each its own exact
+     * size, all under the one Uniform Fee). invoice_fee still carries a
+     * UNIQUE(invoice_id, fee_id) constraint (it is a one-row-per-Fee
+     * compatibility summary, never a per-line table — see that migration's
+     * own "prevent duplicate fee in same invoice" intent), so issue() now
+     * aggregates repeated fee_ids into that ONE summary row (amount
+     * summed, item/size/option_type/option_value cleared since they can no
+     * longer represent a single line) instead of attempting a second
+     * attach() for the same pair, which the unique constraint would
+     * reject. Real per-line detail (amount, item, size) still lives on
+     * each of the two independent InvoiceItem rows created below — never
+     * collapsed.
      */
-    public function test_a_repeated_fee_id_across_two_lines_fails_loudly_instead_of_silently_collapsing(): void
+    public function test_a_repeated_fee_id_across_two_lines_succeeds_with_one_aggregated_pivot_row(): void
     {
         $data = [
             'student_id' => $this->student->id,
@@ -123,16 +127,14 @@ class InvoiceIssuanceServicePerformanceRegressionTest extends FinanceOperationsT
             'payment_type' => 'one_time',
         ];
 
-        $this->expectException(\Illuminate\Database\UniqueConstraintViolationException::class);
+        $invoice = app(InvoiceIssuanceService::class)->issue($this->student, $data, $this->accountant);
 
-        try {
-            app(InvoiceIssuanceService::class)->issue($this->student, $data, $this->accountant);
-        } finally {
-            // 6: same rollback behaviour — the whole outer transaction (and
-            // this service's own nested one) unwinds; nothing is left half
-            // -written from either line.
-            $this->assertDatabaseCount('invoices', 0);
-            $this->assertDatabaseCount('invoice_items', 0);
-        }
+        // Two independent InvoiceItem rows — never collapsed into one.
+        $this->assertSame(2, InvoiceItem::where('fee_id', $this->fee->id)->count());
+        // invoice_fee stays exactly one row per (invoice, fee) — its amount
+        // is the sum of both lines, never a second colliding insert.
+        $this->assertSame(1, DB::table('invoice_fee')->where('invoice_id', $invoice->id)->where('fee_id', $this->fee->id)->count());
+        $pivotAmount = DB::table('invoice_fee')->where('invoice_id', $invoice->id)->where('fee_id', $this->fee->id)->value('amount');
+        $this->assertSame(0, bccomp((string) $pivotAmount, (string) InvoiceItem::where('fee_id', $this->fee->id)->sum('amount'), 2));
     }
 }

@@ -146,8 +146,8 @@ class UniformExactSizeProcurementTest extends TestCase
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'services' => [[
-                'fee_id' => $fee->id, 'quantity' => 2, 'paid_now' => '0.00',
-                'item' => 'Поло', 'size' => '10', 'uniform_product_id' => $productId,
+                'fee_id' => $fee->id, 'paid_now' => '0.00',
+                'uniform_items' => [['uniform_product_id' => $productId, 'quantity' => 2]],
             ]],
         ]);
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -203,8 +203,8 @@ class UniformExactSizeProcurementTest extends TestCase
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'services' => [[
-                'fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00',
-                'item' => 'Толстовка', 'size' => '6–10', 'uniform_product_id' => $legacyProductId,
+                'fee_id' => $fee->id, 'paid_now' => '0.00',
+                'uniform_items' => [['uniform_product_id' => $legacyProductId, 'quantity' => 1]],
             ]],
         ]);
         $response->assertSessionHasNoErrors()->assertRedirect();

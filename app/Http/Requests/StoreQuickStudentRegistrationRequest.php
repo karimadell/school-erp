@@ -33,6 +33,25 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             $service['quantity'] ??= 1;
             $service['paid_now'] ??= '0.00';
 
+            // Multi-item Uniform corrective pass — disabled <select>/<input>
+            // elements never submit, so an unchecked item row in the compact
+            // table simply never appears in this array (native HTML
+            // semantics, not something this method needs to filter). What IS
+            // filtered here is a malformed/empty row (defensive only — the
+            // blade never renders one) and re-indexing after filtering, so
+            // every downstream services.*.uniform_items.*.* wildcard rule
+            // and the service layer's own iteration both see a clean,
+            // sequential array.
+            if (isset($service['uniform_items']) && is_array($service['uniform_items'])) {
+                $service['uniform_items'] = collect($service['uniform_items'])
+                    ->filter(fn ($row) => is_array($row) && filled($row['uniform_product_id'] ?? null))
+                    ->map(function (array $row) {
+                        $row['quantity'] ??= 1;
+
+                        return $row;
+                    })->values()->all();
+            }
+
             return $service;
         })->values()->all();
 
@@ -57,9 +76,17 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'services.*.fee_id' => ['required', 'integer', 'distinct', 'exists:fees,id'],
             'services.*.quantity' => ['required', 'integer', 'min:1', 'max:100'],
             'services.*.paid_now' => ['required', 'decimal:0,2', 'min:0'],
-            'services.*.item' => ['nullable', 'string', 'max:100'],
-            'services.*.size' => ['nullable', 'string', 'max:50'],
-            'services.*.uniform_product_id' => ['nullable', 'integer', 'exists:uniform_products,id'],
+            // Multi-item Uniform corrective pass — a Uniform service line no
+            // longer carries a single item/size/uniform_product_id: an
+            // employee may select several distinct Uniform items (each its
+            // own exact size) in the same line, so those are now a nested
+            // array, one entry per selected item. services.*.item/size/
+            // uniform_product_id (the old single-selection shape) are gone
+            // — nothing submits them any more (see the blade's compact
+            // per-item table).
+            'services.*.uniform_items' => ['nullable', 'array'],
+            'services.*.uniform_items.*.uniform_product_id' => ['required', 'integer', 'distinct', 'exists:uniform_products,id'],
+            'services.*.uniform_items.*.quantity' => ['required', 'integer', 'min:1', 'max:100'],
             'services.*.grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
             'services.*.payment_period' => ['nullable', Rule::in(['once', 'daily', 'monthly', 'quarterly', 'term', 'yearly', 'package'])],
             'services.*.first_last_month' => ['nullable', 'boolean'],
@@ -167,8 +194,8 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
 
             foreach ($services as $index => $item) {
                 $category = $fees->get((int) ($item['fee_id'] ?? 0))?->category;
-                if ($category === Fee::CATEGORY_UNIFORM && blank($item['uniform_product_id'] ?? null)) {
-                    $validator->errors()->add("services.{$index}.uniform_product_id", 'Для школьной формы выберите изделие и размер.');
+                if ($category === Fee::CATEGORY_UNIFORM && blank($item['uniform_items'] ?? [])) {
+                    $validator->errors()->add("services.{$index}.uniform_items", 'Для школьной формы выберите хотя бы одно изделие и размер.');
                 }
                 if ($category === Fee::CATEGORY_TRANSPORT) {
                     if (blank($item['transport_area'] ?? null) || blank($item['transport_route_id'] ?? null)) {

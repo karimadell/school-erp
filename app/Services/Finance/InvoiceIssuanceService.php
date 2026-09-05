@@ -41,6 +41,17 @@ use Illuminate\Validation\ValidationException;
  */
 class InvoiceIssuanceService
 {
+    /**
+     * Finance V2 Phase 1 — the single lump-sum installment covering every
+     * 'once'-strategy Fee on a payment_type=mixed invoice (Registration,
+     * Uniform, and any calendar-capable Fee whose per-service strategy was
+     * still 'once'). A dedicated, stable name so QuickStudentRegistrationService
+     * can look this installment up unambiguously for payment settlement,
+     * without depending on it always being sequence 1 (it isn't, whenever
+     * no once-strategy Fee is on the invoice at all).
+     */
+    public const MIXED_ONCE_INSTALLMENT_NAME = 'Разовые услуги';
+
     public function __construct(
         private InvoiceCalculationService $calculator,
         private InstallmentPlanService $plans,
@@ -207,8 +218,19 @@ class InvoiceIssuanceService
             // invoice needs no billing_period at all.
             $hasFood = collect($items)->contains(fn (array $item) => $resolveFee((int) $item['fee_id'])->category === Fee::CATEGORY_FOOD);
             $hasNonFoodItems = collect($items)->contains(fn (array $item) => $resolveFee((int) $item['fee_id'])->category !== Fee::CATEGORY_FOOD);
-            if ($hasFood && ($data['payment_type'] ?? null) !== 'calendar') {
+            // Finance V2 Phase 1: 'mixed' also carries Food through its own
+            // unchanged duration-mode path — Food's own coverage/installment
+            // is entirely independent of payment_type/billing_period either
+            // way (see createFoodInstallmentAndCoverage()'s own docblock).
+            if ($hasFood && ! in_array($data['payment_type'] ?? null, ['calendar', 'mixed'], true)) {
                 throw ValidationException::withMessages(['payment_type' => 'Питание оформляется только с явным периодом обслуживания.']);
+            }
+            // Finance V2 Phase 1 — custom PaymentPlan attribution per
+            // service, and discounting a mixed-strategy invoice, are both
+            // explicitly out of scope for this phase; fail closed rather
+            // than silently ignoring either.
+            if (($data['payment_type'] ?? null) === 'mixed' && (filled($data['discount_type'] ?? null) || bccomp((string) ($data['discount_value'] ?? '0'), '0', 2) !== 0)) {
+                throw ValidationException::withMessages(['discount_type' => 'Скидка пока не поддерживается при раздельной оплате по услугам.']);
             }
             $calendarBillingPeriod = null;
             if (($data['payment_type'] ?? null) === 'calendar' && $hasNonFoodItems) {
@@ -240,10 +262,24 @@ class InvoiceIssuanceService
                 })->all();
             }
 
-            $calculation = $this->calculator->calculate(
-                $items, $data['discount_type'] ?? null, $data['discount_value'] ?? null, '0', $data['pricing_date'], $year->id,
-                $calendarBillingPeriod, $calendarEnd, $calendarStart,
-            );
+            // Finance V2 Phase 1 — per-service billing strategy. A mixed
+            // invoice cannot be priced through ONE calculate() call: that
+            // method applies a single $calendarBillingPeriod (or none) to
+            // every line it's given, which is exactly the invariant this
+            // phase relaxes. calculateMixedStrategy() instead groups items
+            // by their own resolved strategy and calls the completely
+            // unchanged calculate() once per group, then merges the
+            // results back into the SAME shape/order calculate() itself
+            // would have returned — so every line of code below this point
+            // (item creation, invoice_fee aggregation) needs no knowledge
+            // of which path priced $calculation and works identically
+            // either way.
+            $calculation = ($data['payment_type'] ?? null) === 'mixed'
+                ? $this->calculateMixedStrategy($items, $data, $year, $resolveFee)
+                : $this->calculator->calculate(
+                    $items, $data['discount_type'] ?? null, $data['discount_value'] ?? null, '0', $data['pricing_date'], $year->id,
+                    $calendarBillingPeriod, $calendarEnd, $calendarStart,
+                );
             $invoiceData = [
                 'student_id'=>$student->id, 'academic_year_id'=>$year->id, 'customer_name'=>$student->full_name,
                 'currency'=>'EGP', 'subtotal_amount'=>$calculation['subtotal'], 'total_amount'=>$calculation['total_amount'],
@@ -484,6 +520,8 @@ class InvoiceIssuanceService
                     // above) — its own coverage is created by
                     // createFoodInstallmentAndCoverage() below instead.
                     $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
+                } elseif ($data['payment_type'] === 'mixed') {
+                    $this->issueMixedInstallmentsAndCoverage($invoice, $calculation['_mixed_groups'] ?? [], $invoiceFees, $itemsByFeeId, $periodAmountsByFeeId, $actor, $year->id, $data);
                 } else {
                     $this->plans->generateSingle($invoice, $data['due_date']);
                 }
@@ -551,6 +589,186 @@ class InvoiceIssuanceService
      * exception propagates and the whole issuance transaction rolls back
      * — zero persisted rows, never a silent partial commit.
      *
+     * @param  array<int, array{installment: \App\Models\InvoiceInstallment, period_start: string, period_end: string}>  $schedule
+     * @param  array<int, InvoiceItem>  $itemsByFeeId
+     * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees
+     */
+    /**
+     * Finance V2 Phase 1 — per-service billing strategy.
+     *
+     * Prices a payment_type=mixed invoice by grouping its items by their
+     * OWN resolved strategy (see QuickStudentRegistrationService's
+     * '_billing_strategy'/'_billing_period' resolution — never trusted
+     * again here beyond what those keys already say, since this method
+     * only reads them, it does not re-derive eligibility) and calling the
+     * completely UNCHANGED InvoiceCalculationService::calculate() once per
+     * group — never once for the whole invoice, which is exactly what
+     * would incorrectly apply one shared calendar period count to every
+     * line regardless of its own service's strategy.
+     *
+     * Groups:
+     *  - 'once': every Fee with no '_billing_strategy' key (every
+     *    non-mixed-aware category is implicitly 'once': Uniform,
+     *    Registration, additional services) or an explicit 'once', PLUS
+     *    every Food item (Food's own food_resolution prices it correctly
+     *    inside calculate() regardless of calendarBillingPeriod, exactly
+     *    like a Food-only invoice already does today).
+     *  - one 'calendar:{period}' group per distinct '_billing_period'
+     *    value among 'calendar'-strategy items — each priced with its OWN
+     *    CalendarPeriodCalculator resolution, never a shared one.
+     *
+     * Each group's own calculate() result is merged back into the exact
+     * same {@see InvoiceCalculationService::calculate()} shape/line order
+     * the caller would have gotten from one call — every line of issue()
+     * after this point (item creation, invoice_fee aggregation) needs no
+     * knowledge of grouping at all. Discount is deliberately unsupported
+     * here (issue() already fails closed before this is ever called if a
+     * discount is present on a mixed submission) — Quick Registration
+     * itself never offers one.
+     *
+     * @param  array<int, array<string, mixed>>  $items
+     * @return array<string, mixed>
+     */
+    private function calculateMixedStrategy(array $items, array $data, AcademicYear $year, \Closure $resolveFee): array
+    {
+        $groups = [];
+        foreach ($items as $index => $item) {
+            $fee = $resolveFee((int) $item['fee_id']);
+            $groupKey = 'once';
+            if ($fee->category !== Fee::CATEGORY_FOOD && ($item['_billing_strategy'] ?? 'once') === 'calendar') {
+                $groupKey = 'calendar:'.$item['_billing_period'];
+            }
+            $groups[$groupKey]['indices'][] = $index;
+            $groups[$groupKey]['items'][] = $item;
+        }
+
+        $mergedLines = array_fill(0, count($items), null);
+        $subtotal = '0.00';
+        $mixedGroups = [];
+
+        foreach ($groups as $groupKey => $group) {
+            $billingPeriod = str_starts_with($groupKey, 'calendar:') ? substr($groupKey, 9) : null;
+            $calendarStart = $data['coverage_start'] ?? $data['pricing_date'];
+            $calendarEnd = $billingPeriod !== null ? $year->end_date->toDateString() : null;
+
+            $result = $this->calculator->calculate(
+                $group['items'], null, null, '0', $data['pricing_date'], $year->id,
+                $billingPeriod, $calendarEnd, $calendarStart,
+            );
+
+            foreach ($result['line_items'] as $j => $line) {
+                $mergedLines[$group['indices'][$j]] = $line;
+            }
+            $subtotal = bcadd($subtotal, $result['subtotal'], 2);
+
+            if ($billingPeriod !== null) {
+                $mixedGroups[$billingPeriod] = [
+                    'schedule_amounts' => $result['schedule_amounts'],
+                    'scheduleable_total' => $result['scheduleable_total'] ?? $result['subtotal'],
+                    'fee_ids' => collect($group['items'])->pluck('fee_id')->map(fn ($id) => (int) $id)->unique()->values()->all(),
+                    'calendar_start' => $calendarStart,
+                    'calendar_end' => $calendarEnd,
+                ];
+            }
+        }
+
+        // No discount path for mixed in Phase 1 (issue() already rejects
+        // a discount on a mixed submission before this method is ever
+        // called) — total is simply the sum of every group's own subtotal.
+        $total = $subtotal;
+        $remaining = $total;
+        $status = bccomp($remaining, '0.00', 2) <= 0 ? Invoice::STATUS_PAID : Invoice::STATUS_UNPAID;
+
+        return [
+            'subtotal' => $subtotal,
+            'discount_amount' => '0.00',
+            'total_amount' => $total,
+            'paid_amount' => '0.00',
+            'remaining_amount' => $remaining,
+            'status' => $status,
+            'currency' => InvoiceCalculationService::CURRENCY,
+            'line_items' => $mergedLines,
+            'schedule_amounts' => null,
+            'scheduleable_total' => null,
+            // Not part of calculate()'s own return shape — read only by
+            // issueMixedInstallmentsAndCoverage() below, never by the
+            // shared item-creation/invoice_fee code that runs regardless
+            // of which path produced $calculation.
+            '_mixed_groups' => $mixedGroups,
+        ];
+    }
+
+    /**
+     * Finance V2 Phase 1 — appends one lump-sum installment for every
+     * 'once'-strategy Fee (Registration, Uniform, additional services,
+     * and any calendar-capable Fee whose per-service strategy was still
+     * 'once'), then one independent calendar schedule + item-specific
+     * ServiceCoverage per distinct billing_period group — generalizing
+     * the append-after-existing-sequence pattern
+     * createFoodInstallmentAndCoverage() already proves works, so no
+     * group ever collides with invoice_installments' UNIQUE(invoice_id,
+     * sequence) constraint. Food itself is untouched by this method
+     * entirely — it is never part of $invoiceFees (see issue()'s own
+     * $invoiceFees/$foodFees split) and keeps using its own dedicated
+     * createFoodInstallmentAndCoverage() call, unconditionally, exactly
+     * as every other payment_type already does.
+     *
+     * Quarterly/yearly ServiceCoverage: IS still created here, exactly as
+     * it already is for the pre-existing single-strategy 'calendar' path
+     * — createAutomaticCoverage() below is reused completely unchanged,
+     * and it unconditionally derives $billingUnit as 'monthly' (or
+     * 'daily' for Food, which never reaches this method) regardless of
+     * the group's own billing_period. So a quarterly/yearly-billed Fee in
+     * a mixed group gets a normal ServiceCoverage row using the schema's
+     * existing 'monthly' billing_unit as its basis — provided that Fee
+     * has its own monthly-denominated basis FeePrice configured (the
+     * same pre-existing requirement createAutomaticCoverage() already
+     * enforces today; see resolveCoverageBasisPrice()). This is not a
+     * new coverage semantic introduced by Phase 1 and does not widen
+     * ServiceCoverage.billing_unit's hard enum('monthly','daily') —
+     * Phase 1 only changes HOW MANY TIMES createAutomaticCoverage() is
+     * called per invoice (once per distinct billing_period group instead
+     * of once for the whole invoice), never what it does internally.
+     *
+     * @param  array<string, array{schedule_amounts: ?array<int,string>, scheduleable_total: string, fee_ids: array<int,int>, calendar_start: string, calendar_end: string}>  $mixedGroups
+     * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees
+     * @param  array<int, InvoiceItem>  $itemsByFeeId
+     */
+    private function issueMixedInstallmentsAndCoverage(Invoice $invoice, array $mixedGroups, \Illuminate\Support\Collection $invoiceFees, array $itemsByFeeId, array $periodAmountsByFeeId, User $actor, int $academicYearId, array $data): void
+    {
+        $calendarFeeIds = collect($mixedGroups)->flatMap(fn (array $group) => $group['fee_ids'])->unique()->all();
+        $onceFees = $invoiceFees->reject(fn (Fee $fee) => in_array($fee->id, $calendarFeeIds, true));
+
+        if ($onceFees->isNotEmpty()) {
+            $onceTotal = $onceFees->reduce(fn (string $sum, Fee $fee) => bcadd($sum, (string) $itemsByFeeId[$fee->id]->amount, 2), '0.00');
+            $sequence = ((int) $invoice->installments()->max('sequence')) + 1;
+            $this->plans->generateSingle($invoice, $data['due_date'], $onceTotal, $sequence, self::MIXED_ONCE_INSTALLMENT_NAME);
+            // Deliberately no ServiceCoverage for 'once' items — matches
+            // generateSingle()'s existing behavior for a plain one_time
+            // invoice today (no coverage is created there either).
+        }
+
+        foreach ($mixedGroups as $billingPeriod => $group) {
+            $groupFees = $invoiceFees->filter(fn (Fee $fee) => in_array($fee->id, $group['fee_ids'], true));
+            if ($groupFees->isEmpty()) {
+                continue;
+            }
+            foreach ($groupFees as $fee) {
+                if (! $fee->allowsBillingPeriod($billingPeriod)) {
+                    $periodLabel = FeeBillingPeriod::PERIOD_LABELS[$billingPeriod] ?? $billingPeriod;
+                    throw ValidationException::withMessages(['services' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
+                }
+            }
+            $startSequence = ((int) $invoice->installments()->max('sequence')) + 1;
+            $schedule = $this->plans->generateCalendarSchedule(
+                $invoice, $billingPeriod, $group['calendar_start'], $group['calendar_end'],
+                $group['schedule_amounts'], $group['scheduleable_total'], $startSequence,
+            );
+            $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $groupFees, $actor, $academicYearId, $data['pricing_date']);
+        }
+    }
+
+    /**
      * @param  array<int, array{installment: \App\Models\InvoiceInstallment, period_start: string, period_end: string}>  $schedule
      * @param  array<int, InvoiceItem>  $itemsByFeeId
      * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees

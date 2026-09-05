@@ -89,6 +89,14 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'services.*.uniform_items.*.quantity' => ['required', 'integer', 'min:1', 'max:100'],
             'services.*.grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
             'services.*.payment_period' => ['nullable', Rule::in(['once', 'daily', 'monthly', 'quarterly', 'term', 'yearly', 'package'])],
+            // Finance V2 Phase 1 — per-service billing strategy (mixed
+            // payment_type only; see after() below). 'once' is always the
+            // safe default for every category, including Uniform/
+            // Registration/Food — 'calendar' is only ever meaningful for a
+            // Fee that actually has at least one configured calendar
+            // billing period, checked in after() against that Fee's own
+            // allowsBillingPeriod(), never trusted from the client alone.
+            'services.*.billing_strategy' => ['nullable', Rule::in(['once', 'calendar'])],
             'services.*.first_last_month' => ['nullable', 'boolean'],
             'services.*.transport_area' => ['nullable', 'string', 'max:150'],
             'services.*.transport_route_id' => ['nullable', 'integer', 'exists:transport_routes,id'],
@@ -111,7 +119,18 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
             'payment_method' => ['nullable', Rule::in(['cash', 'card', 'bank', 'transfer', 'instapay'])],
             'payment_note' => ['nullable', 'string', 'max:1000'],
-            'payment_type' => ['required', Rule::in(['one_time', 'plan', 'calendar'])],
+            // Finance V2 Phase 1 — 'mixed' allows each service to resolve
+            // its OWN billing strategy (once vs calendar, and its own
+            // calendar period) instead of forcing every Fee on the invoice
+            // through one shared billing_period/payment_plan_id. It is a
+            // DISTINCT value from 'calendar'/'plan', never a superset of
+            // them — a 'mixed' submission never carries a top-level
+            // billing_period or payment_plan_id (validated in after()) —
+            // so every existing caller (classic invoice screen, mass
+            // billing, and any Quick Registration submission that never
+            // sends payment_type=mixed) is completely unaffected by this
+            // addition.
+            'payment_type' => ['required', Rule::in(['one_time', 'plan', 'calendar', 'mixed'])],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
             // Finance V2, Phase 2B — service-aware billing schedules.
             // Food flexible-duration corrective pass: no longer
@@ -221,7 +240,11 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 // one of five duration modes, each with its own required
                 // fields — never forced through billing_period='monthly'.
                 if ($category === Fee::CATEGORY_FOOD) {
-                    if ($this->input('payment_type') !== 'calendar') {
+                    // Finance V2 Phase 1: 'mixed' also carries Food through
+                    // its own unchanged duration-mode path below — Food
+                    // never reads billing_period/billing_strategy either
+                    // way, exactly as under 'calendar' today.
+                    if (! in_array($this->input('payment_type'), ['calendar', 'mixed'], true)) {
                         $validator->errors()->add('payment_type', 'Питание оформляется только с явным периодом обслуживания.');
                     }
                     $mode = $item['food_duration_mode'] ?? null;
@@ -265,6 +288,17 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             // ever allows 'once') from being swept into a monthly/quarterly
             // schedule when bundled with Tuition in the same submission.
             $paymentType = $this->input('payment_type');
+            // Finance V2 Phase 1 — per-service billing_strategy only has
+            // meaning under payment_type=mixed; submitting it alongside
+            // 'calendar'/'plan'/'one_time' is never silently reinterpreted
+            // or ignored, it fails closed instead.
+            if ($paymentType !== 'mixed') {
+                foreach ($services as $index => $item) {
+                    if (($item['billing_strategy'] ?? 'once') === 'calendar') {
+                        $validator->errors()->add("services.{$index}.billing_strategy", 'Стратегия оплаты по услуге доступна только при варианте оплаты «раздельно по услугам».');
+                    }
+                }
+            }
             if ($paymentType === 'calendar') {
                 $billingPeriod = $this->input('billing_period');
                 // Food flexible-duration corrective pass: billing_period is
@@ -290,6 +324,47 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                         || ! $fee->assignedPaymentPlans()->where('payment_plans.id', $planId)->exists()
                     )) {
                         $validator->errors()->add('payment_plan_id', "Выбранный план оплаты не назначен для услуги «{$fee->name_ru}».");
+                    }
+                }
+            } elseif ($paymentType === 'mixed') {
+                // Finance V2 Phase 1 — per-service billing strategy. Custom
+                // PaymentPlan attribution per service is explicitly out of
+                // scope for this phase (Phase 2) — a 'mixed' submission
+                // must never carry a top-level billing_period or
+                // payment_plan_id at all; failing this closed here (rather
+                // than silently ignoring either field) is what requirement
+                // 10 of this pass asks for.
+                if (filled($this->input('billing_period'))) {
+                    $validator->errors()->add('billing_period', 'Период оплаты указывается по каждой услуге отдельно — общий период здесь не используется.');
+                }
+                if (filled($this->input('payment_plan_id'))) {
+                    $validator->errors()->add('payment_plan_id', 'Индивидуальный план оплаты пока нельзя совмещать с разными стратегиями по услугам.');
+                }
+
+                foreach ($services as $index => $item) {
+                    $fee = $fees->get((int) ($item['fee_id'] ?? 0));
+                    if (! $fee || $fee->category === Fee::CATEGORY_FOOD) {
+                        // Food resolves its own coverage independently of
+                        // billing_strategy entirely — never validated here.
+                        continue;
+                    }
+
+                    $strategy = $item['billing_strategy'] ?? 'once';
+                    $calendarCapable = $fee->allowedBillingPeriods()->intersect(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)->isNotEmpty();
+
+                    if ($strategy === 'calendar') {
+                        if (! $calendarCapable) {
+                            $validator->errors()->add("services.{$index}.billing_strategy", "Услуга «{$fee->name_ru}» не поддерживает периодическую оплату.");
+
+                            continue;
+                        }
+                        $period = $item['payment_period'] ?? null;
+                        if (blank($period) || ! in_array($period, \App\Models\FeeBillingPeriod::CALENDAR_PERIODS, true)) {
+                            $validator->errors()->add("services.{$index}.payment_period", "Укажите период оплаты для услуги «{$fee->name_ru}».");
+                        } elseif (! $fee->allowsBillingPeriod($period)) {
+                            $periodLabel = \App\Models\FeeBillingPeriod::PERIOD_LABELS[$period] ?? $period;
+                            $validator->errors()->add("services.{$index}.payment_period", "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}».");
+                        }
                     }
                 }
             }

@@ -3,6 +3,8 @@
 namespace Tests\Feature\Finance;
 
 use App\Models\AuditLog;
+use App\Models\Fee;
+use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\StudentServiceSubscription;
@@ -173,5 +175,60 @@ class InvoiceIssuanceServiceTest extends FinanceOperationsTestCase
 
         $this->assertSame($existing->id, InvoiceItem::sole()->subscription_id);
         $this->assertSame(1, StudentServiceSubscription::count());
+    }
+
+    /**
+     * Finance V2 Phase 1 review hardening — mixed-strategy + discount.
+     *
+     * Quick Registration's own StoreQuickStudentRegistrationRequest never
+     * defines a discount_type/discount_value rule at all, so a discount can
+     * never reach payment_type='mixed' through that request. This exercises
+     * the lowest layer that DOES receive discount fields for any
+     * payment_type — InvoiceIssuanceService::issue() itself, the same seam
+     * the classic invoice screen's own discount feature flows through —
+     * proving the explicit fail-closed guard added for 'mixed' is a real,
+     * reachable line of defense and not merely unreachable dead code, and
+     * that it leaves zero partial side effects.
+     */
+    public function test_mixed_invoice_rejects_a_discount_and_persists_no_side_effects(): void
+    {
+        $registration = Fee::create(['name_ru' => 'Организационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '7000.00', 'is_active' => true]);
+        $tuition = Fee::create(['name_ru' => 'Обучение', 'category' => Fee::CATEGORY_TUITION, 'amount' => '0.00', 'is_active' => true]);
+        $tuition->billingPeriods()->create(['billing_period' => 'monthly']);
+        FeePrice::create([
+            'fee_id' => $tuition->id, 'academic_year_id' => $this->year->id, 'amount' => '2000.00', 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'payment_period' => 'monthly', 'grade_group' => '1–4 классы',
+        ]);
+        $uniform = Fee::create(['name_ru' => 'Школьная форма', 'category' => Fee::CATEGORY_UNIFORM, 'amount' => '0.00', 'is_active' => true]);
+        FeePrice::create([
+            'fee_id' => $uniform->id, 'academic_year_id' => $this->year->id, 'amount' => '500.00', 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'item' => 'Майка', 'size' => '14',
+        ]);
+
+        $data = $this->data([
+            'payment_type' => 'mixed',
+            'discount_type' => 'percentage',
+            'discount_value' => '10',
+            'items' => [
+                ['fee_id' => $registration->id, 'grade_group' => null, 'payment_period' => null, 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null],
+                ['fee_id' => $tuition->id, 'grade_group' => '1–4 классы', 'payment_period' => 'monthly', 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null, '_billing_strategy' => 'calendar', '_billing_period' => 'monthly'],
+                ['fee_id' => $uniform->id, 'grade_group' => null, 'payment_period' => null, 'first_last_month' => false, 'size' => '14', 'item' => 'Майка', 'option_type' => null, 'option_value' => null],
+            ],
+        ]);
+
+        try {
+            app(InvoiceIssuanceService::class)->issue($this->student, $data, $this->accountant);
+            $this->fail('Expected a ValidationException rejecting the discount on a mixed-strategy invoice.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('discount_type', $e->errors());
+        }
+
+        $this->assertDatabaseCount('invoices', 0);
+        $this->assertDatabaseCount('invoice_items', 0);
+        $this->assertDatabaseCount('invoice_installments', 0);
+        $this->assertDatabaseCount('invoice_payments', 0);
+        $this->assertDatabaseCount('service_coverages', 0);
     }
 }

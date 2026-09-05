@@ -84,7 +84,20 @@ class CalendarPeriodCalculator
         $monthsPerGroup = $billingPeriod === 'quarterly' ? 3 : 1;
         $periodStart = $start->copy()->startOfMonth();
         $periodEndAnchor = $yearEnd->copy()->startOfMonth();
-        $totalMonths = $periodStart->diffInMonths($periodEndAnchor) + 1;
+        // Cast explicitly to int: Carbon's diffInMonths() can return a
+        // float, which would otherwise silently propagate through
+        // $monthsRemaining/$groupMonths below and make the very last
+        // group's own 'months' value a float (e.g. 3.0) instead of an
+        // int. priceQuarterlyLine() (InvoiceCalculationService) compares
+        // $group['months'] === 3 with a STRICT type check — a float 3.0
+        // fails that check and silently falls through to its
+        // partial-group pricing branch with no monthly basis price
+        // resolved, pricing that entire final quarter at 0.00. This bug
+        // pre-dates and is independent of Finance V2 Phase 1 (per-service
+        // billing strategy) — it affects any quarterly schedule whose
+        // total span divides evenly into whole 3-month groups — but
+        // Phase 1's own tests are what surfaced it, so it is fixed here.
+        $totalMonths = (int) ($periodStart->diffInMonths($periodEndAnchor) + 1);
 
         $periods = [];
         $cursor = $periodStart->copy();

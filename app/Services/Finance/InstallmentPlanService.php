@@ -33,11 +33,35 @@ class InstallmentPlanService
         if (bccomp($allocated,$total,2)!==0) throw ValidationException::withMessages(['installments'=>'Сумма этапов должна совпадать с итогом счёта.']);
     }
 
-    public function generateSingle(Invoice $invoice, string $dueDate): void
+    /**
+     * @param  ?string  $amount  Finance V2 Phase 1 (per-service billing
+     *         strategy) — the amount to settle in one lump sum. Null (the
+     *         default, every pre-existing caller's behavior) uses the
+     *         WHOLE invoice total, unchanged. A mixed-strategy invoice's
+     *         'once' group passes its own group total here instead — this
+     *         installment must never include amounts belonging to a
+     *         sibling calendar group on the same invoice.
+     * @param  int  $sequence  Finance V2 Phase 1 — defaults to 1 (every
+     *         pre-existing caller's behavior, unchanged: a one_time
+     *         invoice's sole installment). A mixed-strategy invoice's
+     *         'once' group passes the next free sequence instead, so it
+     *         can coexist with calendar-group installments already
+     *         created on the same invoice (invoice_installments carries a
+     *         UNIQUE(invoice_id, sequence) constraint).
+     * @param  ?string  $name  Finance V2 Phase 1 — defaults to null, which
+     *         preserves the exact pre-existing name 'Полная оплата' for
+     *         every caller that doesn't override it. A mixed-strategy
+     *         invoice's 'once' group passes InvoiceIssuanceService::
+     *         MIXED_ONCE_INSTALLMENT_NAME instead, so
+     *         QuickStudentRegistrationService can look this specific
+     *         installment up unambiguously for payment settlement.
+     */
+    public function generateSingle(Invoice $invoice, string $dueDate, ?string $amount = null, int $sequence = 1, ?string $name = null): void
     {
-        $settled = bccomp((string) $invoice->total_amount, '0.00', 2) <= 0;
-        InvoiceInstallment::create(['invoice_id'=>$invoice->id,'name_ru'=>'Полная оплата','sequence'=>1,'due_date'=>$dueDate,
-            'amount'=>$invoice->total_amount,'paid_amount'=>'0.00','remaining_amount'=>$invoice->total_amount,
+        $amount ??= (string) $invoice->total_amount;
+        $settled = bccomp($amount, '0.00', 2) <= 0;
+        InvoiceInstallment::create(['invoice_id'=>$invoice->id,'name_ru'=>$name ?? 'Полная оплата','sequence'=>$sequence,'due_date'=>$dueDate,
+            'amount'=>$amount,'paid_amount'=>'0.00','remaining_amount'=>$amount,
             'status'=>$settled ? InvoiceInstallment::STATUS_PAID : InvoiceInstallment::STATUS_PENDING]);
     }
 
@@ -118,19 +142,36 @@ class InstallmentPlanService
      *         shared schedule (it gets its own dedicated lump-sum
      *         installment) and therefore $scheduleAmounts correctly sums
      *         to LESS than the whole invoice total in that case.
+     * @param  int  $startSequence  Finance V2 Phase 1 (per-service billing
+     *         strategy) — defaults to 1 (every pre-existing caller's
+     *         behavior, unchanged: a schedule that owns the invoice's
+     *         whole installment sequence from the start). A mixed-strategy
+     *         invoice's Nth calendar group passes the next free sequence
+     *         instead — generalizing the same append-after-existing-
+     *         sequence pattern createFoodInstallmentAndCoverage() already
+     *         uses — so two distinct calendar groups (e.g. Tuition monthly
+     *         + Transport quarterly) never collide on
+     *         invoice_installments' UNIQUE(invoice_id, sequence)
+     *         constraint by both starting at 1.
      * @return array<int, array{installment: InvoiceInstallment, period_start: string, period_end: string}>
      */
-    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate, ?array $scheduleAmounts = null, ?string $expectedTotal = null): array
+    public function generateCalendarSchedule(Invoice $invoice, string $billingPeriod, string $startDate, string $academicYearEndDate, ?array $scheduleAmounts = null, ?string $expectedTotal = null, int $startSequence = 1): array
     {
         if ($billingPeriod === 'yearly') {
-            $this->generateSingle($invoice, $startDate);
+            // Amount/sequence overrides only ever differ from the
+            // no-argument defaults when a caller explicitly passes
+            // $startSequence > 1 (Phase 1's mixed-strategy path) — every
+            // pre-existing single-strategy caller keeps using the whole
+            // invoice total at sequence 1, byte-for-byte unchanged.
+            $amount = $startSequence === 1 ? null : ($expectedTotal ?? (string) $invoice->total_amount);
+            $this->generateSingle($invoice, $startDate, $amount, $startSequence);
 
             // period_start is month-snapped (matching CalendarPeriodCalculator's
             // own yearly branch, kept in agreement here since this method
             // doesn't call it for the yearly shortcut) — due_date above
             // deliberately stays the raw, un-snapped registration date.
             return [[
-                'installment' => $invoice->installments()->sole(),
+                'installment' => $invoice->installments()->where('sequence', $startSequence)->sole(),
                 'period_start' => Carbon::parse($startDate)->startOfMonth()->toDateString(),
                 'period_end' => Carbon::parse($academicYearEndDate)->toDateString(),
             ]];
@@ -178,7 +219,7 @@ class InstallmentPlanService
             $installment = InvoiceInstallment::create([
                 'invoice_id' => $invoice->id,
                 'name_ru' => 'Период '.($i + 1),
-                'sequence' => $i + 1,
+                'sequence' => $startSequence + $i,
                 'due_date' => $dueDate,
                 'amount' => $amount,
                 'paid_amount' => '0.00',

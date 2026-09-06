@@ -39,7 +39,10 @@ return new class extends Migration
 
             $table->timestamp('created_at')->useCurrent();
 
-            $table->unique(['payment_refund_id', 'payment_allocation_id']);
+            // Explicit short name: the auto-generated one
+            // ("payment_refund_allocations_payment_refund_id_payment_allocation_id_unique",
+            // 73 chars) exceeds MySQL's 64-character identifier limit.
+            $table->unique(['payment_refund_id', 'payment_allocation_id'], 'refund_alloc_refund_allocation_uq');
             $table->index('payment_refund_id');
             $table->index('payment_allocation_id');
         });

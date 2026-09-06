@@ -3,13 +3,14 @@
 @section('content')
 @php
     $tuitionCategories = ['tuition', 'tuition_regular', 'tuition_family', 'tuition_external'];
+    $additionalServiceCategories = ['books', 'extra_classes', 'activity', 'other'];
     $groups = [
         'registration' => ['title' => 'Регистрационный взнос', 'fees' => $fees->where('category', 'registration')],
         'tuition' => ['title' => 'Обучение', 'fees' => $fees->whereIn('category', $tuitionCategories)],
         'transport' => ['title' => 'Транспорт', 'fees' => $fees->where('category', 'transport')],
         'food' => ['title' => 'Питание', 'fees' => $fees->where('category', 'food')],
         'uniform' => ['title' => 'Школьная форма', 'fees' => $fees->where('category', 'uniform')],
-        'other' => ['title' => 'Дополнительные услуги', 'fees' => $fees->whereIn('category', ['books', 'extra_classes', 'activity', 'other'])],
+        'other' => ['title' => 'Дополнительные услуги', 'fees' => $fees->whereIn('category', $additionalServiceCategories)],
     ];
     $oldServices = collect(old('services', []))->keyBy(fn ($service) => (string) ($service['fee_id'] ?? ''));
     $configurationReady = $academicYears->isNotEmpty() && $modes->isNotEmpty() && $fees->isNotEmpty();
@@ -23,9 +24,53 @@
     // regardless of readiness (their pricing fallback and dimensional
     // matching are more forgiving by design — see the Phase 3 report).
     $gatedCategories = ['transport', 'food', 'uniform'];
-    $serviceIsAvailable = fn ($fee) => ! in_array($fee->category, $gatedCategories, true)
-        || ($serviceReadiness[$fee->id]['ready'] ?? false);
-    $unavailableReason = fn ($fee) => $serviceReadiness[$fee->id]['reason'] ?? null;
+
+    // Review corrective pass (P1) — a calendar period must never be
+    // offered/auto-selected to the operator unless it is BOTH canonically
+    // allowed (Fee::allowedBillingPeriods(), the Phase 2B source) AND
+    // actually purchasable right now. "Purchasable" is read directly off
+    // $fee->prices as the controller already scoped it via
+    // InvoiceCalculationService::resolvableCandidates() — the exact same
+    // canonical availability resolution the live /quick-registration/price
+    // endpoint and every other category on this page already depend on —
+    // never a second, ad-hoc pricing engine reimplemented here. The one
+    // extra rule (quarterly derivable from an existing monthly price) is
+    // not invented by this pass either: it mirrors, verbatim, the single
+    // derivation InvoiceCalculationService::resolvePrice() itself performs
+    // (quarterly = monthly × 3) — Tuition's own pre-existing period
+    // dropdown already assumes this same rule in its own comment above.
+    $purchasablePeriodsFor = function ($fee) {
+        $allowed = $fee->allowedBillingPeriods()->intersect(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS);
+        $priced = $fee->prices->pluck('payment_period')->filter()->unique();
+
+        return $allowed->filter(fn ($period) => $priced->contains($period)
+            || ($period === \App\Models\FeeBillingPeriod::PERIOD_QUARTERLY && $priced->contains('monthly')))
+            ->values();
+    };
+    // A Fee explicitly configured for calendar billing (allowedBillingPeriods
+    // non-empty) but with none of those periods currently purchasable is
+    // never silently offered as "Разовая оплата" — that would misrepresent
+    // a periodic tariff that simply isn't priced yet as a deliberately
+    // one-time one. It fails closed the same way Transport/Food/Uniform
+    // already do here: the whole service becomes unselectable, with a
+    // visible reason, never a quiet fallback to billing_strategy=once.
+    // Scoped to Additional services only — Tuition/Transport keep their
+    // existing (unrelated-to-this-fix) availability behavior untouched;
+    // this pass does not redesign or re-gate those two categories.
+    $calendarConfiguredButUnpriced = fn ($fee) => in_array($fee->category, $additionalServiceCategories, true)
+        && $fee->allowedBillingPeriods()->intersect(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)->isNotEmpty()
+        && $purchasablePeriodsFor($fee)->isEmpty();
+    $serviceIsAvailable = fn ($fee) => (! in_array($fee->category, $gatedCategories, true)
+        || ($serviceReadiness[$fee->id]['ready'] ?? false))
+        && ! $calendarConfiguredButUnpriced($fee);
+    // $calendarConfiguredButUnpriced checked FIRST: FinanceConfigurationReadinessService
+    // computes a (generic, pricing-unrelated) reason for every fee it
+    // evaluates, not only gated categories — that reason must never mask
+    // this specifically diagnosed cause when it's the one actually
+    // blocking the checkbox above.
+    $unavailableReason = fn ($fee) => $calendarConfiguredButUnpriced($fee)
+        ? 'Для этой услуги настроен периодический тариф, но действующая цена не определена — обратитесь к администратору.'
+        : ($serviceReadiness[$fee->id]['reason'] ?? null);
 
     // Multi-item Uniform corrective pass — one compact row per Uniform
     // ITEM (Комплект/Майка/Поло/Толстовка), not one per item+size
@@ -119,6 +164,14 @@
                             @endunless
                             <div class="service-fields row g-3 mt-1 d-none">
                                 @if($groupKey !== 'uniform')<input type="hidden" name="services[{{ $index }}][quantity]" value="1" class="quantity">@endif
+                                {{-- Finance V2 Phase 1 UI — resolved reactively by the page
+                                     script from this row's own payment_period value (once
+                                     that value is a genuine calendar period: monthly/
+                                     quarterly/yearly) and only meaningful once the computed
+                                     top-level payment_type becomes 'mixed'. Food resolves
+                                     its own coverage independently and never carries this
+                                     field at all — never trust it, never send it. --}}
+                                @if($groupKey !== 'food')<input type="hidden" name="services[{{ $index }}][billing_strategy]" value="once" class="billing-strategy-field">@endif
                                 @if($groupKey === 'tuition')
                                     @php
                                         // Corrective pass — a period this Fee allows (FeeBillingPeriod,
@@ -207,6 +260,45 @@
                                             </table>
                                         </div>
                                     </div>
+                                @elseif($groupKey === 'other')
+                                    @php
+                                        // Review corrective pass (P1) — restricted to periods that
+                                        // are BOTH canonically allowed AND actually purchasable
+                                        // right now ($purchasablePeriodsFor(), defined above —
+                                        // reads the same resolvableCandidates()-scoped $fee->prices
+                                        // the rest of this page already relies on). A once-only
+                                        // additional service (allowedBillingPeriods empty) still
+                                        // gets no field at all, byte-identical to before this
+                                        // pass; a Fee configured for calendar billing but with
+                                        // nothing purchasable is caught earlier — its checkbox is
+                                        // already disabled via $serviceIsAvailable, so this branch
+                                        // is unreachable for it.
+                                        $additionalCalendarPeriods = $purchasablePeriodsFor($fee);
+                                    @endphp
+                                    @if($additionalCalendarPeriods->count() > 1)
+                                        <div class="col-md-3">
+                                            <label class="form-label">Порядок оплаты *</label>
+                                            <select name="services[{{ $index }}][payment_period]" class="form-select price-option requires-period">
+                                                <option value="">Выберите порядок оплаты</option>
+                                                @foreach($additionalCalendarPeriods as $option)
+                                                    <option value="{{ $option }}" @selected(($oldService['payment_period'] ?? null) === $option)>{{ $periodLabels[$option] ?? $option }}</option>
+                                                @endforeach
+                                            </select>
+                                        </div>
+                                    @elseif($additionalCalendarPeriods->count() === 1)
+                                        {{-- Exactly one allowed period — auto-selected, no
+                                             operator interaction needed. --}}
+                                        <input type="hidden" name="services[{{ $index }}][payment_period]" value="{{ $additionalCalendarPeriods->first() }}" class="price-option">
+                                        <div class="col-md-3"><label class="form-label">Порядок оплаты</label><div class="form-control-plaintext text-muted small">{{ $periodLabels[$additionalCalendarPeriods->first()] ?? $additionalCalendarPeriods->first() }} (автоматически)</div></div>
+                                    @elseif(! $calendarConfiguredButUnpriced($fee))
+                                        <div class="col-md-3"><label class="form-label">Порядок оплаты</label><div class="form-control-plaintext text-muted small">Разовая оплата</div></div>
+                                    @endif
+                                    {{-- $calendarConfiguredButUnpriced($fee): renders neither a
+                                         period control nor "Разовая оплата" — that label would
+                                         misrepresent a periodic tariff that simply isn't priced
+                                         yet as deliberately one-time. The checkbox above is
+                                         already disabled with a visible reason; this row can
+                                         never actually be checked/submitted. --}}
                                 @endif
                                 <div class="col-md-2"><label class="form-label">Цена</label><div class="resolved-unit fw-semibold">0.00 EGP</div></div>
                                 <div class="col-md-2"><label class="form-label">Стоимость</label><div class="resolved-total fw-semibold">0.00 EGP</div></div>
@@ -247,6 +339,11 @@
 const cents = value => Math.round((Number(value || 0) + Number.EPSILON) * 100);
 const money = value => `${(cents(value) / 100).toFixed(2)} EGP`;
 const periodLabels = @json($periodLabels);
+// Finance V2 Phase 1 UI — the only genuine calendar-schedule periods;
+// every other payment_period value (once/daily/term/package, or blank) is
+// a pricing-dimension choice only and always resolves to billing_strategy
+// 'once'. Kept in exact sync with FeeBillingPeriod::CALENDAR_PERIODS.
+const CALENDAR_PERIOD_VALUES = ['monthly', 'quarterly', 'yearly'];
 const stage = document.getElementById('stage');
 const grade = document.getElementById('grade');
 const schoolClass = document.getElementById('school-class');
@@ -268,6 +365,58 @@ const filterAcademics = () => {
 stage.addEventListener('change', filterAcademics); grade.addEventListener('change', filterAcademics); filterAcademics();
 
 const rows = [...document.querySelectorAll('.service-row')];
+
+// Finance V2 Phase 1 UI — reads whatever the row's own payment_period
+// field currently holds (Tuition's/Transport's pre-existing pricing-
+// dimension dropdown, or the new Additional-services control) and derives
+// this service's billing strategy from it. Never a separate operator
+// choice: choosing a genuine calendar period IS choosing 'calendar'.
+// Food never resolves through here (see the blade: no billing-strategy
+// field is even rendered for a Food row).
+function resolvedStrategy(row) {
+    const periodField = row.querySelector('[name$="[payment_period]"]');
+    return CALENDAR_PERIOD_VALUES.includes(periodField?.value || '') ? 'calendar' : 'once';
+}
+// Russian label for the live summary (Section 3) — null for Food, whose
+// existing coverage/duration summary is left completely untouched.
+function billingLabel(row) {
+    if (row.dataset.category === 'food') return null;
+    if (resolvedStrategy(row) !== 'calendar') return 'Разово';
+    const periodField = row.querySelector('[name$="[payment_period]"]');
+    return periodLabels[periodField.value] || periodField.value;
+}
+
+const paymentMode = document.getElementById('payment-mode');
+const paymentPlanWrapper = document.getElementById('payment-plan-wrapper');
+const paymentPlanSelect = document.getElementById('payment-plan-id');
+const paymentTypeInput = document.getElementById('payment-type-input');
+// Custom PaymentPlan (payment_type=plan) never coexists with Food (Food
+// has no assignable PaymentPlan and always needs its own duration-mode
+// path) — mirrors the pre-existing food-forces-calendar behavior, now
+// pointed at the 'auto' (mixed-capable) mode instead of a literal
+// payment_type value the operator no longer picks directly.
+const planOption = paymentMode?.querySelector('option[value="plan"]');
+// Captured once, before this function ever runs: whether the server
+// already disabled "план" because no installment plans are configured at
+// all (FinanceConfigurationReadinessService) — that reason must persist
+// regardless of which services get checked/unchecked afterwards.
+const planUnavailableByReadiness = planOption?.disabled ?? false;
+function syncPaymentModeAvailability() {
+    const foodSelected = rows.some(row => row.dataset.category === 'food' && row.querySelector('.service-toggle').checked);
+    if (planOption) planOption.disabled = planUnavailableByReadiness || foodSelected;
+    if (foodSelected && paymentMode.value === 'plan') paymentMode.value = 'auto';
+    if (paymentPlanWrapper) paymentPlanWrapper.style.display = paymentMode.value === 'plan' ? '' : 'none';
+    // Review corrective pass (P0) — a plan chosen, then abandoned by
+    // switching back to "auto", must never linger as a live, submittable
+    // field: disabled inputs are never sent, so this is what actually
+    // stops a stale payment_plan_id from reaching a payment_type=mixed
+    // request (rejected server-side, but on a field the hidden wrapper no
+    // longer shows — never let that state be reachable at all). The
+    // select's value is deliberately left alone: re-enabling it (switching
+    // back to "план") should restore what the operator last chose, not
+    // force them to re-pick it.
+    if (paymentPlanSelect) paymentPlanSelect.disabled = paymentMode.value !== 'plan';
+}
 
 // Bug 2: Transport's payment-period options are derived live from this
 // fee's own sellable FeePrice rows (data-periods-by-zone, rendered
@@ -491,7 +640,9 @@ function updateSummary() {
     rows.filter(row => row.querySelector('.service-toggle').checked).forEach(row => {
         total += cents(row.dataset.total); paid += cents(row.dataset.paid); remaining += cents(row.dataset.remaining);
         const summaryRow = document.createElement('tr');
-        [row.dataset.name, money(row.dataset.total), money(row.dataset.paid), money(row.dataset.remaining)].forEach(value => {
+        const label = billingLabel(row);
+        const name = label ? `${row.dataset.name} — ${label}` : row.dataset.name;
+        [name, money(row.dataset.total), money(row.dataset.paid), money(row.dataset.remaining)].forEach(value => {
             const cell = document.createElement('td'); cell.textContent = value; summaryRow.appendChild(cell);
         });
         tbody.appendChild(summaryRow);
@@ -499,7 +650,8 @@ function updateSummary() {
     if (!tbody.children.length) tbody.innerHTML = '<tr><td colspan="4" class="text-muted">Услуги не выбраны.</td></tr>';
     [['summary-total', total], ['summary-paid', paid], ['summary-remaining', remaining], ['grand-total', total], ['grand-paid', paid], ['grand-remaining', remaining]].forEach(([id, value]) => document.getElementById(id).textContent = money(value / 100));
 }
-rows.forEach(row => { row.querySelectorAll('input, select').forEach(input => { input.addEventListener('change', () => updateRow(row)); input.addEventListener('input', () => updateRow(row)); }); });
+rows.forEach(row => { row.querySelectorAll('input, select').forEach(input => { input.addEventListener('change', () => { updateRow(row); syncPaymentModeAvailability(); }); input.addEventListener('input', () => updateRow(row)); }); });
+if (paymentMode) { paymentMode.addEventListener('change', syncPaymentModeAvailability); syncPaymentModeAvailability(); }
 // Bug 1: some browsers (confirmed: Safari) restore a checkbox's checked
 // state — e.g. from bfcache navigation, or native form-autofill — AFTER
 // this script's top-level code has already run, and never dispatch a
@@ -510,7 +662,7 @@ rows.forEach(row => { row.querySelectorAll('input, select').forEach(input => { i
 // 'pageshow' fires after that restoration completes on every navigation —
 // including a plain first load — so re-reading `.checked` there is the
 // robust point to resolve pricing for whatever is actually checked.
-window.addEventListener('pageshow', () => rows.forEach(updateRow));
+window.addEventListener('pageshow', () => { rows.forEach(updateRow); syncPaymentModeAvailability(); });
 grade.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow));
 [academicYear, schoolClass, enrollmentMode, registrationDate].forEach(input => input.addEventListener('change', () => rows.filter(row => row.querySelector('.service-toggle').checked).forEach(updateRow)));
 const paymentMethod = document.getElementById('payment-method');
@@ -560,23 +712,63 @@ modeTabs.forEach(tab => tab.addEventListener('click', () => {
 // no navigation, no visible message. Every blocked-submit path below must
 // now show a specific Russian message and bring the offending row into view.
 const submitBlockedError = document.getElementById('submit-blocked-error');
+if (paymentPlanSelect) paymentPlanSelect.addEventListener('change', () => paymentPlanSelect.classList.remove('is-invalid'));
 document.getElementById('quick-registration-form').addEventListener('submit', event => {
     const noneSelected = !rows.some(row => row.querySelector('.service-toggle').checked);
     document.getElementById('service-selection-error').classList.toggle('d-none', !noneSelected);
 
     rows.forEach(row => row.classList.remove('border-danger'));
+
+    // Finance V2 Phase 1 UI — resolve every checked, non-Food row's own
+    // billing_strategy from its current payment_period value, and derive
+    // the single top-level payment_type from those resolutions. Recomputed
+    // fresh on every submit attempt, so a field the operator just fixed is
+    // always reflected — never a stale value from an earlier attempt.
+    const checkedRows = rows.filter(row => row.querySelector('.service-toggle').checked);
+    const planSelected = paymentMode && paymentMode.value === 'plan';
+    const foodSelectedNow = checkedRows.some(row => row.dataset.category === 'food');
+    let anyCalendarSelected = false;
+    checkedRows.forEach(row => {
+        const strategyField = row.querySelector('.billing-strategy-field');
+        if (!strategyField) return; // Food never carries this field.
+        // Custom PaymentPlan mode never coexists with a per-service
+        // calendar strategy — the backend rejects billing_strategy=
+        // 'calendar' outside payment_type=mixed, so force 'once' here
+        // defensively rather than ever letting a stale 'calendar' value
+        // reach the server under 'plan'.
+        const strategy = planSelected ? 'once' : resolvedStrategy(row);
+        strategyField.value = strategy;
+        if (strategy === 'calendar') anyCalendarSelected = true;
+    });
+    if (paymentTypeInput) {
+        paymentTypeInput.value = planSelected ? 'plan' : ((foodSelectedNow || anyCalendarSelected) ? 'mixed' : 'one_time');
+    }
+    // A multi-option "Порядок оплаты" control (Additional services) left
+    // on its blank placeholder — mandatory once shown, never silently
+    // defaulted to 'once'.
+    const emptyRequiredPeriodRow = !planSelected && checkedRows.find(row => {
+        const field = row.querySelector('.requires-period');
+        return field && !field.value;
+    });
+
     const overpaidRow = rows.find(row => row.querySelector('.service-toggle').checked && row.querySelector('.paid-now')?.classList.contains('is-invalid'));
     const unavailableRow = rows.find(row => row.querySelector('.service-toggle').checked && row.dataset.pricingAvailable !== 'true');
-    const blockedRow = overpaidRow || unavailableRow;
+    const blockedRow = overpaidRow || unavailableRow || emptyRequiredPeriodRow;
 
     // amount > 0 must never post with the payment account still unresolved —
     // mirrors the "Касса = Без оплаты" audit finding: block here instead of
     // letting InvoicePaymentService reject it after the invoice already exists.
-    const totalPaidNow = rows.filter(row => row.querySelector('.service-toggle').checked)
-        .reduce((sum, row) => sum + cents(row.dataset.paid), 0);
+    const totalPaidNow = checkedRows.reduce((sum, row) => sum + cents(row.dataset.paid), 0);
     const unresolvedCashAccount = totalPaidNow > 0 && cashAccount.disabled && cashAccountHint.classList.contains('text-danger');
+    const planRequiredButMissing = planSelected && paymentPlanSelect && !paymentPlanSelect.value;
+    // Custom PaymentPlan is explicitly out of scope for Food (Food never
+    // has an assignable plan and always needs its own duration-mode
+    // path) — syncPaymentModeAvailability() already disables "план" the
+    // moment Food is checked, this is a submit-time defense-in-depth
+    // guard against a state that should never be reachable through the UI.
+    const planConflictsWithFood = planSelected && foodSelectedNow;
 
-    if (!noneSelected && !blockedRow && !unresolvedCashAccount) {
+    if (!noneSelected && !blockedRow && !unresolvedCashAccount && !planRequiredButMissing && !planConflictsWithFood) {
         submitBlockedError.classList.add('d-none');
         return;
     }
@@ -586,9 +778,20 @@ document.getElementById('quick-registration-form').addEventListener('submit', ev
         blockedRow.classList.add('border-danger');
         submitBlockedError.textContent = overpaidRow
             ? 'Оплаченная сумма превышает стоимость услуги — исправьте выделенную строку ниже.'
-            : 'Для одной из выбранных услуг не удалось рассчитать стоимость — заполните все обязательные поля в выделенной строке ниже.';
+            : (emptyRequiredPeriodRow
+                ? 'Для одной из выбранных услуг нужно выбрать порядок оплаты — заполните обязательное поле в выделенной строке ниже.'
+                : 'Для одной из выбранных услуг не удалось рассчитать стоимость — заполните все обязательные поля в выделенной строке ниже.');
         submitBlockedError.classList.remove('d-none');
         blockedRow.scrollIntoView({behavior: 'smooth', block: 'center'});
+    } else if (planConflictsWithFood) {
+        submitBlockedError.textContent = 'Питание нельзя совместить с индивидуальным планом рассрочки — выберите автоматический порядок оплаты в разделе 4.';
+        submitBlockedError.classList.remove('d-none');
+        paymentMode.scrollIntoView({behavior: 'smooth', block: 'center'});
+    } else if (planRequiredButMissing) {
+        paymentPlanSelect.classList.add('is-invalid');
+        submitBlockedError.textContent = 'Выберите план оплаты рассрочки.';
+        submitBlockedError.classList.remove('d-none');
+        paymentPlanSelect.scrollIntoView({behavior: 'smooth', block: 'center'});
     } else if (unresolvedCashAccount) {
         submitBlockedError.textContent = 'Для выбранного способа оплаты не настроена касса — оплату принять нельзя. Обратитесь к администратору.';
         submitBlockedError.classList.remove('d-none');

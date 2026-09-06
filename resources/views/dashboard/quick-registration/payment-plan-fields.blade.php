@@ -1,93 +1,40 @@
 <section class="card shadow-sm mb-4"><div class="card-header fw-bold">4. Порядок оплаты</div><div class="card-body row g-3">
+    {{-- Finance V2 Phase 1 UI — per-service billing_strategy/payment_period
+         (Section 2) already let each service resolve its own schedule, so
+         this section no longer asks for one global payment_type/
+         billing_period pair. Only two variants remain here:
+           - "auto": the normal path — payment_type is computed client-side
+             as 'mixed' whenever any selected service actually needs a
+             calendar schedule (or Food is selected), or 'one_time' when
+             every selected service is once-only. Both are existing,
+             unchanged backend payment_type values — this UI simply stops
+             asking the operator to name one explicitly.
+           - "plan": the pre-existing custom installment-plan path,
+             completely unchanged (global payment_plan_id, one plan for the
+             whole invoice) — mixed and plan remain mutually exclusive, so
+             choosing this hides/ignores every per-service billing control. --}}
     <div class="col-md-4">
         <label class="form-label">Вариант</label>
-        <select name="payment_type" id="payment-type" class="form-select">
-            <option value="one_time">Единовременная оплата</option>
-            <option value="calendar" @selected(old('payment_type')==='calendar')>Периодическая оплата (по календарю)</option>
-            <option value="plan" @selected(old('payment_type')==='plan') @disabled(! $installmentsReadiness['ready'])>Рассрочка (индивидуальный план)</option>
+        <select id="payment-mode" class="form-select">
+            <option value="auto">Автоматически по каждой услуге</option>
+            <option value="plan" @selected(old('payment_type') === 'plan') @disabled(! $installmentsReadiness['ready'])>Рассрочка (индивидуальный план)</option>
         </select>
+        <div class="form-text">Период оплаты по обучению, транспорту и дополнительным услугам указывается прямо в карточке услуги — раздел 2.</div>
     </div>
-    {{-- Finance V2, Phase 2B: shown only for payment_type=calendar. Which
-         options are actually valid for the selected service(s) is enforced
-         server-side (StoreQuickStudentRegistrationRequest) — a choice
-         invalid for a selected service (e.g. Registration, which only
-         allows "once") is rejected with a clear error, not silently
-         filtered out of this list in the browser. --}}
-    <div class="col-md-8" id="billing-period-wrapper" style="display:none">
-        <label class="form-label">Период оплаты</label>
-        <select name="billing_period" id="billing-period" class="form-select">
-            <option value="">Выберите период</option>
-            <option value="monthly" @selected(old('billing_period')==='monthly')>Ежемесячно</option>
-            <option value="quarterly" @selected(old('billing_period')==='quarterly')>Ежеквартально</option>
-            <option value="yearly" @selected(old('billing_period')==='yearly')>Ежегодно</option>
-        </select>
-    </div>
-    <div class="col-md-8" id="payment-plan-wrapper">
+    <div class="col-md-8" id="payment-plan-wrapper" style="display:none">
         <label class="form-label">Предустановленный план</label>
         <select name="payment_plan_id" id="payment-plan-id" class="form-select" @disabled(! $installmentsReadiness['ready'])>
             <option value="">Выберите план</option>
             @foreach($paymentPlans as $plan)
-                <option value="{{ $plan->id }}" @selected(old('payment_plan_id')==$plan->id)>{{ $plan->name_ru }} — этапов: {{ $plan->installments->count() }}</option>
+                <option value="{{ $plan->id }}" @selected(old('payment_plan_id') == $plan->id)>{{ $plan->name_ru }} — этапов: {{ $plan->installments->count() }}</option>
             @endforeach
         </select>
         @if(! $installmentsReadiness['ready'])
             <div class="form-text text-danger">{{ $installmentsReadiness['reason'] }}</div>
         @endif
     </div>
+    {{-- Computed client-side at submit time (create.blade.php's own
+         script owns every row's data, so it is the single place that
+         actually knows whether any service needs a calendar schedule). --}}
+    <input type="hidden" name="payment_type" id="payment-type-input" value="{{ old('payment_type', 'mixed') }}">
 </div></section>
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    const type = document.getElementById('payment-type');
-    const plan = document.getElementById('payment-plan-id');
-    const planWrapper = document.getElementById('payment-plan-wrapper');
-    const period = document.getElementById('billing-period');
-    const periodWrapper = document.getElementById('billing-period-wrapper');
-    const form = document.getElementById('quick-registration-form');
-    if (!type || !plan || !form) return;
-
-    const syncVisibility = () => {
-        const isCalendar = type.value === 'calendar';
-        const isPlan = type.value === 'plan';
-        if (periodWrapper) periodWrapper.style.display = isCalendar ? '' : 'none';
-        if (planWrapper) planWrapper.style.display = isPlan ? '' : 'none';
-    };
-    // Food flexible-duration corrective pass: Food no longer forces
-    // billing_period='monthly' — it resolves its own duration-mode
-    // selection (day/school_week/teaching_days/month/custom_range)
-    // instead of CalendarPeriodCalculator's month/quarter grouping, so a
-    // Food-only submission needs no billing_period concept at all.
-    // billing_period stays required (and offered in full) only when a
-    // non-Food service shares the same invoice.
-    const syncFoodCapability = () => {
-        const foodSelected = [...form.querySelectorAll('[data-service-row][data-category="food"] .service-toggle')]
-            .some(input => input.checked);
-        const nonFoodSelected = [...form.querySelectorAll('[data-service-row]:not([data-category="food"]) .service-toggle')]
-            .some(input => input.checked);
-        [...type.options].forEach(option => option.disabled = foodSelected && option.value !== 'calendar');
-        if (foodSelected) {
-            type.value = 'calendar';
-        }
-        syncVisibility();
-        if (periodWrapper) periodWrapper.style.display = (type.value === 'calendar' && nonFoodSelected) ? '' : 'none';
-        if (foodSelected && !nonFoodSelected && period) period.value = '';
-    };
-    type.addEventListener('change', syncFoodCapability);
-    form.querySelectorAll('[data-service-row] .service-toggle').forEach(input => input.addEventListener('change', syncFoodCapability));
-    syncFoodCapability();
-
-    form.addEventListener('submit', event => {
-        if (type.value === 'plan' && !plan.value) {
-            event.preventDefault();
-            plan.classList.add('is-invalid');
-        }
-        const nonFoodSelected = [...form.querySelectorAll('[data-service-row]:not([data-category="food"]) .service-toggle')]
-            .some(input => input.checked);
-        if (type.value === 'calendar' && nonFoodSelected && period && !period.value) {
-            event.preventDefault();
-            period.classList.add('is-invalid');
-        }
-    });
-    plan.addEventListener('change', () => plan.classList.remove('is-invalid'));
-    if (period) period.addEventListener('change', () => period.classList.remove('is-invalid'));
-});
-</script>

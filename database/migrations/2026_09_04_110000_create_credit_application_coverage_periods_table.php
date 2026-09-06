@@ -26,12 +26,23 @@ return new class extends Migration
         Schema::create('credit_application_coverage_periods', function (Blueprint $table) {
             $table->id();
 
+            // Explicit short names for the three identifiers this table's own
+            // long name ("credit_application_coverage_periods") pushes past
+            // MySQL's 64-character limit: student_credit_application_item_id's
+            // FK (78 chars, the originally reported failure), installment_
+            // coverage_period_id's FK (74 chars, never previously reported
+            // because the migration failed on the first FK statement first),
+            // and the explicit index on installment_coverage_period_id
+            // (72 chars, same reason). All three are fixed together as one
+            // atomic portability defect. The composite unique below was
+            // already given an explicit short name by this migration's
+            // original author and needed no change.
             $table->foreignId('student_credit_application_item_id')
-                ->constrained('student_credit_application_items')
+                ->constrained('student_credit_application_items', 'id', 'credit_app_cov_period_item_fk')
                 ->restrictOnDelete();
 
             $table->foreignId('installment_coverage_period_id')
-                ->constrained('installment_coverage_periods')
+                ->constrained('installment_coverage_periods', 'id', 'credit_app_cov_period_installment_fk')
                 ->restrictOnDelete();
 
             $table->decimal('amount', 12, 2);
@@ -39,7 +50,7 @@ return new class extends Migration
             $table->timestamp('created_at')->useCurrent();
 
             $table->unique(['student_credit_application_item_id', 'installment_coverage_period_id'], 'credit_app_cov_period_unique');
-            $table->index('installment_coverage_period_id');
+            $table->index('installment_coverage_period_id', 'credit_app_cov_period_idx');
         });
     }
 

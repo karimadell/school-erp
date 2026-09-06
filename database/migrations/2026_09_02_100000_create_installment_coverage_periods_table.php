@@ -69,7 +69,10 @@ return new class extends Migration
 
             $table->timestamp('created_at')->useCurrent();
 
-            $table->unique(['invoice_installment_id', 'service_coverage_id']);
+            // Explicit short name: the auto-generated one
+            // ("installment_coverage_periods_invoice_installment_id_service_coverage_id_unique",
+            // 78 chars) exceeds MySQL's 64-character identifier limit.
+            $table->unique(['invoice_installment_id', 'service_coverage_id'], 'installment_coverage_installment_service_uq');
             $table->index('service_coverage_id');
         });
     }

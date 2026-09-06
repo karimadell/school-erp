@@ -34,8 +34,17 @@ return new class extends Migration
         Schema::create('student_credit_application_items', function (Blueprint $table) {
             $table->id();
 
+            // Explicit short names for the two identifiers this table's own
+            // long name ("student_credit_application_items") pushes past
+            // MySQL's 64-character limit: student_credit_application_id's FK
+            // (70 chars, the originally reported failure) and the standalone
+            // index on that same column (68 chars, never previously reported
+            // because the migration failed on the FK statement first). Both
+            // are fixed together as one atomic portability defect.
+            // invoice_item_id's FK (56 chars) and index (54 chars) are
+            // already safe and left with their auto-generated names.
             $table->foreignId('student_credit_application_id')
-                ->constrained('student_credit_applications')
+                ->constrained('student_credit_applications', 'id', 'sca_items_credit_application_fk')
                 ->restrictOnDelete();
 
             $table->foreignId('invoice_item_id')
@@ -46,7 +55,7 @@ return new class extends Migration
 
             $table->timestamp('created_at')->useCurrent();
 
-            $table->index('student_credit_application_id');
+            $table->index('student_credit_application_id', 'sca_items_credit_application_idx');
             $table->index('invoice_item_id');
         });
     }

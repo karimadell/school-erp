@@ -42,20 +42,28 @@ return new class extends Migration
         Schema::create('payment_allocation_coverage_periods', function (Blueprint $table) {
             $table->id();
 
+            // Explicit short names throughout: this table's own long name
+            // ("payment_allocation_coverage_periods") pushes every one of
+            // Laravel's auto-generated identifiers here past MySQL's
+            // 64-character limit — not just the first one to fail
+            // (payment_allocation_id's FK, 65 chars) but also
+            // installment_coverage_period_id's FK (74 chars), the explicit
+            // index on it (72 chars), and the composite unique (95 chars).
+            // All four are fixed together as one atomic portability defect.
             $table->foreignId('payment_allocation_id')
-                ->constrained('payment_allocations')
+                ->constrained('payment_allocations', 'id', 'payment_alloc_cov_payment_allocation_fk')
                 ->restrictOnDelete();
 
             $table->foreignId('installment_coverage_period_id')
-                ->constrained('installment_coverage_periods')
+                ->constrained('installment_coverage_periods', 'id', 'payment_alloc_cov_installment_coverage_fk')
                 ->restrictOnDelete();
 
             $table->decimal('amount', 12, 2);
 
             $table->timestamp('created_at')->useCurrent();
 
-            $table->unique(['payment_allocation_id', 'installment_coverage_period_id']);
-            $table->index('installment_coverage_period_id');
+            $table->unique(['payment_allocation_id', 'installment_coverage_period_id'], 'payment_alloc_cov_alloc_period_uq');
+            $table->index('installment_coverage_period_id', 'payment_alloc_cov_period_idx');
         });
     }
 

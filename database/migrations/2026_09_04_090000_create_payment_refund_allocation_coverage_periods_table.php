@@ -29,12 +29,23 @@ return new class extends Migration
         Schema::create('payment_refund_allocation_coverage_periods', function (Blueprint $table) {
             $table->id();
 
+            // Explicit short names throughout: this table's own long name
+            // ("payment_refund_allocation_coverage_periods") pushes every
+            // one of Laravel's auto-generated identifiers here past
+            // MySQL's 64-character limit — not just the one already
+            // reported (payment_refund_allocation_id's FK, 79 chars) but
+            // also installment_coverage_period_id's FK (81 chars) and the
+            // explicit index on it (79 chars). The composite unique below
+            // was already given an explicit short name by this migration's
+            // original author and needed no change. All three newly
+            // discovered unsafe identifiers are fixed together as one
+            // atomic portability defect.
             $table->foreignId('payment_refund_allocation_id')
-                ->constrained('payment_refund_allocations')
+                ->constrained('payment_refund_allocations', 'id', 'pr_alloc_cov_period_refund_alloc_fk')
                 ->restrictOnDelete();
 
             $table->foreignId('installment_coverage_period_id')
-                ->constrained('installment_coverage_periods')
+                ->constrained('installment_coverage_periods', 'id', 'pr_alloc_cov_period_installment_fk')
                 ->restrictOnDelete();
 
             $table->decimal('amount', 12, 2);
@@ -42,7 +53,7 @@ return new class extends Migration
             $table->timestamp('created_at')->useCurrent();
 
             $table->unique(['payment_refund_allocation_id', 'installment_coverage_period_id'], 'pr_alloc_cov_period_unique');
-            $table->index('installment_coverage_period_id');
+            $table->index('installment_coverage_period_id', 'pr_alloc_cov_period_idx');
         });
     }
 

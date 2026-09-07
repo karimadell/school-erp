@@ -18,11 +18,14 @@ use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
+use App\Models\Bus;
+use App\Models\TransportRoute;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\AcademicStructureService;
 use App\Services\StudentServiceSubscriptionService;
+use App\Services\Transport\TransportAssignmentService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -37,6 +40,7 @@ class QuickStudentRegistrationService
         private InvoicePaymentService $payments,
         private StudentServiceSubscriptionService $subscriptions,
         private AcademicStructureService $structure,
+        private TransportAssignmentService $transportAssignments,
     )
     {
     }
@@ -331,6 +335,43 @@ class QuickStudentRegistrationService
                         'meal_plan_id' => $selection['meal_plan_id'],
                         'start_date' => $foodCoverageStart ?? $data['registration_date'],
                     ]);
+                }
+
+                // Transport Management Phase C — the canonical durable
+                // assignment (bus capacity, route/zone identity, audit) is
+                // created inside this SAME outer transaction, right where
+                // Food's own MealSubscription is created above: this is the
+                // one place per submission that already knows the resolved
+                // Enrollment and the Transport service's own selection.
+                // TransportAssignmentService::assign() wraps itself in its
+                // own DB::transaction() (Laravel nests it as a savepoint),
+                // enforces the Phase A 'manage transport assignments'
+                // permission itself (abort_unless — never duplicated here),
+                // and is the sole capacity-locking authority — any failure
+                // it throws (capacity, inactive route/bus, permission,
+                // overlap) propagates straight out of this closure and out
+                // of InvoiceIssuanceService::issue() to the outer
+                // DB::transaction() in register() below, rolling back the
+                // whole registration (Student/Enrollment/Invoice/coverage)
+                // with no orphan rows anywhere.
+                if ($fee->category === Fee::CATEGORY_TRANSPORT) {
+                    $this->transportAssignments->assign(
+                        $enrollment,
+                        TransportRoute::findOrFail($selection['transport_route_id']),
+                        Bus::findOrFail($selection['bus_id']),
+                        [
+                            'pricing_zone' => $selection['transport_area'],
+                            'pickup_point' => $selection['transport_stop'] ?? null,
+                            'billing_period' => $selection['payment_period'] ?? null,
+                            // Same start-date semantics already used for this
+                            // exact Transport subscription two lines above —
+                            // Transport has no coverage-range concept of its
+                            // own the way Food does, so the registration date
+                            // is the correct "service begins now" anchor.
+                            'effective_from' => $data['registration_date'],
+                        ],
+                        $actor,
+                    );
                 }
 
                 return $subscription->id;

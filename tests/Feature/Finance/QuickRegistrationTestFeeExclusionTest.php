@@ -75,7 +75,14 @@ class QuickRegistrationTestFeeExclusionTest extends TestCase
 
     private function transportRoute(): int
     {
-        return DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now()]);
+        return DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 1', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+    }
+
+    // Transport Management Phase C — canonical bus selection is now a
+    // required field on every Transport service line.
+    private function transportBus(): int
+    {
+        return \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true])->id;
     }
 
     public function test_fees_default_to_not_test_data(): void
@@ -119,7 +126,7 @@ class QuickRegistrationTestFeeExclusionTest extends TestCase
         // exists first, the test-data flag is applied to it afterward.
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
-            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $route, 'payment_period' => 'monthly']],
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $route, 'bus_id' => $this->transportBus(), 'payment_period' => 'monthly']],
         ]);
         $response->assertSessionHasNoErrors()->assertRedirect();
         $invoiceId = Invoice::sole()->id;
@@ -141,7 +148,7 @@ class QuickRegistrationTestFeeExclusionTest extends TestCase
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
-            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $route, 'payment_period' => 'monthly']],
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $route, 'bus_id' => $this->transportBus(), 'payment_period' => 'monthly']],
         ]);
 
         $response->assertSessionHasNoErrors()->assertRedirect();

@@ -158,7 +158,7 @@ class QuickRegistrationMixedBillingTest extends TestCase
             'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
             'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly',
         ]);
-        $routeId = DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now()]);
+        $routeId = DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 1', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
 
         return [$fee, $routeId];
     }
@@ -232,7 +232,7 @@ class QuickRegistrationMixedBillingTest extends TestCase
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '0.00'],
             ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
-            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'quarterly', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId],
+            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'quarterly', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true])->id],
             ['fee_id' => $uniform->id, 'paid_now' => '0.00', 'uniform_items' => [['uniform_product_id' => $productId, 'quantity' => 1]]],
         ]))->assertSessionHasNoErrors();
 
@@ -327,7 +327,7 @@ class QuickRegistrationMixedBillingTest extends TestCase
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '7000.00'],
             ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
-            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'quarterly', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId],
+            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'quarterly', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true])->id],
             ['fee_id' => $food->id, 'quantity' => 1, 'paid_now' => '85.00', 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'day', 'food_date' => '2026-08-03'],
             ['fee_id' => $uniform->id, 'paid_now' => '500.00', 'uniform_items' => [['uniform_product_id' => $productId, 'quantity' => 1]]],
         ], ['payment_method' => 'cash', 'cash_account_id' => $this->account->id]))->assertSessionHasNoErrors();

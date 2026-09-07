@@ -100,6 +100,7 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'services.*.first_last_month' => ['nullable', 'boolean'],
             'services.*.transport_area' => ['nullable', 'string', 'max:150'],
             'services.*.transport_route_id' => ['nullable', 'integer', 'exists:transport_routes,id'],
+            'services.*.bus_id' => ['nullable', 'integer', 'exists:buses,id'],
             'services.*.transport_stop' => ['nullable', 'string', 'max:150'],
             'services.*.meal_plan_id' => ['nullable', 'integer', 'exists:meal_plans,id'],
             // Food flexible-duration corrective pass: replaces the old
@@ -219,6 +220,25 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 if ($category === Fee::CATEGORY_TRANSPORT) {
                     if (blank($item['transport_area'] ?? null) || blank($item['transport_route_id'] ?? null)) {
                         $validator->errors()->add("services.{$index}.transport_area", 'Для транспорта укажите район и маршрут.');
+                    }
+                    // Transport Management Phase C — canonical bus selection
+                    // is required alongside the pricing zone/route; never
+                    // guessed among multiple active buses.
+                    if (blank($item['bus_id'] ?? null)) {
+                        $validator->errors()->add("services.{$index}.bus_id", 'Для транспорта выберите микроавтобус.');
+                    }
+                    // route.pricing_zone is a UI hint/default only — FeePrice
+                    // (option_type=zone) remains the sole pricing authority.
+                    // A non-null route pricing_zone that disagrees with the
+                    // submitted transport_area is a genuine data-integrity
+                    // problem (the operator picked a route that doesn't
+                    // belong to the zone they priced), not something to
+                    // silently reconcile.
+                    if (filled($item['transport_route_id'] ?? null)) {
+                        $route = \App\Models\TransportRoute::find($item['transport_route_id']);
+                        if ($route && filled($route->pricing_zone) && filled($item['transport_area'] ?? null) && $route->pricing_zone !== $item['transport_area']) {
+                            $validator->errors()->add("services.{$index}.transport_route_id", 'Выбранный маршрут не относится к указанной зоне тарифа.');
+                        }
                     }
                     // Mirrors InvoiceCalculationService::resolvePrice()'s own
                     // conditional requirement exactly (Bug 2): payment_period

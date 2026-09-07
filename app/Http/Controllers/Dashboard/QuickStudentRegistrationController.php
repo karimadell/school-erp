@@ -137,7 +137,6 @@ class QuickStudentRegistrationController extends Controller
                     'occupied' => \App\Models\StudentTransportAssignment::where('bus_id', $bus->id)->where('status', 'active')->count(),
                     'capacity' => min(14, $bus->student_capacity),
                 ])
-                ->filter(fn ($bus) => $bus->occupied < $bus->capacity)
                 ->values(),
             'uniformProducts' => $uniformProducts,
             'paymentPlans' => PaymentPlan::active()->with('installments')->orderBy('sort_order')->get(),

@@ -186,6 +186,12 @@ class RolesAndPermissionsSeeder extends Seeder
             'view cash sessions',
             'open cash sessions',
             'close cash sessions',
+            // Transport Management Phase C — the accountant is the same
+            // actor who already runs Quick Registration end to end
+            // (including its pre-existing Transport pricing fields); this
+            // is the narrow, specific assignment permission only — never
+            // TransportPermissions::VIEW_FINANCE.
+            TransportPermissions::MANAGE_ASSIGNMENTS,
         ]);
 
         // 4. Reception — students/enrollments create+view+update only (no

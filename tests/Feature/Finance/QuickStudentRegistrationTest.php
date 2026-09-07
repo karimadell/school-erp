@@ -198,8 +198,9 @@ class QuickStudentRegistrationTest extends TestCase
             'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
             'option_type' => 'zone', 'option_value' => 'Мубарак 6',
         ]);
-        $routeId = DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 2', 'created_at' => now(), 'updated_at' => now()]);
-        $metadata = ['transport_area' => 'Мубарак 6', 'transport_route_id' => $routeId, 'transport_stop' => 'Школа'];
+        $routeId = DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 2', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+        $busId = \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true])->id;
+        $metadata = ['transport_area' => 'Мубарак 6', 'transport_route_id' => $routeId, 'bus_id' => $busId, 'transport_stop' => 'Школа'];
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             $this->service($transport, '0.00', $metadata),
         ]))->assertSessionHasNoErrors();

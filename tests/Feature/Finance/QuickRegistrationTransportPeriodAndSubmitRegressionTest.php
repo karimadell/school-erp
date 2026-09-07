@@ -58,7 +58,14 @@ class QuickRegistrationTransportPeriodAndSubmitRegressionTest extends QuickRegis
 
     private function route(): int
     {
-        return DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now()]);
+        return DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 1', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+    }
+
+    // Transport Management Phase C — canonical bus selection is now a
+    // required field on every Transport service line.
+    private function bus(): int
+    {
+        return \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true])->id;
     }
 
     // ----- 3. zone → only valid payment periods appear (server-rendered data) ----
@@ -153,7 +160,7 @@ class QuickRegistrationTransportPeriodAndSubmitRegressionTest extends QuickRegis
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
             'services' => [[
                 'fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00',
-                'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'payment_period' => 'monthly',
+                'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => $this->bus(), 'payment_period' => 'monthly',
             ]],
         ]));
 
@@ -177,7 +184,7 @@ class QuickRegistrationTransportPeriodAndSubmitRegressionTest extends QuickRegis
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
             'services' => [[
                 'fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00',
-                'transport_area' => 'Зона 1', 'transport_route_id' => $routeId,
+                'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => $this->bus(),
                 // payment_period deliberately omitted.
             ]],
         ]));
@@ -199,7 +206,7 @@ class QuickRegistrationTransportPeriodAndSubmitRegressionTest extends QuickRegis
         $routeId = $this->route();
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
-            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId]],
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => $this->bus()]],
         ]));
 
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -238,7 +245,7 @@ class QuickRegistrationTransportPeriodAndSubmitRegressionTest extends QuickRegis
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $registration, [
             'services' => [
                 ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '1000.00'],
-                ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'payment_period' => 'monthly'],
+                ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => $this->bus(), 'payment_period' => 'monthly'],
             ],
             'cash_account_id' => $account->id, 'payment_method' => 'cash',
         ]));

@@ -228,7 +228,7 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         ]);
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
-            'services' => [['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $this->transportRoute()->id, 'payment_period' => 'monthly']],
+            'services' => [['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $this->transportRoute()->id, 'bus_id' => $this->transportBus()->id, 'payment_period' => 'monthly']],
         ]);
 
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -476,10 +476,17 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
     private function transportRoute(): \stdClass
     {
         $id = \Illuminate\Support\Facades\DB::table('transport_routes')->insertGetId([
-            'name' => 'Маршрут 1', 'created_at' => now(), 'updated_at' => now(),
+            'name' => 'Маршрут 1', 'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
         ]);
 
         return (object) ['id' => $id];
+    }
+
+    // Transport Management Phase C — canonical bus selection is now a
+    // required field on every Transport service line.
+    private function transportBus(): \App\Models\Bus
+    {
+        return \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true]);
     }
 
     // ----- Finance metadata preservation (corrective pass #2, HIGH 4) -----
@@ -521,7 +528,7 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
         $route = $this->transportRoute();
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
-            'services' => [['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $route->id, 'payment_period' => 'monthly']],
+            'services' => [['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $route->id, 'bus_id' => $this->transportBus()->id, 'payment_period' => 'monthly']],
         ]);
         $response->assertSessionHasNoErrors()->assertRedirect();
 
@@ -594,7 +601,7 @@ class QuickRegistrationBillingSchedulesTest extends TestCase
 
         $servicesAB = [
             ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00'],
-            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $this->transportRoute()->id, 'payment_period' => 'monthly'],
+            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'transport_area' => 'Зона 1', 'transport_route_id' => $this->transportRoute()->id, 'bus_id' => $this->transportBus()->id, 'payment_period' => 'monthly'],
         ];
         $first = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',

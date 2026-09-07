@@ -3,24 +3,23 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
+use App\Models\Invoice;
+use App\Models\Student;
 use App\Models\TransportRoute;
 use App\Models\TransportSubscription;
-use App\Models\Student;
 use Barryvdh\DomPDF\Facade\Pdf;
-use App\Models\Invoice;
-use App\Models\Fee;
-use Carbon\Carbon;
+use Illuminate\Http\Request;
 
 class TransportController extends Controller
 {
     public function index()
     {
+        $this->legacyDisabled();
         $routes = TransportRoute::withCount([
             'students',
             'students as active_students_count' => function ($q) {
                 $q->where('status', 'active');
-            }
+            },
         ])->latest()->get();
 
         return view('dashboard.transport.index', compact('routes'));
@@ -28,23 +27,26 @@ class TransportController extends Controller
 
     public function create()
     {
+        $this->legacyDisabled();
+
         return view('dashboard.transport.create');
     }
 
     public function store(Request $request)
     {
+        $this->legacyDisabled();
         $request->validate([
             'name' => 'required|string',
             'driver_name' => 'nullable|string',
             'bus_number' => 'nullable|string',
-            'capacity' => 'required|integer|min:1'
+            'capacity' => 'required|integer|min:1',
         ]);
 
         TransportRoute::create($request->only([
             'name',
             'driver_name',
             'bus_number',
-            'capacity'
+            'capacity',
         ]));
 
         return redirect()
@@ -54,6 +56,7 @@ class TransportController extends Controller
 
     public function subscribeForm()
     {
+        $this->legacyDisabled();
         $students = Student::orderBy('name')->get();
         $routes = TransportRoute::orderBy('name')->get();
 
@@ -62,6 +65,7 @@ class TransportController extends Controller
 
     public function subscribe(Request $request)
     {
+        $this->legacyDisabled();
         $request->validate([
             'student_id' => 'required|exists:students,id',
             'route_id' => 'required|exists:transport_routes,id',
@@ -78,7 +82,7 @@ class TransportController extends Controller
         TransportSubscription::create([
             'student_id' => $request->student_id,
             'route_id' => $request->route_id,
-            'status' => 'active'
+            'status' => 'active',
         ]);
 
         // Phase 0 safety lockdown: the transport subscription no longer creates
@@ -90,6 +94,7 @@ class TransportController extends Controller
 
     public function subscriptions(Request $request)
     {
+        $this->legacyDisabled();
         $query = TransportSubscription::with(['student', 'route']);
 
         if ($request->route_id) {
@@ -108,6 +113,7 @@ class TransportController extends Controller
 
     public function moveForm($id)
     {
+        $this->legacyDisabled();
         $subscription = TransportSubscription::with(['student', 'route'])->findOrFail($id);
         $routes = TransportRoute::where('id', '!=', $subscription->route_id)->orderBy('name')->get();
 
@@ -116,6 +122,7 @@ class TransportController extends Controller
 
     public function move(Request $request, $id)
     {
+        $this->legacyDisabled();
         $request->validate([
             'route_id' => 'required|exists:transport_routes,id',
         ]);
@@ -123,7 +130,7 @@ class TransportController extends Controller
         $subscription = TransportSubscription::findOrFail($id);
 
         $subscription->update([
-            'route_id' => $request->route_id
+            'route_id' => $request->route_id,
         ]);
 
         return redirect()
@@ -133,10 +140,11 @@ class TransportController extends Controller
 
     public function stop($id)
     {
+        $this->legacyDisabled();
         $subscription = TransportSubscription::findOrFail($id);
 
         $subscription->update([
-            'status' => 'stopped'
+            'status' => 'stopped',
         ]);
 
         return back()->with('success', 'Subscription stopped');
@@ -144,11 +152,12 @@ class TransportController extends Controller
 
     public function report()
     {
+        $this->legacyDisabled();
         $routes = TransportRoute::with([
             'students' => function ($q) {
                 $q->where('status', 'active');
             },
-            'students.student'
+            'students.student',
         ])->get();
 
         return view('dashboard.transport.report', compact('routes'));
@@ -156,11 +165,12 @@ class TransportController extends Controller
 
     public function reportPdf()
     {
+        $this->legacyDisabled();
         $routes = TransportRoute::with([
             'students' => function ($q) {
                 $q->where('status', 'active');
             },
-            'students.student'
+            'students.student',
         ])->get();
 
         $pdf = Pdf::loadView('dashboard.transport.report_pdf', compact('routes'));
@@ -176,5 +186,10 @@ class TransportController extends Controller
         // transport billing must be rebuilt on the canonical service; until
         // then it is disabled rather than allowed to write orphan invoices.
         abort(410, 'Автоматическое создание транспортных счетов отключено до перевода на безопасный сервис начисления.');
+    }
+
+    private function legacyDisabled(): never
+    {
+        abort(410, 'Старый модуль транспорта отключён. Канонический интерфейс будет подключён на следующем этапе.');
     }
 }

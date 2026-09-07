@@ -15,6 +15,11 @@ $app = Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
 
+        // Transport pickup points are imported/entered as operational source
+        // strings. Preserve their spelling and surrounding whitespace exactly;
+        // a controlled stop catalogue is intentionally deferred.
+        $middleware->trimStrings(except: ['pickup_point']);
+
         // Trust the platform's own edge proxy (e.g. Railway) so Laravel
         // correctly detects HTTPS/client IP from X-Forwarded-* headers.
         // The proxy is the first hop in front of the container, not an

@@ -2,9 +2,10 @@
 
 namespace Database\Seeders;
 
+use App\Support\TransportPermissions;
 use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Role;
 use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 
 /**
  * Batch 6: the complete role/permission matrix. Deny by default — every
@@ -116,10 +117,14 @@ class RolesAndPermissionsSeeder extends Seeder
         foreach (['view payroll', 'manage payroll', 'approve payroll', 'pay payroll'] as $permission) {
             Permission::firstOrCreate(['name' => $permission]);
         }
+        foreach (TransportPermissions::ALL as $permission) {
+            Permission::firstOrCreate(['name' => $permission]);
+        }
 
         // Protected Super Admin — full access and the application-wide bypass.
         $superAdmin = Role::firstOrCreate(['name' => 'super-admin']);
         $superAdmin->syncPermissions($permissions);
+        $superAdmin->givePermissionTo(TransportPermissions::ALL);
 
         // Existing admin role remains fully permissioned for compatibility,
         // but it is no longer the protected application-wide bypass role.
@@ -129,6 +134,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // permissions, deliberately left out of $permissions above. No
         // other role is affected by this call.
         $admin->givePermissionTo(['view payroll', 'manage payroll', 'approve payroll', 'pay payroll']);
+        $admin->givePermissionTo(TransportPermissions::ALL);
 
         // 2. School Admin — full operational access, no system
         // configuration (manage users/roles/permissions).
@@ -148,6 +154,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'view timetable',
             'manage timetable',
         ])));
+        $schoolAdmin->givePermissionTo(TransportPermissions::ALL);
 
         // 3. Accountant — full access to fees/fee prices/invoices/expenses/
         // subscriptions; read-only students/enrollments; no academic

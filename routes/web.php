@@ -39,6 +39,7 @@ use App\Http\Controllers\Dashboard\JournalController;
 use App\Http\Controllers\Dashboard\ReportController;
 use App\Http\Controllers\Dashboard\DebtController;
 use App\Http\Controllers\Dashboard\TransportController;
+use App\Http\Controllers\Dashboard\TransportManagementController;
 use App\Http\Controllers\Dashboard\SalaryController;
 use App\Http\Controllers\Dashboard\CashReportController;
 use App\Http\Controllers\Dashboard\SchoolSettingController;
@@ -564,6 +565,25 @@ Route::middleware(['auth', 'administrative'])
                     ->name('operations.owner-return.store');
             });
 
+        Route::prefix('transport-management')->name('transport-management.')->controller(TransportManagementController::class)->group(function () {
+            Route::get('/', 'index')->name('index');
+            Route::post('vehicles', 'storeVehicle')->name('vehicles.store');
+            Route::put('vehicles/{bus}', 'updateVehicle')->name('vehicles.update');
+            Route::patch('vehicles/{bus}/active', 'toggleVehicle')->name('vehicles.active');
+            Route::post('routes', 'storeRoute')->name('routes.store');
+            Route::put('routes/{transportRoute}', 'updateRoute')->name('routes.update');
+            Route::patch('routes/{transportRoute}/active', 'toggleRoute')->name('routes.active');
+            Route::post('student-assignments', 'assignStudent')->name('student-assignments.store');
+            Route::post('student-assignments/{assignment}/transfer', 'transferStudent')->name('student-assignments.transfer');
+            Route::post('student-assignments/{assignment}/end', 'endStudent')->name('student-assignments.end');
+            Route::post('staff-assignments', 'assignStaff')->name('staff-assignments.store');
+            Route::post('staff-assignments/{assignment}/change', 'changeStaff')->name('staff-assignments.change');
+            Route::post('staff-assignments/{assignment}/end', 'endStaff')->name('staff-assignments.end');
+        });
+
+        // Historical endpoints remain deliberately unavailable. All new
+        // operational writes go through TransportManagementController and
+        // the effective-dated Phase A services above.
         Route::get('transport', [TransportController::class, 'index'])
             ->name('transport.index');
 

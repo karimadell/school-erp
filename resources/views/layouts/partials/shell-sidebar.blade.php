@@ -106,10 +106,7 @@
         [
             'label' => 'Транспорт',
             'items' => [
-                // Pre-UAT fix: BusResource has no dedicated policy/permission
-                // either — same reasoning as "Зарплаты" above, so the real
-                // authorization boundary is admin-panel access.
-                ['label' => 'Автобусы', 'icon' => 'school', 'href' => (Route::has('filament.admin.resources.buses.index') && $canAccessAdminPanel) ? route('filament.admin.resources.buses.index') : null],
+                ['label' => 'Управление трансфером', 'icon' => 'school', 'route' => auth()->user()?->can(\App\Support\TransportPermissions::VIEW) ? 'dashboard.transport-management.index' : null, 'active' => 'dashboard.transport-management.*'],
             ],
         ],
         [

@@ -97,6 +97,11 @@ class Enrollment extends Model implements ResolvesAcademicYear
         return $this->hasMany(StudentServiceSubscription::class);
     }
 
+    public function transportAssignments()
+    {
+        return $this->hasMany(StudentTransportAssignment::class);
+    }
+
     public function mealSubscriptions()
     {
         return $this->hasMany(MealSubscription::class);

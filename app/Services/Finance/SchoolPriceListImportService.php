@@ -12,6 +12,7 @@ use RuntimeException;
 class SchoolPriceListImportService
 {
     public const YEAR = '2025/2026';
+
     public const REASON = 'Первоначальный импорт прайс-листа 2025/2026';
 
     /**
@@ -150,11 +151,30 @@ class SchoolPriceListImportService
      * different category; the caller must skip that definition's tariffs
      * entirely in that case, exactly as import() always has.
      *
-     * @param array<string,mixed> $definition
-     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     * @param  array<string,mixed>  $definition
+     * @param  array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool}  $result
      */
     private function resolveOrCreateFee(array $definition, array &$result): ?Fee
     {
+        if ($definition['category'] === Fee::CATEGORY_REGISTRATION) {
+            $operational = Fee::query()
+                ->where('category', Fee::CATEGORY_REGISTRATION)
+                ->where('is_active', true)
+                ->where('is_test_data', false)
+                ->lockForUpdate()
+                ->get();
+
+            if ($operational->count() > 1) {
+                throw new RuntimeException('Найдено несколько активных операционных регистрационных взносов — автоматический выбор невозможен.');
+            }
+
+            if ($fee = $operational->first()) {
+                $result['services_reused']++;
+
+                return $fee;
+            }
+        }
+
         $fee = Fee::query()->where('name_ru', $definition['name'])->lockForUpdate()->first();
 
         if ($fee && $fee->category !== $definition['category']) {
@@ -236,8 +256,8 @@ class SchoolPriceListImportService
      *   case; the surrounding transaction is rolled back by the caller's
      *   existing catch block.
      *
-     * @param array<string,mixed> $definition
-     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     * @param  array<string,mixed>  $definition
+     * @param  array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool}  $result
      */
     private function resolveOperationalUniformFee(array $definition, array &$result): ?Fee
     {
@@ -281,8 +301,8 @@ class SchoolPriceListImportService
      * shared by import() and importUniformOnly() — pure extraction of
      * import()'s original inline loop, no behavior change.
      *
-     * @param array<int,array<string,mixed>> $tariffs
-     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     * @param  array<int,array<string,mixed>>  $tariffs
+     * @param  array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool}  $result
      */
     private function processTariffs(Fee $fee, AcademicYear $year, array $tariffs, array &$result): void
     {
@@ -314,8 +334,7 @@ class SchoolPriceListImportService
             }
 
             $existing = (clone $dimensions)->lockForUpdate()->get();
-            $exact = $existing->first(fn (FeePrice $price) =>
-                $price->currency === 'EGP'
+            $exact = $existing->first(fn (FeePrice $price) => $price->currency === 'EGP'
                 && bccomp((string) $price->getRawOriginal('amount'), $attributes['amount'], 2) === 0
                 && $price->start_date->toDateString() === $attributes['start_date']
                 && $price->end_date?->toDateString() === $attributes['end_date']
@@ -323,17 +342,18 @@ class SchoolPriceListImportService
 
             if ($exact) {
                 $result['tariffs_skipped']++;
+
                 continue;
             }
 
-            $overlap = $existing->first(fn (FeePrice $price) =>
-                $price->is_active
+            $overlap = $existing->first(fn (FeePrice $price) => $price->is_active
                 && $price->start_date->lte($attributes['end_date'])
                 && ($price->end_date === null || $price->end_date->gte($attributes['start_date']))
             );
 
             if ($overlap) {
                 $result['conflicts'][] = "Тариф для «{$fee->name_ru}» ({$this->variantLabel($attributes)}) пересекается с записью №{$overlap->id}.";
+
                 continue;
             }
 
@@ -367,8 +387,8 @@ class SchoolPriceListImportService
      * coverage. No existing row is ever UPDATEd here — only matched (and
      * skipped) or, when genuinely absent, created.
      *
-     * @param array<int,array<string,mixed>> $tariffs
-     * @param array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool} $result
+     * @param  array<int,array<string,mixed>>  $tariffs
+     * @param  array{services_created:int,services_reused:int,tariffs_created:int,tariffs_skipped:int,conflicts:array<int,string>,dry_run:bool}  $result
      */
     private function processLegacyUniformTariffsWithNullPaymentPeriodCompatibility(Fee $fee, AcademicYear $year, array $tariffs, array &$result): void
     {
@@ -406,8 +426,7 @@ class SchoolPriceListImportService
             });
 
             $existing = (clone $dimensions)->lockForUpdate()->get();
-            $exact = $existing->first(fn (FeePrice $price) =>
-                $price->currency === 'EGP'
+            $exact = $existing->first(fn (FeePrice $price) => $price->currency === 'EGP'
                 && bccomp((string) $price->getRawOriginal('amount'), $attributes['amount'], 2) === 0
                 && $price->start_date->toDateString() === $attributes['start_date']
                 && $price->end_date?->toDateString() === $attributes['end_date']
@@ -415,17 +434,18 @@ class SchoolPriceListImportService
 
             if ($exact) {
                 $result['tariffs_skipped']++;
+
                 continue;
             }
 
-            $overlap = $existing->first(fn (FeePrice $price) =>
-                $price->is_active
+            $overlap = $existing->first(fn (FeePrice $price) => $price->is_active
                 && $price->start_date->lte($attributes['end_date'])
                 && ($price->end_date === null || $price->end_date->gte($attributes['start_date']))
             );
 
             if ($overlap) {
                 $result['conflicts'][] = "Тариф для «{$fee->name_ru}» ({$this->variantLabel($attributes)}) пересекается с записью №{$overlap->id}.";
+
                 continue;
             }
 
@@ -461,6 +481,7 @@ class SchoolPriceListImportService
             $rows[] = ['amount' => $yearly, 'grade_group' => $group, 'payment_period' => Fee::PERIOD_YEARLY];
             $rows[] = ['amount' => $monthly, 'grade_group' => $group, 'payment_period' => Fee::PERIOD_MONTHLY];
         }
+
         return $rows;
     }
 
@@ -472,6 +493,7 @@ class SchoolPriceListImportService
             $rows[] = ['amount' => $yearly, 'payment_period' => Fee::PERIOD_YEARLY, 'option_type' => $optionType, 'option_value' => $group];
             $rows[] = ['amount' => $monthly, 'payment_period' => Fee::PERIOD_MONTHLY, 'option_type' => $optionType, 'option_value' => $group];
         }
+
         return $rows;
     }
 
@@ -526,6 +548,7 @@ class SchoolPriceListImportService
                 $rows[] = ['amount' => $amount, 'payment_period' => Fee::PERIOD_ONCE, 'size' => $size, 'item' => $item];
             }
         }
+
         return $rows;
     }
 

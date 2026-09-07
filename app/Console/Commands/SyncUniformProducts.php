@@ -75,6 +75,7 @@ class SyncUniformProducts extends Command
             ['Найдено в источнике (активные FeePrice)', $result['source_pairs']],
             ['Будет создано', $result['created']],
             ['Будет реактивировано', $result['reactivated']],
+            ['Будет обновлено цен метаданных', $result['updated']],
             ['Без изменений', $result['unchanged']],
             ['Будет деактивировано (устаревшие)', $result['deactivated']],
         ]);

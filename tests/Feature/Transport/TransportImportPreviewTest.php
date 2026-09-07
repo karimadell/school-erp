@@ -35,6 +35,55 @@ class TransportImportPreviewTest extends TestCase
         $this->assertSame(['monday', 'thursday'], $method->invoke($service, $rows[1]['raw_notes'].' '.$rows[1]['raw_full_name']));
     }
 
+    public function test_parser_ignores_title_rows_and_trailing_blanks_while_preserving_excel_rows(): void
+    {
+        $values = [
+            ['Трансфер Каусер. Старт 8:00'],
+            ['Подготовительная информация'],
+            ['№', 'ФИО', 'Класс', 'Остановка', 'Телефон', 'Примечание'],
+        ];
+        foreach (range(1, 15) as $number) {
+            $values[] = [$number, "Ученик {$number}", '1 А', 'Точка', '', ''];
+        }
+        $values[] = ['', '', '', '', '', ''];
+        $path = $this->workbook($values);
+
+        $rows = app(TransportImportPreviewService::class)->parseWorkbook($path);
+
+        $this->assertCount(15, $rows);
+        $this->assertSame(4, $rows->first()['source_row']);
+        $this->assertSame(18, $rows->last()['source_row']);
+        $this->assertSame(range(4, 18), $rows->pluck('source_row')->all());
+    }
+
+    public function test_real_transport_workbooks_have_expected_source_counts(): void
+    {
+        $service = app(TransportImportPreviewService::class);
+        $files = [
+            'Арабия' => base_path('storage/app/transport-import/Трансфер_Арабия.xlsx'),
+            'Бествэй' => glob(base_path('storage/app/transport-import/Трансфер_Беств*'))[0],
+            'Бритиш' => base_path('storage/app/transport-import/Трансфер_Бритиш.xlsx'),
+            'Каусер' => base_path('storage/app/transport-import/Трансфер_Каусер.xlsx'),
+            'Эль Ахья' => base_path('storage/app/transport-import/Трансфер_Эль Ахья.xlsx'),
+        ];
+        $counts = collect($files)->mapWithKeys(function (string $path, string $route) use ($service) {
+            $rows = $service->parseWorkbook($path);
+
+            return [$route => [
+                'total' => $rows->count(),
+                'students' => $rows->filter(fn ($row) => $service->classify($row) === 'STUDENT')->count(),
+                'staff' => $rows->filter(fn ($row) => $service->classify($row) === 'STAFF')->count(),
+                'unknown' => $rows->filter(fn ($row) => $service->classify($row) === 'UNKNOWN')->count(),
+            ]];
+        });
+
+        $this->assertSame(15, $counts->every(fn ($count) => $count['total'] === 15) ? 15 : 0);
+        $this->assertSame(75, $counts->sum('total'));
+        $this->assertSame(64, $counts->sum('students'));
+        $this->assertSame(11, $counts->sum('staff'));
+        $this->assertSame(0, $counts->sum('unknown'));
+    }
+
     public function test_preview_is_read_only_and_staff_does_not_consume_capacity(): void
     {
         $values = [['№', 'ФИО', 'Класс', 'Остановка', 'Телефон']];

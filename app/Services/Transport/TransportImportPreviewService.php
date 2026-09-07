@@ -112,7 +112,11 @@ class TransportImportPreviewService
             $headerRow = $headerRow === false ? 1 : $headerRow;
             $headers = $this->headers($values[$headerRow] ?? []);
             foreach ($values as $rowNumber => $valuesByColumn) {
-                if ($rowNumber === $headerRow || collect($valuesByColumn)->filter(fn ($value) => filled($value))->isEmpty()) {
+                // Workbooks may have one or more title/metadata rows before
+                // the canonical column header. They are not source records.
+                // Preserve the spreadsheet row number for every real record
+                // after the header, while ignoring empty trailing rows.
+                if ($rowNumber <= $headerRow || collect($valuesByColumn)->filter(fn ($value) => filled($value))->isEmpty()) {
                     continue;
                 }
                 $get = fn (array $names) => collect($names)->map(fn ($name) => $headers[$this->key($name)] ?? null)->filter(fn ($column) => $column !== null)->map(fn ($column) => $valuesByColumn[$column] ?? null)->first(fn ($value) => filled($value));

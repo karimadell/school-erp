@@ -64,6 +64,7 @@ class UniformProductCatalogSyncService
      *     source_pairs: int,
      *     created: int,
      *     reactivated: int,
+     *     updated: int,
      *     unchanged: int,
      *     deactivated: int,
      *     missing: array<int, string>,
@@ -81,6 +82,7 @@ class UniformProductCatalogSyncService
             'source_pairs' => 0,
             'created' => 0,
             'reactivated' => 0,
+            'updated' => 0,
             'unchanged' => 0,
             'deactivated' => 0,
             'missing' => [],
@@ -115,6 +117,7 @@ class UniformProductCatalogSyncService
 
         $result['created'] = count($plan['create']);
         $result['reactivated'] = count($plan['reactivate']);
+        $result['updated'] = count($plan['update']);
         $result['unchanged'] = count($plan['unchanged']);
         $result['deactivated'] = count($plan['deactivate']);
 
@@ -140,6 +143,13 @@ class UniformProductCatalogSyncService
             foreach ($plan['reactivate'] as $pair) {
                 DB::table('uniform_products')->where('id', $pair['existing_id'])->update([
                     'is_active' => true,
+                    'price' => $pair['amount'],
+                    'updated_at' => now(),
+                ]);
+            }
+
+            foreach ($plan['update'] as $pair) {
+                DB::table('uniform_products')->where('id', $pair['existing_id'])->update([
                     'price' => $pair['amount'],
                     'updated_at' => now(),
                 ]);
@@ -254,10 +264,11 @@ class UniformProductCatalogSyncService
     }
 
     /**
-     * @param \Illuminate\Support\Collection<string, FeePrice> $sourcePairs
+     * @param  \Illuminate\Support\Collection<string, FeePrice>  $sourcePairs
      * @return array{
      *     create: array<int, array{item:string, size:string, amount:string}>,
      *     reactivate: array<int, array{item:string, size:string, amount:string, existing_id:int}>,
+     *     update: array<int, array{amount:string, existing_id:int}>,
      *     unchanged: array<int, string>,
      *     deactivate: array<int, int>,
      * }
@@ -271,6 +282,7 @@ class UniformProductCatalogSyncService
 
         $create = [];
         $reactivate = [];
+        $update = [];
         $unchanged = [];
 
         foreach ($sourcePairs as $key => $price) {
@@ -289,6 +301,12 @@ class UniformProductCatalogSyncService
                 continue;
             }
 
+            if (bccomp((string) $existing->price, $amount, 2) !== 0) {
+                $update[] = ['amount' => $amount, 'existing_id' => $existing->id];
+
+                continue;
+            }
+
             $unchanged[] = $key;
         }
 
@@ -303,6 +321,7 @@ class UniformProductCatalogSyncService
         return [
             'create' => $create,
             'reactivate' => $reactivate,
+            'update' => $update,
             'unchanged' => $unchanged,
             'deactivate' => $deactivate,
         ];

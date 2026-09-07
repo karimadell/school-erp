@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Models\AcademicYear;
+use App\Models\Bus;
 use App\Models\ClassTeacher;
 use App\Models\Curriculum;
 use App\Models\Expense;
@@ -13,10 +14,14 @@ use App\Models\LessonJournalEntry;
 use App\Models\StudentFile;
 use App\Models\StudentServiceSubscription;
 use App\Models\StudentSubjectEnrollment;
+use App\Models\StudentTransportAssignment;
 use App\Models\TeacherAssignment;
 use App\Models\TeacherSalary;
+use App\Models\TransportRoute;
 use App\Models\User;
+use App\Models\VehicleStaffAssignment;
 use App\Policies\AcademicYearPolicy;
+use App\Policies\BusPolicy;
 use App\Policies\ClassTeacherPolicy;
 use App\Policies\CurriculumPolicy;
 use App\Policies\ExpensePolicy;
@@ -29,9 +34,12 @@ use App\Policies\RolePolicy;
 use App\Policies\StudentFilePolicy;
 use App\Policies\StudentServiceSubscriptionPolicy;
 use App\Policies\StudentSubjectEnrollmentPolicy;
+use App\Policies\StudentTransportAssignmentPolicy;
 use App\Policies\TeacherAssignmentPolicy;
 use App\Policies\TeacherSalaryPolicy;
+use App\Policies\TransportRoutePolicy;
 use App\Policies\UserPolicy;
+use App\Policies\VehicleStaffAssignmentPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 use Illuminate\Support\Facades\Gate;
 use Spatie\Permission\Models\Permission;
@@ -41,6 +49,10 @@ class AuthServiceProvider extends ServiceProvider
 {
     protected $policies = [
         StudentFile::class => StudentFilePolicy::class,
+        Bus::class => BusPolicy::class,
+        TransportRoute::class => TransportRoutePolicy::class,
+        StudentTransportAssignment::class => StudentTransportAssignmentPolicy::class,
+        VehicleStaffAssignment::class => VehicleStaffAssignmentPolicy::class,
 
         // Item 2 (Batch 10)
         AcademicYear::class => AcademicYearPolicy::class,

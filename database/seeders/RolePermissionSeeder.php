@@ -2,9 +2,10 @@
 
 namespace Database\Seeders;
 
+use App\Support\TransportPermissions;
 use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Role;
 use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
 class RolePermissionSeeder extends Seeder
@@ -53,6 +54,7 @@ class RolePermissionSeeder extends Seeder
             /* ===== Admin ===== */
             'manage users',
             'manage settings',
+            ...TransportPermissions::ALL,
         ];
 
         foreach ($permissions as $permission) {
@@ -64,9 +66,9 @@ class RolePermissionSeeder extends Seeder
         | Roles
         |--------------------------------------------------------------------------
         */
-        $admin      = Role::firstOrCreate(['name' => 'admin']);
+        $admin = Role::firstOrCreate(['name' => 'admin']);
         $accountant = Role::firstOrCreate(['name' => 'accountant']);
-        $cashier    = Role::firstOrCreate(['name' => 'cashier']);
+        $cashier = Role::firstOrCreate(['name' => 'cashier']);
 
         /*
         |--------------------------------------------------------------------------

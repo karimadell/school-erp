@@ -9,17 +9,16 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-
 /* Spatie */
 use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable implements FilamentUser
 {
     use HasFactory;
-    use Notifiable;
     use HasRoles {
         hasPermissionTo as protected spatieHasPermissionTo;
     }
+    use Notifiable;
 
     protected $fillable = [
         'name',
@@ -54,6 +53,11 @@ class User extends Authenticatable implements FilamentUser
     public function salaryRates(): HasMany
     {
         return $this->hasMany(EmployeeSalaryRate::class, 'employee_user_id');
+    }
+
+    public function vehicleStaffAssignments(): HasMany
+    {
+        return $this->hasMany(VehicleStaffAssignment::class);
     }
 
     // Phase 3: cash-drawer sessions this user opened.

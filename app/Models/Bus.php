@@ -16,6 +16,7 @@ class Bus extends Model
         'capacity',
         'student_capacity',
         'passenger_capacity',
+        'transport_route_id',
         // Legacy compatibility only. New Transport writes use
         // VehicleStaffAssignment(user_id, role=driver).
         'driver_name',
@@ -54,5 +55,10 @@ class Bus extends Model
     public function staffAssignments()
     {
         return $this->hasMany(VehicleStaffAssignment::class);
+    }
+
+    public function transportRoute()
+    {
+        return $this->belongsTo(TransportRoute::class, 'transport_route_id');
     }
 }

@@ -14,4 +14,9 @@ class TransportRoute extends Model
     {
         return $this->hasMany(StudentTransportAssignment::class);
     }
+
+    public function buses()
+    {
+        return $this->hasMany(Bus::class, 'transport_route_id');
+    }
 }

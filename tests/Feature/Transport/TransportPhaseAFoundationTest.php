@@ -11,6 +11,7 @@ use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\SchoolClass;
+use App\Models\StaffMember;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentTransportAssignment;
@@ -74,12 +75,11 @@ class TransportPhaseAFoundationTest extends TestCase
         $this->assertFalse(Schema::hasColumn('transport_routes', 'price'));
     }
 
-    public function test_fourteen_students_succeed_fifteenth_is_rejected_and_staff_does_not_count(): void
+    public function test_fourteen_students_succeed_fifteenth_is_rejected_and_driver_does_not_count(): void
     {
         [$bus, $route] = $this->transport();
         $staff = User::factory()->create(['is_active' => true]);
-        app(VehicleStaffAssignmentService::class)->assign($bus, $staff, VehicleStaffAssignment::ROLE_STAFF_PASSENGER, '2026-09-01', null, null, $this->actor);
-        app(VehicleStaffAssignmentService::class)->assign($bus, User::factory()->create(['is_active' => true]), VehicleStaffAssignment::ROLE_STAFF_PASSENGER, '2026-09-01', null, [1, 4], $this->actor);
+        app(VehicleStaffAssignmentService::class)->assign($bus, $staff, VehicleStaffAssignment::ROLE_DRIVER, '2026-09-01', null, null, $this->actor);
 
         foreach (range(1, 14) as $number) {
             app(TransportAssignmentService::class)->assign($this->enrollment("Ученик {$number}"), $route, $bus, ['effective_from' => '2026-09-01'], $this->actor);
@@ -87,6 +87,17 @@ class TransportPhaseAFoundationTest extends TestCase
         $this->assertSame(14, StudentTransportAssignment::where('bus_id', $bus->id)->count());
         $this->expectException(TransportCapacityExceeded::class);
         app(TransportAssignmentService::class)->assign($this->enrollment('Пятнадцатый'), $route, $bus, ['effective_from' => '2026-09-01'], $this->actor);
+    }
+
+    public function test_absolute_fourteen_student_cap_survives_drifted_bus_capacity(): void
+    {
+        [$bus, $route] = $this->transport();
+        $bus->forceFill(['student_capacity' => 15, 'passenger_capacity' => 15])->saveQuietly();
+        foreach (range(1, 14) as $number) {
+            app(TransportAssignmentService::class)->assign($this->enrollment("Drift {$number}"), $route, $bus, ['effective_from' => '2026-09-01'], $this->actor);
+        }
+        $this->expectException(TransportCapacityExceeded::class);
+        app(TransportAssignmentService::class)->assign($this->enrollment('Drift 15'), $route, $bus, ['effective_from' => '2026-09-01'], $this->actor);
     }
 
     public function test_assignment_uses_enrollment_rejects_overlap_wrong_year_and_inactive_entities(): void
@@ -170,6 +181,37 @@ class TransportPhaseAFoundationTest extends TestCase
         $ended = $service->end($mondayThursday, '2026-12-31', $this->actor, 'Замена');
         $this->assertSame('2026-12-31', $ended->effective_to->toDateString());
         $this->assertSame($mondayThursday->user_id, $ended->user_id);
+    }
+
+    public function test_non_login_staff_identity_and_legacy_user_identity_are_both_supported(): void
+    {
+        [$bus] = $this->transport();
+        $member = StaffMember::create(['display_name' => 'Егорова О.В.', 'is_active' => true]);
+        $this->assertNull($member->user_id);
+        $this->assertFalse($member instanceof \Illuminate\Contracts\Auth\Authenticatable);
+        $canonical = app(VehicleStaffAssignmentService::class)->assign($bus, $member, 'staff_passenger', '2026-09-01', null, null, $this->actor);
+        $legacy = app(VehicleStaffAssignmentService::class)->assign($bus, User::factory()->create(['is_active' => true]), 'driver', '2026-09-01', null, null, $this->actor);
+        $this->assertSame($member->id, $canonical->staff_member_id);
+        $this->assertNull($canonical->user_id);
+        $this->assertNotNull($legacy->user_id);
+        $this->assertNull($legacy->staff_member_id);
+
+        $this->expectException(ValidationException::class);
+        VehicleStaffAssignment::create(['bus_id' => $bus->id, 'role' => 'driver', 'effective_from' => '2026-09-01', 'created_by' => $this->actor->id]);
+    }
+
+    public function test_physical_capacity_counts_students_and_passengers_but_not_driver(): void
+    {
+        [$bus, $route] = $this->transport();
+        foreach (range(1, 13) as $number) {
+            app(TransportAssignmentService::class)->assign($this->enrollment("Passenger {$number}"), $route, $bus, ['effective_from' => '2026-09-01'], $this->actor);
+        }
+        $service = app(VehicleStaffAssignmentService::class);
+        $service->assign($bus, User::factory()->create(['is_active' => true]), 'driver', '2026-09-01', null, null, $this->actor);
+        $service->assign($bus, StaffMember::create(['display_name' => 'One']), 'supervisor', '2026-09-01', null, [1], $this->actor);
+        $service->assign($bus, StaffMember::create(['display_name' => 'Two']), 'staff_passenger', '2026-09-01', null, [1], $this->actor);
+        $this->expectException(TransportCapacityExceeded::class);
+        $service->assign($bus, StaffMember::create(['display_name' => 'Three']), 'staff_passenger', '2026-09-01', null, [1], $this->actor);
     }
 
     public function test_supervisor_conflicts_only_on_overlapping_weekdays(): void

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AcademicYear;
 use App\Models\Bus;
 use App\Models\Enrollment;
+use App\Models\StaffMember;
 use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
@@ -44,7 +45,10 @@ class TransportManagementController extends Controller
             ->when($yearId, fn ($query) => $query->whereHas('enrollment', fn ($enrollment) => $enrollment->where('academic_year_id', $yearId)));
 
         $occupiedByBus = (clone $activeAssignments)->selectRaw('bus_id, count(*) as aggregate')->groupBy('bus_id')->pluck('aggregate', 'bus_id');
-        $buses = Bus::query()->with(['staffAssignments.user', 'studentTransportAssignments.route'])->orderByDesc('is_active')->orderBy('vehicle_code')->orderBy('name')->get();
+        $staffPassengerByBus = VehicleStaffAssignment::query()->where('role', '!=', VehicleStaffAssignment::ROLE_DRIVER)
+            ->whereDate('effective_from', '<=', $date)->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $date))
+            ->get()->filter(fn ($item) => $item->weekdays === null || in_array($date->dayOfWeekIso, $item->weekdays, true))->countBy('bus_id');
+        $buses = Bus::query()->with(['staffAssignments.user', 'staffAssignments.staffMember', 'studentTransportAssignments.route'])->orderByDesc('is_active')->orderBy('vehicle_code')->orderBy('name')->get();
         $routes = TransportRoute::query()->withCount(['studentAssignments as active_students_count' => fn ($query) => $query
             ->whereDate('effective_from', '<=', $date)
             ->where(fn ($dates) => $dates->whereNull('effective_to')->orWhereDate('effective_to', '>=', $date))
@@ -70,6 +74,7 @@ class TransportManagementController extends Controller
         $activeBuses = $buses->where('is_active', true);
         $totalCapacity = $activeBuses->sum('student_capacity');
         $occupied = $activeBuses->sum(fn (Bus $bus) => (int) ($occupiedByBus[$bus->id] ?? 0));
+        $physicalByBus = $activeBuses->mapWithKeys(fn (Bus $bus) => [$bus->id => (int) ($occupiedByBus[$bus->id] ?? 0) + (int) ($staffPassengerByBus[$bus->id] ?? 0)]);
         $kpis = [
             'vehicles' => $activeBuses->count(),
             'capacity' => $totalCapacity,
@@ -81,10 +86,11 @@ class TransportManagementController extends Controller
 
         return view('dashboard.transport-management.index', compact(
             'date', 'academicYears', 'yearId', 'buses', 'routes', 'enrollments',
-            'currentByEnrollment', 'history', 'occupiedByBus', 'kpis'
+            'currentByEnrollment', 'history', 'occupiedByBus', 'physicalByBus', 'kpis'
         ) + [
             'users' => User::query()->where('is_active', true)->orderBy('name')->get(),
-            'staffAssignments' => VehicleStaffAssignment::query()->with(['bus', 'user', 'creator', 'endedBy'])->latest('effective_from')->get(),
+            'staffMembers' => StaffMember::query()->where('is_active', true)->orderBy('display_name')->get(),
+            'staffAssignments' => VehicleStaffAssignment::query()->with(['bus', 'user', 'staffMember', 'creator', 'endedBy'])->latest('effective_from')->get(),
         ]);
     }
 
@@ -181,7 +187,7 @@ class TransportManagementController extends Controller
     {
         $this->requirePermission($request, TransportPermissions::MANAGE_ASSIGNMENTS);
         $data = $this->staffData($request);
-        $this->staff->assign(Bus::findOrFail($data['bus_id']), User::findOrFail($data['user_id']), $data['role'], $data['effective_from'], $data['effective_to'] ?? null, $data['weekdays'] ?? null, $request->user(), $data['change_reason'] ?? null);
+        $this->staff->assign(Bus::findOrFail($data['bus_id']), $this->staffIdentity($data['identity']), $data['role'], $data['effective_from'], $data['effective_to'] ?? null, $data['weekdays'] ?? null, $request->user(), $data['change_reason'] ?? null);
 
         return $this->back('Сотрудник назначен на транспорт.');
     }
@@ -190,7 +196,7 @@ class TransportManagementController extends Controller
     {
         $this->requirePermission($request, TransportPermissions::MANAGE_ASSIGNMENTS);
         $data = $this->staffData($request);
-        $this->staff->change($assignment, Bus::findOrFail($data['bus_id']), User::findOrFail($data['user_id']), $data['role'], $data['effective_from'], $data['effective_to'] ?? null, $data['weekdays'] ?? null, $request->user(), $data['change_reason'] ?? null);
+        $this->staff->change($assignment, Bus::findOrFail($data['bus_id']), $this->staffIdentity($data['identity']), $data['role'], $data['effective_from'], $data['effective_to'] ?? null, $data['weekdays'] ?? null, $request->user(), $data['change_reason'] ?? null);
 
         return $this->back('Назначение сотрудника изменено; история сохранена.');
     }
@@ -234,12 +240,26 @@ class TransportManagementController extends Controller
 
     private function staffData(Request $request): array
     {
-        return $request->validate([
-            'bus_id' => ['required', 'integer', 'exists:buses,id'], 'user_id' => ['required', 'integer', 'exists:users,id'],
+        $data = $request->validate([
+            'bus_id' => ['required', 'integer', 'exists:buses,id'], 'identity' => ['nullable', 'string', 'regex:/^(staff|user):[0-9]+$/'],
+            'user_id' => ['nullable', 'integer', 'exists:users,id'],
             'role' => ['required', Rule::in(VehicleStaffAssignment::ROLES)], 'effective_from' => ['required', 'date'],
             'effective_to' => ['nullable', 'date', 'after_or_equal:effective_from'], 'weekdays' => ['nullable', 'array'],
             'weekdays.*' => ['integer', 'between:1,7'], 'change_reason' => ['nullable', 'string', 'max:1000'],
         ]);
+        $data['identity'] ??= isset($data['user_id']) ? 'user:'.$data['user_id'] : null;
+        if (! $data['identity']) {
+            throw ValidationException::withMessages(['identity' => 'Сотрудник обязателен.']);
+        }
+
+        return $data;
+    }
+
+    private function staffIdentity(string $identity): User|StaffMember
+    {
+        [$type, $id] = explode(':', $identity, 2);
+
+        return $type === 'staff' ? StaffMember::findOrFail((int) $id) : User::findOrFail((int) $id);
     }
 
     private function back(string $message): RedirectResponse

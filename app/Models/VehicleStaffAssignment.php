@@ -3,9 +3,19 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
 
 class VehicleStaffAssignment extends Model
 {
+    protected static function booted(): void
+    {
+        static::saving(function (self $assignment): void {
+            if (($assignment->user_id === null) === ($assignment->staff_member_id === null)) {
+                throw ValidationException::withMessages(['identity' => 'Exactly one staff identity is required.']);
+            }
+        });
+    }
+
     public const ROLE_DRIVER = 'driver';
 
     public const ROLE_SUPERVISOR = 'supervisor';
@@ -15,7 +25,7 @@ class VehicleStaffAssignment extends Model
     public const ROLES = [self::ROLE_DRIVER, self::ROLE_SUPERVISOR, self::ROLE_STAFF_PASSENGER];
 
     protected $fillable = [
-        'bus_id', 'user_id', 'role', 'effective_from', 'effective_to', 'weekdays',
+        'bus_id', 'user_id', 'staff_member_id', 'role', 'effective_from', 'effective_to', 'weekdays',
         'created_by', 'ended_by', 'change_reason',
     ];
 
@@ -29,6 +39,16 @@ class VehicleStaffAssignment extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function staffMember()
+    {
+        return $this->belongsTo(StaffMember::class);
+    }
+
+    public function getIdentityNameAttribute(): string
+    {
+        return $this->staffMember?->display_name ?? $this->user?->name ?? '—';
     }
 
     public function creator()

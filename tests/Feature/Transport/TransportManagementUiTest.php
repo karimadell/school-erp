@@ -48,14 +48,19 @@ class TransportManagementUiTest extends TestCase
         $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'أ', 'is_active' => true]);
     }
 
-    public function test_page_navigation_permission_and_overview_excludes_staff_from_seats(): void
+    public function test_page_navigation_permission_and_overview_shows_student_and_physical_occupancy(): void
     {
         [$bus, $route] = $this->transport();
         app(TransportAssignmentService::class)->assign($this->enrollment('Ученик'), $route, $bus, ['effective_from' => '2026-09-01'], $this->actor);
         VehicleStaffAssignment::create(['bus_id' => $bus->id, 'user_id' => User::factory()->create(['is_active' => true])->id, 'role' => 'staff_passenger', 'effective_from' => '2026-09-01', 'created_by' => $this->actor->id]);
 
+        foreach (range(1, 13) as $number) {
+            VehicleStaffAssignment::create(['bus_id' => $bus->id, 'user_id' => User::factory()->create(['is_active' => true])->id, 'role' => 'staff_passenger', 'effective_from' => '2026-09-01', 'created_by' => $this->actor->id]);
+        }
+
         $this->actingAs($this->actor)->get(route('dashboard.transport-management.index', ['date' => '2026-09-07']))
-            ->assertOk()->assertSee('Управление трансфером')->assertSee('1 / 14 мест')->assertSee('13');
+            ->assertOk()->assertSee('Управление трансфером')->assertSee('Ученики 1/14')->assertSee('Пассажиры 15/15')
+            ->assertSee('value="'.$bus->id.'" disabled', false);
 
         $unauthorized = User::factory()->create(['is_active' => true]);
         $unauthorized->assignRole('reception');

@@ -11,6 +11,7 @@ class Enrollment extends Model implements ResolvesAcademicYear
         'student_id',
         'academic_year_id',
         'enrollment_mode_id',
+        'study_attendance_mode',
         'stage_id',
         'grade_id',
         'class_id',

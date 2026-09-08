@@ -26,4 +26,9 @@ class StaffMember extends Model
     {
         return $this->hasMany(StaffTransportBootstrapImport::class);
     }
+
+    public function masterImports()
+    {
+        return $this->hasMany(StaffMasterImport::class);
+    }
 }

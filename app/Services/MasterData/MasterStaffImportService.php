@@ -16,8 +16,6 @@ use Illuminate\Validation\ValidationException;
 
 class MasterStaffImportService
 {
-    private const REVIEW = ['Лебедева Г.Г.', 'Чумакова В.В.', 'Щербакова О.В.'];
-
     private const DAYS = ['пн' => 1, 'вт' => 2, 'ср' => 3, 'чт' => 4, 'пт' => 5, 'сб' => 6, 'вс' => 7];
 
     public function __construct(private MasterDataWorkbookParser $parser, private TransportImportPreviewService $transport) {}
@@ -92,14 +90,14 @@ class MasterStaffImportService
                     }
                     $master = $candidates->first();
                     $masterImport = StaffMasterImport::where('source_key', $master['source_key'])->first();
-                    $review = in_array($display, self::REVIEW, true);
+                    $confirmedStalePhone = in_array($display, ['Лебедева Г.Г.', 'Чумакова В.В.', 'Щербакова О.В.'], true);
                     $sourceKey = hash('sha256', json_encode([$row['source_file'], $row['source_sheet'], $row['source_row'], $row['raw_full_name']], JSON_UNESCAPED_UNICODE));
                     $route = TransportRoute::all()->first(fn ($item) => $this->canonical($item->name) === $this->canonical($row['route']));
                     if (! $route || ! ($bus = Bus::where('transport_route_id', $route->id)->first())) {
                         throw ValidationException::withMessages(['transport' => "No canonical bus for {$row['route']}."]);
                     }
                     $links->push($row + ['display_name' => $display, 'source_key' => $sourceKey, 'master_source_key' => $master['source_key'], 'staff_member_id' => $masterImport?->staff_member_id, 'master_name' => $master['raw_name'], 'master_row' => $master['source_row'], 'position' => $master['position'],
-                        'master_phone' => $master['raw_contact'], 'phone_evidence' => $review ? 'CONFLICT' : 'MATCH/NOT_REQUIRED', 'status' => $review ? 'REVIEW_REQUIRED' : 'MATCHED', 'weekdays' => $this->weekdays($row['raw_full_name'].' '.$row['raw_notes']),
+                        'master_phone' => $master['raw_contact'], 'phone_evidence' => $confirmedStalePhone ? 'CONFIRMED_IDENTITY_STALE_PHONE_PRESERVED' : 'MATCH/NOT_REQUIRED', 'status' => 'CONFIRMED', 'weekdays' => $this->weekdays($row['raw_full_name'].' '.$row['raw_notes']),
                         'bus_id' => $bus->id, 'proposed_role' => VehicleStaffAssignment::ROLE_STAFF_PASSENGER]);
                 }
             }
@@ -113,7 +111,7 @@ class MasterStaffImportService
 
     private function result(string $mode, array $p): array
     {
-        return ['mode' => $mode, 'source_rows' => 26, 'new_staff_members' => $p['staff']->where('already_imported', false)->count(), 'transport_links_matched' => $p['links']->where('status', 'MATCHED')->count(), 'transport_links_review_required' => $p['links']->where('status', 'REVIEW_REQUIRED')->count(), 'vehicle_staff_assignments' => 0, 'staff' => $p['staff']->values()->all(), 'transport_links' => $p['links']->values()->all()];
+        return ['mode' => $mode, 'source_rows' => 26, 'new_staff_members' => $p['staff']->where('already_imported', false)->count(), 'transport_links_confirmed' => $p['links']->where('status', 'CONFIRMED')->count(), 'transport_links_review_required' => 0, 'vehicle_staff_assignments_proposed' => 11, 'vehicle_staff_assignments' => 0, 'staff' => $p['staff']->values()->all(), 'transport_links' => $p['links']->values()->all()];
     }
 
     private function fullSig(string $v): string

@@ -15,6 +15,7 @@ use App\Models\StaffMember;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentBootstrapImport;
+use App\Models\StudentListenerPlacement;
 use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
@@ -70,18 +71,27 @@ class MasterDataImportTest extends TestCase
         $staff = app(MasterStaffImportService::class)->preview($this->staffPath, $this->transportPaths);
         $this->assertSame(134, $students['source_rows']);
         $this->assertSame(71, $students['new_students']);
-        $this->assertSame(
-            ['Денисенко Александра', 'Эльшейх Адам', 'Эльшейх Сухайб'],
-            collect($students['review_required'])->pluck('name')->all()
-        );
+        $this->assertSame(63, $students['safe_existing_matches']);
+        $this->assertSame([], $students['review_required']);
+        $this->assertSame(67, $students['new_formal_enrollments']);
+        $this->assertSame(4, $students['listeners']);
+        $this->assertSame(130, $students['expected_formal_ay1_enrollments']);
+        $this->assertSame(63, $students['expected_current_transport_assignments']);
+        $this->assertSame('ELSHEIKH_RESOLUTION', $students['elsheikh_resolution']['action']);
+        $this->assertSame('DENISENKO_RESOLUTION', $students['denisenko_resolution']['action']);
         $this->assertEqualsCanonicalizing(['БЗ' => 4, 'ДО' => 12], $students['attendance_markers']);
         $this->assertSame('BLINOV_CORRECTION', $students['blinov_correction']['action']);
         $this->assertSame(26, $staff['source_rows']);
         $this->assertSame(26, $staff['new_staff_members']);
-        $this->assertSame(8, $staff['transport_links_matched']);
-        $this->assertSame(3, $staff['transport_links_review_required']);
+        $this->assertSame(11, $staff['transport_links_confirmed']);
+        $this->assertSame(0, $staff['transport_links_review_required']);
+        $this->assertSame(11, $staff['vehicle_staff_assignments_proposed']);
         $this->assertSame([1, 4], collect($staff['transport_links'])->firstWhere('display_name', 'Карев Н.А.')['weekdays']);
         $this->assertSame([4], collect($staff['transport_links'])->firstWhere('display_name', 'Щербакова О.В.')['weekdays']);
+        $this->assertSame('Лебедева Галина Геннадьевна', collect($staff['transport_links'])->firstWhere('display_name', 'Лебедева Г.Г.')['master_name']);
+        $this->assertSame('Чумакова Виктория Владимировна', collect($staff['transport_links'])->firstWhere('display_name', 'Чумакова В.В.')['master_name']);
+        $this->assertSame('Щербакова Ольга Викторовна', collect($staff['transport_links'])->firstWhere('display_name', 'Щербакова О.В.')['master_name']);
+        $this->assertSame(3, collect($staff['transport_links'])->where('phone_evidence', 'CONFIRMED_IDENTITY_STALE_PHONE_PRESERVED')->count());
         $this->assertSame($before, $this->counts());
     }
 
@@ -94,6 +104,10 @@ class MasterDataImportTest extends TestCase
         $second = app(MasterStudentImportService::class)->apply($this->actor, $this->studentPath);
         $staffSecond = app(MasterStaffImportService::class)->apply($this->actor, $this->staffPath, $this->transportPaths);
         $this->assertSame(71, $first['created_students']);
+        $this->assertSame(67, $first['created_enrollments']);
+        $this->assertSame(4, $first['created_listeners']);
+        $this->assertSame(1, $first['merged_students']);
+        $this->assertSame(1, $first['ended_transport_assignments']);
         $this->assertSame(1, $first['corrected_enrollments']);
         $this->assertSame(0, $second['created_students']);
         $this->assertSame(0, $second['corrected_enrollments']);
@@ -106,10 +120,22 @@ class MasterDataImportTest extends TestCase
         $this->assertSame(26, StaffMember::count());
         $this->assertSame(0, StaffMember::whereNotNull('user_id')->count());
         $this->assertSame(12, Enrollment::where('study_attendance_mode', 'ДО')->count());
-        $this->assertSame(4, Enrollment::where('study_attendance_mode', 'БЗ')->count());
+        $this->assertSame(0, Enrollment::where('study_attendance_mode', 'БЗ')->count());
+        $this->assertSame(4, StudentListenerPlacement::where('source_marker', 'БЗ')->count());
+        $this->assertSame(130, Enrollment::where('academic_year_id', 1)->where('is_active', true)->count());
         $this->assertSame(8, Enrollment::findOrFail(StudentBootstrapImport::where('raw_full_name', 'Блинов Добрыня')->value('enrollment_id'))->grade->level);
         $this->assertSame(64, StudentTransportAssignment::count());
-        $this->assertSame($transportHash, hash('sha256', StudentTransportAssignment::orderBy('id')->get()->toJson()));
+        $this->assertSame(63, StudentTransportAssignment::where('status', 'active')->whereNull('effective_to')->count());
+        $this->assertNotSame($transportHash, hash('sha256', StudentTransportAssignment::orderBy('id')->get()->toJson()));
+        $this->assertSame('Эльшейх Сухайб', StudentBootstrapImport::where('raw_full_name', 'Эльшейх Адам')->firstOrFail()->student->fresh()->name);
+        $this->assertSame('Адам', StudentBootstrapImport::where('raw_full_name', 'Эльшейх Адам')->firstOrFail()->student->fresh()->preferred_name);
+        $denis = StudentBootstrapImport::where('raw_full_name', 'Денисенко Александра')->get();
+        $this->assertSame(1, $denis->filter(fn ($i) => $i->student->merged_into_student_id)->count());
+        $this->assertSame(1, $denis->filter(fn ($i) => ! $i->student->merged_into_student_id)->count());
+        $this->assertSame(1, StudentTransportAssignment::where('enrollment_id', $denis->first(fn ($i) => str_contains($i->source_file, 'Эль Ахья'))->enrollment_id)->where('bus_id', 5)->where('status', 'active')->count());
+        $this->assertSame(1, StudentTransportAssignment::where('enrollment_id', $denis->first(fn ($i) => str_contains($i->source_file, 'Бритиш'))->enrollment_id)->where('bus_id', 3)->where('status', 'ended')->whereNotNull('effective_to')->count());
+        $this->assertSame(1, AuditLog::where('action', 'master_duplicate_enrollment_merged')->where('user_id', $this->actor->id)->count());
+        $this->assertSame(1, AuditLog::where('action', 'master_student_identity_merged')->where('user_id', $this->actor->id)->count());
         $this->assertSame(0, VehicleStaffAssignment::count());
         $this->assertSame($finance, $this->finance());
         $this->assertSame(136, Student::count());
@@ -182,15 +208,16 @@ class MasterDataImportTest extends TestCase
             $grade = Grade::where('level', $s['class'])->firstOrFail();
             $class = SchoolClass::where('grade_id', $grade->id)->firstOrFail();
             $enrollment = Enrollment::create(['student_id' => $student->id, 'academic_year_id' => 1, 'enrollment_mode_id' => 1, 'stage_id' => $grade->stage_id, 'grade_id' => $grade->id, 'class_id' => $class->id, 'academic_year' => '2026/2027', 'enrollment_date' => '2026-09-01', 'enrolled_at' => '2026-09-01', 'status' => 'active', 'is_active' => true]);
-            StudentBootstrapImport::create(['source_key' => hash('sha256', $s['file'].'-'.$i), 'source_file' => $s['file'], 'source_sheet' => 'Sheet1', 'source_row' => $s['row'], 'raw_full_name' => $s['name'], 'raw_class' => (string) $s['class'], 'raw_contact' => $s['contact'], 'route' => 'Арабия', 'student_id' => $student->id, 'enrollment_id' => $enrollment->id]);
-            StudentTransportAssignment::create(['enrollment_id' => $enrollment->id, 'transport_route_id' => ($i % 5) + 1, 'bus_id' => ($i % 5) + 1, 'effective_from' => '2026-09-01', 'status' => 'active', 'created_by' => $this->actor->id]);
+            $routeId = str_contains($s['file'], 'Бритиш') ? 3 : (str_contains($s['file'], 'Каусер') ? 4 : (str_contains($s['file'], 'Эль Ахья') ? 5 : 1));
+            StudentBootstrapImport::create(['source_key' => hash('sha256', $s['file'].'-'.$i), 'source_file' => $s['file'], 'source_sheet' => 'Sheet1', 'source_row' => $s['row'], 'raw_full_name' => $s['name'], 'raw_class' => (string) $s['class'], 'raw_contact' => $s['contact'], 'route' => TransportRoute::findOrFail($routeId)->name, 'student_id' => $student->id, 'enrollment_id' => $enrollment->id]);
+            StudentTransportAssignment::create(['enrollment_id' => $enrollment->id, 'transport_route_id' => $routeId, 'bus_id' => $routeId, 'effective_from' => '2026-09-01', 'status' => 'active', 'created_by' => $this->actor->id]);
         }
         Student::create(['name' => 'Demo Student', 'status' => 'active']);
     }
 
     private function counts(): array
     {
-        return ['students' => Student::count(), 'enrollments' => Enrollment::count(), 'master_students' => MasterStudentImport::count(), 'staff' => StaffMember::count(), 'master_staff' => StaffMasterImport::count(), 'student_transport' => StudentTransportAssignment::count(), 'staff_transport' => VehicleStaffAssignment::count()] + $this->finance();
+        return ['students' => Student::count(), 'enrollments' => Enrollment::count(), 'listeners' => StudentListenerPlacement::count(), 'master_students' => MasterStudentImport::count(), 'staff' => StaffMember::count(), 'master_staff' => StaffMasterImport::count(), 'student_transport' => StudentTransportAssignment::count(), 'staff_transport' => VehicleStaffAssignment::count()] + $this->finance();
     }
 
     private function finance(): array
@@ -225,7 +252,7 @@ class MasterDataImportTest extends TestCase
         })->all();
         $this->writeWorkbook($this->studentPath, [['№', 'ФИО', 'Класс']], $studentRows, 3);
 
-        $full = ['Егорова Ольга Викторовна', 'Герасимович Наталья Ивановна', 'Лебедева Галина Георгиевна', 'Карев Николай Александрович', 'Гринько Марина Дмитриевна', 'Чумакова Виктория Валерьевна', 'Зоценко Светлана Зиновьевна', 'Заморева Марина Михайловна', 'Мазитова Римма Ринатовна', 'Реда', 'Щербакова Ольга Владимировна'];
+        $full = ['Егорова Ольга Викторовна', 'Герасимович Наталья Ивановна', 'Лебедева Галина Геннадьевна', 'Карев Николай Александрович', 'Гринько Марина Дмитриевна', 'Чумакова Виктория Владимировна', 'Зоценко Светлана Зиновьевна', 'Заморева Марина Михайловна', 'Мазитова Римма Ринатовна', 'Реда', 'Щербакова Ольга Викторовна'];
         while (count($full) < 26) {
             $full[] = 'Сотрудник Имя '.count($full);
         }

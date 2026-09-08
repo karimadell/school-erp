@@ -19,4 +19,9 @@ class MasterStudentImport extends Model
     {
         return $this->belongsTo(Enrollment::class);
     }
+
+    public function listenerPlacement()
+    {
+        return $this->belongsTo(StudentListenerPlacement::class);
+    }
 }

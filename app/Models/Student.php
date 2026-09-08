@@ -3,23 +3,27 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use App\Models\SchoolClass;
 
 class Student extends Model
 {
     public const STATUS_ACTIVE = 'active';
+
     public const STATUS_PRE_REGISTERED = 'pre_registered';
+
     public const STATUS_DOCUMENTS_REQUIRED = 'documents_required';
+
     public const STATUS_UNDER_REVIEW = 'under_review';
+
     public const STATUS_REGISTRATION_COMPLETED = 'registration_completed';
 
     public const REGISTRATION_STATUSES = ['draft', 'data_incomplete', 'documents_incomplete', 'ready_for_review', 'completed'];
 
     protected $fillable = [
         'name',
+        'preferred_name',
+        'merged_into_student_id',
         'status',
         'academic_year',
-        
 
         'class_id',
         'first_name',
@@ -110,6 +114,16 @@ class Student extends Model
     public function enrollments()
     {
         return $this->hasMany(Enrollment::class);
+    }
+
+    public function listenerPlacements()
+    {
+        return $this->hasMany(StudentListenerPlacement::class);
+    }
+
+    public function mergedInto()
+    {
+        return $this->belongsTo(self::class, 'merged_into_student_id');
     }
 
     public function currentEnrollment()
@@ -231,14 +245,14 @@ class Student extends Model
         $last = $this->last_name_ru;
 
         $firstInitial = $this->first_name_ru
-            ? mb_substr($this->first_name_ru, 0, 1) . '.'
+            ? mb_substr($this->first_name_ru, 0, 1).'.'
             : '';
 
         $patronymicInitial = $this->patronymic_ru
-            ? mb_substr($this->patronymic_ru, 0, 1) . '.'
+            ? mb_substr($this->patronymic_ru, 0, 1).'.'
             : '';
 
-        return trim($last . ' ' . $firstInitial . $patronymicInitial);
+        return trim($last.' '.$firstInitial.$patronymicInitial);
     }
 
     public function averageGrade()

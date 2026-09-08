@@ -16,6 +16,8 @@ use Illuminate\Validation\ValidationException;
 
 class TransportAssignmentService
 {
+    public function __construct(private TransportPassengerCapacityService $capacity) {}
+
     public function assign(Enrollment $enrollment, TransportRoute $route, Bus $bus, array $data, User $actor): StudentTransportAssignment
     {
         abort_unless($actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
@@ -27,7 +29,7 @@ class TransportAssignmentService
                 $route = TransportRoute::query()->lockForUpdate()->findOrFail($route->id);
                 [$from, $to, $capacityTo] = $this->validate($enrollment, $route, $bus, $data);
                 $this->assertEnrollmentAvailable($enrollment->id, $from, $to);
-                $this->assertCapacity($bus, $from, $capacityTo);
+                $this->capacity->assertStudentFits($bus, $from, $capacityTo);
 
                 $assignment = StudentTransportAssignment::create([
                     'enrollment_id' => $enrollment->id,
@@ -97,7 +99,7 @@ class TransportAssignmentService
                 }
                 [, $to, $capacityTo] = $this->validate($enrollment, $route, $destination, array_merge($data, ['effective_from' => $from, 'effective_to' => $data['effective_to'] ?? null]));
                 $this->assertEnrollmentAvailable($enrollment->id, $from, $to, $assignment->id);
-                $this->assertCapacity($destination, $from, $capacityTo, $assignment->id);
+                $this->capacity->assertStudentFits($destination, $from, $capacityTo, $assignment->id);
 
                 $old = $assignment->toArray();
                 $assignment->update(['effective_to' => $from->subDay(), 'status' => StudentTransportAssignment::STATUS_ENDED, 'ended_by' => $actor->id, 'change_reason' => $data['change_reason'] ?? null]);
@@ -144,19 +146,6 @@ class TransportAssignmentService
             ->whereDate('effective_from', '<=', $to ?? '9999-12-31')->where(fn ($q) => $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $from))->exists();
         if ($exists) {
             throw ValidationException::withMessages(['enrollment_id' => 'У enrollment уже есть пересекающееся транспортное назначение.']);
-        }
-    }
-
-    private function assertCapacity(Bus $bus, CarbonImmutable $from, CarbonImmutable $to, ?int $except = null): void
-    {
-        $count = StudentTransportAssignment::query()->join('enrollments', 'enrollments.id', '=', 'student_transport_assignments.enrollment_id')
-            ->join('academic_years', 'academic_years.id', '=', 'enrollments.academic_year_id')
-            ->where('student_transport_assignments.bus_id', $bus->id)
-            ->when($except, fn ($q) => $q->where('student_transport_assignments.id', '!=', $except))
-            ->whereDate('student_transport_assignments.effective_from', '<=', $to)
-            ->whereRaw('COALESCE(student_transport_assignments.effective_to, academic_years.end_date) >= ?', [$from->toDateString()])->count();
-        if ($count >= min(14, $bus->student_capacity)) {
-            throw new TransportCapacityExceeded('В микроавтобусе уже заняты все 14 ученических мест.');
         }
     }
 

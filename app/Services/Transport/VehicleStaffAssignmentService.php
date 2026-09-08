@@ -4,6 +4,7 @@ namespace App\Services\Transport;
 
 use App\Models\AuditLog;
 use App\Models\Bus;
+use App\Models\StaffMember;
 use App\Models\User;
 use App\Models\VehicleStaffAssignment;
 use App\Support\TransportPermissions;
@@ -14,14 +15,16 @@ use Illuminate\Validation\ValidationException;
 
 class VehicleStaffAssignmentService
 {
-    public function assign(Bus $bus, User $staff, string $role, string $effectiveFrom, ?string $effectiveTo, ?array $weekdays, User $actor, ?string $reason = null): VehicleStaffAssignment
+    public function __construct(private TransportPassengerCapacityService $capacity) {}
+
+    public function assign(Bus $bus, User|StaffMember $staff, string $role, string $effectiveFrom, ?string $effectiveTo, ?array $weekdays, User $actor, ?string $reason = null): VehicleStaffAssignment
     {
         abort_unless($actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
         return DB::transaction(function () use ($bus, $staff, $role, $effectiveFrom, $effectiveTo, $weekdays, $actor, $reason) {
             $bus = Bus::query()->lockForUpdate()->findOrFail($bus->id);
-            if (! $bus->is_active || ! $staff->isActive()) {
-                throw ValidationException::withMessages(['user_id' => 'Транспорт и сотрудник должны быть активны.']);
+            if (! $bus->is_active || ! $this->isActive($staff)) {
+                throw ValidationException::withMessages(['identity' => 'Транспорт и сотрудник должны быть активны.']);
             }
             if (! in_array($role, VehicleStaffAssignment::ROLES, true)) {
                 throw ValidationException::withMessages(['role' => 'Недопустимая транспортная роль.']);
@@ -32,6 +35,7 @@ class VehicleStaffAssignmentService
                 throw ValidationException::withMessages(['effective_to' => 'Дата окончания не может быть раньше даты начала.']);
             }
             $weekdays = $this->normalizeWeekdays($weekdays);
+            $this->capacity->assertStaffFits($bus, $role, $from, $to, $weekdays);
 
             if ($role === VehicleStaffAssignment::ROLE_SUPERVISOR) {
                 $conflict = VehicleStaffAssignment::where('bus_id', $bus->id)->where('role', $role)
@@ -43,7 +47,10 @@ class VehicleStaffAssignmentService
             }
 
             $assignment = VehicleStaffAssignment::create([
-                'bus_id' => $bus->id, 'user_id' => $staff->id, 'role' => $role,
+                'bus_id' => $bus->id,
+                'user_id' => $staff instanceof User ? $staff->id : null,
+                'staff_member_id' => $staff instanceof StaffMember ? $staff->id : null,
+                'role' => $role,
                 'effective_from' => $from, 'effective_to' => $to, 'weekdays' => $weekdays,
                 'created_by' => $actor->id, 'change_reason' => $reason,
             ]);
@@ -74,9 +81,11 @@ class VehicleStaffAssignmentService
         });
     }
 
-    public function change(VehicleStaffAssignment $assignment, Bus $bus, User $staff, string $role, string $effectiveFrom, ?string $effectiveTo, ?array $weekdays, User $actor, ?string $reason = null): VehicleStaffAssignment
+    public function change(VehicleStaffAssignment $assignment, Bus $bus, User|StaffMember $staff, string $role, string $effectiveFrom, ?string $effectiveTo, ?array $weekdays, User $actor, ?string $reason = null): VehicleStaffAssignment
     {
         return DB::transaction(function () use ($assignment, $bus, $staff, $role, $effectiveFrom, $effectiveTo, $weekdays, $actor, $reason) {
+            $assignment = VehicleStaffAssignment::query()->lockForUpdate()->findOrFail($assignment->id);
+            Bus::query()->whereIn('id', array_unique([$assignment->bus_id, $bus->id]))->orderBy('id')->lockForUpdate()->get();
             $from = CarbonImmutable::parse($effectiveFrom)->startOfDay();
             $this->end($assignment, $from->subDay()->toDateString(), $actor, $reason);
             $new = $this->assign($bus, $staff, $role, $from->toDateString(), $effectiveTo, $weekdays, $actor, $reason);
@@ -107,6 +116,11 @@ class VehicleStaffAssignmentService
         }
 
         return $normalized;
+    }
+
+    private function isActive(User|StaffMember $staff): bool
+    {
+        return $staff instanceof User ? $staff->isActive() : $staff->is_active;
     }
 
     private function weekdaysOverlap(?array $left, ?array $right): bool

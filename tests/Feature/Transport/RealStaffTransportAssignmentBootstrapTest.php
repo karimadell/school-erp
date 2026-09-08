@@ -8,6 +8,8 @@ use App\Models\Enrollment;
 use App\Models\EnrollmentMode;
 use App\Models\Grade;
 use App\Models\SchoolClass;
+use App\Models\StaffMember;
+use App\Models\StaffTransportBootstrapImport;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentTransportAssignment;
@@ -50,7 +52,8 @@ class RealStaffTransportAssignmentBootstrapTest extends TestCase
         $rows = collect($result['rows']);
 
         $this->assertSame(11, $result['expected_staff']);
-        $this->assertSame(['MATCHED' => 11], $result['identity_summary']);
+        $this->assertSame(['PROPOSED' => 11], $result['identity_summary']);
+        $this->assertSame(11, $result['proposed_staff_members']);
         $this->assertCount(11, $rows);
         $this->assertNotContains('STUDENT', $rows->pluck('type'));
         $this->assertTrue($rows->every(fn ($row) => $row['proposed_role'] === VehicleStaffAssignment::ROLE_STAFF_PASSENGER));
@@ -70,7 +73,12 @@ class RealStaffTransportAssignmentBootstrapTest extends TestCase
         $second = $service->apply($this->actor, $this->paths);
 
         $this->assertSame(11, $first['created_assignments']);
+        $this->assertSame(11, $first['created_staff_members']);
         $this->assertSame(0, $second['created_assignments']);
+        $this->assertSame(11, StaffMember::count());
+        $this->assertSame(11, StaffTransportBootstrapImport::count());
+        $this->assertSame(11, StaffTransportBootstrapImport::distinct('staff_member_id')->count('staff_member_id'));
+        $this->assertSame(0, StaffMember::whereNotNull('user_id')->count());
         $this->assertSame(11, VehicleStaffAssignment::count());
         $this->assertSame(11, VehicleStaffAssignment::where('role', 'staff_passenger')->count());
         $this->assertSame(11, VehicleStaffAssignment::where('change_reason', 'like', 'Controlled real staff transport bootstrap:%')->count());
@@ -82,20 +90,22 @@ class RealStaffTransportAssignmentBootstrapTest extends TestCase
         }
     }
 
-    public function test_missing_identity_and_multiple_exact_identities_are_classified_without_selection(): void
+    public function test_existing_users_are_not_name_matched_or_merged(): void
     {
-        User::where('name', 'Егорова Ольга Викторовна')->delete();
         User::factory()->create(['name' => 'Егорова Ирина Петровна', 'is_active' => true]);
-        $possible = app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->paths);
-        $egorova = collect($possible['rows'])->firstWhere('raw_full_name', 'Егорова О.В.');
-        $this->assertSame('POSSIBLE_MATCH', $egorova['identity_status']);
-        $this->assertNull($egorova['user_id']);
+        $preview = app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->paths);
+        $this->assertSame(['PROPOSED' => 11], $preview['identity_summary']);
+        $this->assertNull(collect($preview['rows'])->first()['staff_member_id']);
+    }
 
-        User::factory()->create(['name' => 'Карев Николай Андреевич', 'is_active' => true]);
-        $conflict = app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->paths);
-        $karev = collect($conflict['rows'])->firstWhere('raw_full_name', 'Карев Н.А. (пн, чт)');
-        $this->assertSame('CONFLICT', $karev['identity_status']);
-        $this->assertCount(2, $karev['candidate_user_ids']);
+    public function test_legacy_source_traced_assignment_fails_closed(): void
+    {
+        $preview = app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->paths);
+        $row = $preview['rows'][0];
+        VehicleStaffAssignment::create(['bus_id' => $row['bus_id'], 'user_id' => User::factory()->create(['is_active' => true])->id,
+            'role' => 'staff_passenger', 'effective_from' => '2026-09-01', 'created_by' => $this->actor->id, 'change_reason' => $row['source_trace']]);
+        $this->expectException(ValidationException::class);
+        app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->paths);
     }
 
     public function test_capacity_conflict_fails_closed(): void
@@ -168,7 +178,6 @@ class RealStaffTransportAssignmentBootstrapTest extends TestCase
             }
             foreach ($people as $offset => [$sourceName, $canonicalName]) {
                 $rows[] = [$studentCounts[$route] + $offset + 1, $sourceName, 'сотр', "  Staff stop {$route} {$offset}  ", '', ''];
-                User::factory()->create(['name' => $canonicalName, 'is_active' => true]);
             }
             $path = $directory.'/Трансфер_'.$route.'.xlsx';
             $spreadsheet = new Spreadsheet;

@@ -3,6 +3,8 @@
 namespace App\Services\Transport;
 
 use App\Models\Bus;
+use App\Models\StaffMember;
+use App\Models\StaffTransportBootstrapImport;
 use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
@@ -53,19 +55,25 @@ class RealStaffTransportAssignmentBootstrapService
 
         return DB::transaction(function () use ($actor, $paths): array {
             $plan = $this->plan($paths ?: $this->defaultPaths());
-            $unresolved = $plan->where('identity_status', '!=', 'MATCHED');
-            if ($unresolved->isNotEmpty()) {
-                throw ValidationException::withMessages(['identity' => "All 11 staff identities must be MATCHED before APPLY; {$unresolved->count()} remain unresolved."]);
-            }
-
             $created = 0;
+            $createdMembers = 0;
             foreach ($plan as $item) {
                 if ($item['assignment_exists']) {
                     continue;
                 }
-                $this->assignments->assign(
+                $metadata = StaffTransportBootstrapImport::query()->where('source_key', $item['source_key'])->lockForUpdate()->first();
+                if (! $metadata) {
+                    $member = StaffMember::create(['display_name' => $item['display_name'], 'is_active' => true]);
+                    $metadata = StaffTransportBootstrapImport::create([
+                        'source_key' => $item['source_key'], 'source_file' => $item['source_file'], 'source_sheet' => $item['source_sheet'],
+                        'source_row' => $item['source_row'], 'raw_display_name' => $item['raw_full_name'], 'raw_pickup_point' => $item['raw_pickup_point'],
+                        'raw_contact' => $item['raw_phone'], 'raw_notes' => $item['raw_notes'], 'route' => $item['route'], 'staff_member_id' => $member->id,
+                    ]);
+                    $createdMembers++;
+                }
+                $assignment = $this->assignments->assign(
                     Bus::findOrFail($item['bus_id']),
-                    User::findOrFail($item['user_id']),
+                    $metadata->staffMember,
                     $item['proposed_role'],
                     self::EFFECTIVE_FROM,
                     null,
@@ -73,10 +81,11 @@ class RealStaffTransportAssignmentBootstrapService
                     $actor,
                     $item['source_trace'],
                 );
+                $metadata->update(['vehicle_staff_assignment_id' => $assignment->id]);
                 $created++;
             }
 
-            return $this->result('APPLY', $plan) + ['created_assignments' => $created];
+            return $this->result('APPLY', $plan) + ['created_staff_members' => $createdMembers, 'created_assignments' => $created];
         });
     }
 
@@ -103,30 +112,33 @@ class RealStaffTransportAssignmentBootstrapService
             throw ValidationException::withMessages(['sources' => 'An unapproved route entered the staff flow.']);
         }
 
-        $users = User::query()->with('teacher')->where('is_active', true)->get();
-        $plan = $rows->map(function (array $row) use ($users): array {
+        $plan = $rows->map(function (array $row): array {
             $routeName = $this->canonical((string) $row['route']);
             $mapping = self::ROUTES[$routeName];
             [$route, $bus] = $this->canonicalTransport($routeName, $mapping);
-            $identity = $this->resolveIdentity($row, $users);
             $weekdays = $this->weekdays($row['raw_full_name'].' '.$row['raw_notes']);
             $sourceKey = hash('sha256', json_encode([$row['source_file'], $row['source_sheet'], $row['source_row'], $row['raw_full_name']], JSON_UNESCAPED_UNICODE));
             $sourceTrace = $this->sourceTrace($row, $sourceKey);
-            $role = $this->explicitRole($identity['user_id'] ?? null);
-            $existing = collect();
-            $exact = collect();
-            if ($identity['user_id'] ?? null) {
-                $existing = VehicleStaffAssignment::query()->where('change_reason', $sourceTrace)->get();
-                $exact = $existing->filter(fn (VehicleStaffAssignment $assignment) => (int) $assignment->bus_id === $bus->id && (int) $assignment->user_id === $identity['user_id']
-                    && $assignment->role === $role && $assignment->effective_from?->toDateString() === self::EFFECTIVE_FROM
-                    && $assignment->effective_to === null && $assignment->weekdays === $weekdays
-                );
-                if ($existing->count() > 1 || ($existing->isNotEmpty() && $exact->count() !== 1)) {
-                    throw ValidationException::withMessages(['assignment' => "Conflicting source-keyed staff assignment for {$sourceKey}."]);
-                }
+            $role = VehicleStaffAssignment::ROLE_STAFF_PASSENGER;
+            $metadata = StaffTransportBootstrapImport::query()->with(['staffMember', 'vehicleStaffAssignment'])->where('source_key', $sourceKey)->first();
+            if (! $metadata && VehicleStaffAssignment::query()->where('change_reason', $sourceTrace)->exists()) {
+                throw ValidationException::withMessages(['source' => "Legacy source-traced assignment {$sourceKey} requires explicit identity migration before bootstrap."]);
+            }
+            if ($metadata) {
+                $this->validateMetadata($metadata, $row, $routeName);
+            }
+            $assignment = $metadata?->vehicleStaffAssignment;
+            $exact = $assignment && (int) $assignment->bus_id === $bus->id && (int) $assignment->staff_member_id === $metadata->staff_member_id
+                && $assignment->role === $role && $assignment->effective_from?->toDateString() === self::EFFECTIVE_FROM
+                && $assignment->effective_to === null && $assignment->weekdays === $weekdays;
+            if ($assignment && ! $exact) {
+                throw ValidationException::withMessages(['assignment' => "Conflicting source-keyed staff assignment for {$sourceKey}."]);
             }
 
-            return $row + $identity + [
+            return $row + [
+                'identity_status' => $metadata ? 'MATCHED' : 'PROPOSED',
+                'staff_member_id' => $metadata?->staff_member_id,
+                'display_name' => trim((string) preg_replace('/\s*\([^)]*\)\s*/u', '', $row['raw_full_name'])),
                 'source_key' => $sourceKey,
                 'source_trace' => $sourceTrace,
                 'route' => $routeName,
@@ -137,78 +149,28 @@ class RealStaffTransportAssignmentBootstrapService
                 'proposed_role' => $role,
                 'effective_from' => self::EFFECTIVE_FROM,
                 'effective_to' => null,
-                'assignment_exists' => $exact->count() === 1,
+                'assignment_exists' => (bool) $exact,
             ];
         });
 
         if ($plan->count() !== 11 || $plan->pluck('source_key')->unique()->count() !== 11) {
             throw ValidationException::withMessages(['sources' => 'Expected 11 unique staff source identities.']);
         }
-        $matchedIds = $plan->where('identity_status', 'MATCHED')->pluck('user_id');
-        if ($matchedIds->unique()->count() !== $matchedIds->count()) {
-            throw ValidationException::withMessages(['identity' => 'One canonical user was resolved from multiple staff source rows.']);
-        }
         $this->assertCapacity($plan);
 
         return $plan;
     }
 
-    private function resolveIdentity(array $row, Collection $users): array
+    private function validateMetadata(StaffTransportBootstrapImport $metadata, array $row, string $route): void
     {
-        $sourceName = trim((string) preg_replace('/\s*\([^)]*\)\s*/u', '', $row['raw_full_name']));
-        $sourcePhone = $this->digits($row['raw_phone']);
-        $exact = $users->filter(function (User $user) use ($sourceName, $sourcePhone): bool {
-            if ($this->key($user->name) === $this->key($sourceName)) {
-                return true;
+        foreach (['source_file', 'source_sheet', 'source_row'] as $field) {
+            if ((string) $metadata->{$field} !== (string) $row[$field]) {
+                throw ValidationException::withMessages(['source' => 'Source metadata conflict.']);
             }
-            if ($sourcePhone !== '' && $user->teacher && $this->digits($user->teacher->phone) === $sourcePhone) {
-                return true;
-            }
-
-            return in_array($this->key($sourceName), $this->identitySignatures($user), true);
-        });
-        if ($exact->count() === 1) {
-            $user = $exact->first();
-
-            return ['identity_status' => 'MATCHED', 'user_id' => $user->id, 'candidate_user_ids' => [$user->id], 'identity_evidence' => 'exact canonical full/short name or exact linked-teacher phone'];
         }
-        if ($exact->count() > 1) {
-            return ['identity_status' => 'CONFLICT', 'user_id' => null, 'candidate_user_ids' => $exact->pluck('id')->values()->all(), 'identity_evidence' => 'multiple exact canonical identities'];
+        if ($metadata->raw_display_name !== $row['raw_full_name'] || $metadata->raw_pickup_point !== $row['raw_pickup_point'] || $metadata->raw_contact !== $row['raw_phone'] || $metadata->raw_notes !== $row['raw_notes'] || $metadata->route !== $route || ! $metadata->staffMember?->is_active) {
+            throw ValidationException::withMessages(['source' => 'Source metadata or StaffMember conflict.']);
         }
-
-        $surname = $this->key(Str::before($sourceName, ' '));
-        $possible = mb_strlen($surname) < 2 ? collect() : $users->filter(fn (User $user) => collect(preg_split('/\s+/u', $this->key($user->name)))->contains($surname)
-            || ($user->teacher && $this->key($user->teacher->last_name) === $surname));
-        if ($possible->isNotEmpty()) {
-            return ['identity_status' => 'POSSIBLE_MATCH', 'user_id' => null, 'candidate_user_ids' => $possible->pluck('id')->values()->all(), 'identity_evidence' => 'exact surname only; insufficient to choose'];
-        }
-
-        return ['identity_status' => 'NOT_FOUND', 'user_id' => null, 'candidate_user_ids' => [], 'identity_evidence' => 'no exact canonical full/short name, linked-teacher phone, or surname candidate'];
-    }
-
-    private function identitySignatures(User $user): array
-    {
-        $signatures = [];
-        if ($user->teacher) {
-            $signatures[] = $this->key(trim($user->teacher->last_name.' '.mb_substr((string) $user->teacher->first_name, 0, 1).'.'.mb_substr((string) $user->teacher->patronymic, 0, 1).'.'));
-        }
-        $parts = preg_split('/\s+/u', trim($user->name));
-        if (count($parts) >= 3) {
-            $signatures[] = $this->key($parts[0].' '.mb_substr($parts[1], 0, 1).'.'.mb_substr($parts[2], 0, 1).'.');
-            $signatures[] = $this->key($parts[2].' '.mb_substr($parts[0], 0, 1).'.'.mb_substr($parts[1], 0, 1).'.');
-        }
-
-        return array_values(array_unique($signatures));
-    }
-
-    private function explicitRole(?int $userId): string
-    {
-        if (! $userId) {
-            return VehicleStaffAssignment::ROLE_STAFF_PASSENGER;
-        }
-        $roles = VehicleStaffAssignment::query()->where('user_id', $userId)->pluck('role')->unique();
-
-        return $roles->count() === 1 ? $roles->first() : VehicleStaffAssignment::ROLE_STAFF_PASSENGER;
     }
 
     private function weekdays(string $value): ?array
@@ -240,7 +202,7 @@ class RealStaffTransportAssignmentBootstrapService
                 ->whereDate('effective_from', '<=', '9999-12-31')
                 ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', self::EFFECTIVE_FROM))->get();
             $byDay = collect(range(1, 7))->mapWithKeys(function (int $day) use ($existing, $plan, $bus): array {
-                $existingCount = $existing->filter(fn (VehicleStaffAssignment $item) => $item->weekdays === null || in_array($day, $item->weekdays, true))->count();
+                $existingCount = $existing->filter(fn (VehicleStaffAssignment $item) => $item->role !== VehicleStaffAssignment::ROLE_DRIVER && ($item->weekdays === null || in_array($day, $item->weekdays, true)))->count();
                 $newCount = $plan->where('bus_id', $bus->id)->where('assignment_exists', false)
                     ->filter(fn (array $item) => $item['weekdays'] === null || in_array($day, $item['weekdays'], true))->count();
 
@@ -273,6 +235,7 @@ class RealStaffTransportAssignmentBootstrapService
         return [
             'mode' => $mode,
             'expected_staff' => 11,
+            'proposed_staff_members' => $plan->where('identity_status', 'PROPOSED')->count(),
             'identity_summary' => $plan->countBy('identity_status')->all(),
             'new_assignments' => $plan->where('assignment_exists', false)->count(),
             'existing_assignments' => $plan->where('assignment_exists', true)->count(),

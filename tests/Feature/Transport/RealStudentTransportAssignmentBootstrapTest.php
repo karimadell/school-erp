@@ -54,11 +54,12 @@ class RealStudentTransportAssignmentBootstrapTest extends TestCase
         $before = $this->counts();
         $result = app(RealStudentTransportAssignmentBootstrapService::class)->preview($this->paths);
 
-        $this->assertSame(64, $result['expected_assignments']);
-        $this->assertSame(64, $result['new_assignments']);
-        $this->assertSame(['Арабия' => 13, 'Бествэй' => 12, 'Бритиш' => 13, 'Каусер' => 14, 'Эль Ахья' => 12], $result['by_route']);
-        $this->assertCount(64, collect($result['rows'])->pluck('source_key')->unique());
-        $this->assertCount(64, collect($result['rows'])->pluck('enrollment_id')->unique());
+        $this->assertSame(63, $result['expected_assignments']);
+        $this->assertSame(63, $result['new_assignments']);
+        $this->assertSame(['Арабия' => 13, 'Бествэй' => 12, 'Бритиш' => 12, 'Каусер' => 14, 'Эль Ахья' => 12], $result['by_route']);
+        $this->assertCount(63, collect($result['rows'])->pluck('source_key')->unique());
+        $this->assertCount(63, collect($result['rows'])->pluck('enrollment_id')->unique());
+        $this->assertSame('Бритиш', $result['historical_evidence'][0]['route']);
         $this->assertSame($before, $this->counts());
     }
 
@@ -69,15 +70,15 @@ class RealStudentTransportAssignmentBootstrapTest extends TestCase
         $first = $service->apply($this->actor, $this->paths);
         $second = $service->apply($this->actor, $this->paths);
 
-        $this->assertSame(64, $first['created_assignments']);
+        $this->assertSame(63, $first['created_assignments']);
         $this->assertSame(0, $second['created_assignments']);
-        $this->assertSame(['Арабия' => 13, 'Бествэй' => 12, 'Бритиш' => 13, 'Каусер' => 14, 'Эль Ахья' => 12], StudentTransportAssignment::query()->join('transport_routes', 'transport_routes.id', '=', 'student_transport_assignments.transport_route_id')->select('transport_routes.name', DB::raw('COUNT(*) n'))->groupBy('transport_routes.name')->pluck('n', 'name')->map(fn ($count) => (int) $count)->all());
+        $this->assertSame(['Арабия' => 13, 'Бествэй' => 12, 'Бритиш' => 12, 'Каусер' => 14, 'Эль Ахья' => 12], StudentTransportAssignment::query()->join('transport_routes', 'transport_routes.id', '=', 'student_transport_assignments.transport_route_id')->select('transport_routes.name', DB::raw('COUNT(*) n'))->groupBy('transport_routes.name')->pluck('n', 'name')->map(fn ($count) => (int) $count)->all());
         $this->assertSame('  Pickup Арабия 1  ', StudentTransportAssignment::where('enrollment_id', StudentBootstrapImport::where('route', 'Арабия')->orderBy('source_row')->value('enrollment_id'))->value('pickup_point'));
 
         $duplicates = StudentBootstrapImport::where('raw_full_name', 'Денисенко Александра')->orderBy('source_row')->get();
         $this->assertCount(2, $duplicates);
         $this->assertNotSame($duplicates[0]->enrollment_id, $duplicates[1]->enrollment_id);
-        $this->assertSame([3, 5], StudentTransportAssignment::whereIn('enrollment_id', $duplicates->pluck('enrollment_id'))->orderBy('transport_route_id')->pluck('transport_route_id')->all());
+        $this->assertSame([5], StudentTransportAssignment::whereIn('enrollment_id', $duplicates->pluck('enrollment_id'))->orderBy('transport_route_id')->pluck('transport_route_id')->all());
 
         $after = $this->counts();
         $this->assertSame($before['invoices'], $after['invoices']);
@@ -121,11 +122,10 @@ class RealStudentTransportAssignmentBootstrapTest extends TestCase
         $this->assertSame($before, $this->counts());
     }
 
-    public function test_missing_source_metadata_fails_closed(): void
+    public function test_missing_bootstrap_metadata_does_not_block_preview(): void
     {
         StudentBootstrapImport::query()->firstOrFail()->delete();
-        $this->expectException(ValidationException::class);
-        app(RealStudentTransportAssignmentBootstrapService::class)->preview($this->paths);
+        $this->assertSame(63, app(RealStudentTransportAssignmentBootstrapService::class)->preview($this->paths)['expected_assignments']);
     }
 
     public function test_conflicting_overlap_fails_closed_without_writes(): void

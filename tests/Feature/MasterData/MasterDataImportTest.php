@@ -20,9 +20,12 @@ use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
 use App\Models\VehicleStaffAssignment;
+use App\Services\MasterData\MasterDataReconciliationPreviewService;
 use App\Services\MasterData\MasterDataWorkbookParser;
 use App\Services\MasterData\MasterStaffImportService;
 use App\Services\MasterData\MasterStudentImportService;
+use App\Services\Transport\RealStaffTransportAssignmentBootstrapService;
+use App\Services\Transport\RealStudentTransportAssignmentBootstrapService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -57,8 +60,8 @@ class MasterDataImportTest extends TestCase
             $grade = Grade::forceCreate(['id' => $level + 1, 'stage_id' => $stage->id, 'name' => "{$level} класс", 'level' => $level]);
             SchoolClass::forceCreate(['id' => $level + 1, 'grade_id' => $grade->id, 'code' => "{$level}-A", 'name_ru' => "{$level} КЛАСС", 'name_ar' => (string) $level, 'capacity' => 200, 'is_active' => true]);
         }
-        foreach ([1 => 'Арабия', 2 => 'Бествэй', 3 => 'Бритиш', 4 => 'Каусер', 5 => 'Эль Ахья'] as $id => $name) {
-            TransportRoute::forceCreate(['id' => $id, 'name' => $name, 'is_active' => true]);
+        foreach ([1 => ['Арабия', 'Zone 2'], 2 => ['Бествэй', null], 3 => ['Бритиш', null], 4 => ['Каусер', 'Zone 1'], 5 => ['Эль Ахья', 'Zone 3']] as $id => [$name, $zone]) {
+            TransportRoute::forceCreate(['id' => $id, 'name' => $name, 'pricing_zone' => $zone, 'is_active' => true]);
             Bus::forceCreate(['id' => $id, 'vehicle_code' => (string) $id, 'transport_route_id' => $id, 'student_capacity' => 14, 'passenger_capacity' => 15, 'is_active' => true]);
         }
         $this->seedExistingTransportPopulation();
@@ -165,12 +168,94 @@ class MasterDataImportTest extends TestCase
 
     public function test_missing_bootstrap_metadata_does_not_block_preview_or_write(): void
     {
+        StudentTransportAssignment::query()->delete();
         StudentBootstrapImport::query()->delete();
+        \App\Models\StaffTransportBootstrapImport::query()->delete();
+        Enrollment::query()->delete();
+        Student::query()->delete();
+        Bus::query()->delete();
+        TransportRoute::query()->delete();
         $before = $this->counts();
         $preview = app(MasterStudentImportService::class)->preview($this->studentPath);
+        $studentTransport = app(RealStudentTransportAssignmentBootstrapService::class)->preview($this->transportPaths, $this->studentPath);
+        $staffTransport = app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->transportPaths, $this->staffPath);
+        $studentTransportAgain = app(RealStudentTransportAssignmentBootstrapService::class)->preview($this->transportPaths, $this->studentPath);
+        $complete = app(MasterDataReconciliationPreviewService::class)->preview($this->studentPath, $this->staffPath, $this->transportPaths);
         $this->assertSame(134, $preview['source_rows']);
         $this->assertSame([], $preview['review_required']);
+        $this->assertSame(63, $studentTransport['expected_assignments']);
+        $this->assertTrue(collect($studentTransport['rows'])->every(fn ($row) => $row['student_id'] === null && $row['enrollment_id'] === null));
+        $this->assertTrue(collect($studentTransport['rows'])->every(fn ($row) => $row['catalog_status'] === 'PLANNED'));
+        $this->assertCount(1, $studentTransport['historical_evidence']);
+        $this->assertSame('Эль Ахья', collect($studentTransport['rows'])->firstWhere('canonical_name', 'Денисенко Александра')['route']);
+        $this->assertSame(11, $staffTransport['expected_staff']);
+        $this->assertSame(['PLANNED_MASTER' => 11], $staffTransport['identity_summary']);
+        $this->assertSame($studentTransport, $studentTransportAgain);
+        $this->assertSame(63, $complete['student_transport']['expected_assignments']);
+        $this->assertSame(11, $complete['staff_transport']['expected_staff']);
+        $this->assertTrue($complete['capacity_valid']);
+        $this->assertSame(['master_students', 'master_staff', 'transport_catalog', 'student_transport_assignments', 'vehicle_staff_assignments'], $complete['apply_order']);
         $this->assertSame($before, $this->counts());
+    }
+
+    public function test_new_elsheikh_identity_persists_preferred_name_idempotently_and_unrelated_finance_is_untouched(): void
+    {
+        StudentTransportAssignment::query()->delete();
+        StudentBootstrapImport::query()->delete();
+        Enrollment::query()->delete();
+        Student::query()->delete();
+        $existing = Student::create(['name' => 'UAT unrelated finance child', 'status' => Student::STATUS_ACTIVE]);
+        $enrollment = Enrollment::create(['student_id' => $existing->id, 'academic_year_id' => 1, 'enrollment_mode_id' => 1, 'stage_id' => 1, 'grade_id' => 1, 'class_id' => 1,
+            'academic_year' => '2026/2027', 'enrollment_date' => '2026-09-01', 'enrolled_at' => '2026-09-01', 'status' => 'active', 'is_active' => true]);
+        $invoiceId = DB::table('invoices')->insertGetId(['student_id' => $existing->id, 'academic_year_id' => 1, 'customer_name' => $existing->name, 'total_amount' => 100, 'subtotal_amount' => 100,
+            'paid_amount' => 0, 'remaining_amount' => 100, 'status' => 'unpaid', 'currency' => 'EGP', 'created_at' => now(), 'updated_at' => now()]);
+        $before = [$existing->fresh()->toArray(), $enrollment->fresh()->toArray(), DB::table('invoices')->find($invoiceId)->student_id];
+
+        $preview = app(MasterStudentImportService::class)->preview($this->studentPath);
+        $elsheikh = collect($preview['rows'])->firstWhere('raw_name', 'Эльшейх Сухайб');
+        $this->assertSame('Эльшейх Сухайб', $elsheikh['canonical_name']);
+        $this->assertSame('Адам', $elsheikh['preferred_name']);
+        $this->assertSame(['Адам', 'Эльшейх Адам'], $elsheikh['source_aliases']);
+        app(MasterStudentImportService::class)->apply($this->actor, $this->studentPath);
+        app(MasterStudentImportService::class)->apply($this->actor, $this->studentPath);
+
+        $canonical = Student::where('name', 'Эльшейх Сухайб')->sole();
+        $this->assertSame('Адам', $canonical->preferred_name);
+        $this->assertSame(1, Student::where(fn ($q) => $q->where('name', 'Эльшейх Сухайб')->orWhere('name', 'Эльшейх Адам'))->count());
+        $this->assertSame($before[0], $existing->fresh()->toArray());
+        $this->assertSame($before[1], $enrollment->fresh()->toArray());
+        $this->assertSame($before[2], DB::table('invoices')->find($invoiceId)->student_id);
+    }
+
+    public function test_authoritative_transport_apply_resolves_master_planning_keys_and_is_idempotent(): void
+    {
+        StudentTransportAssignment::query()->delete();
+        StudentBootstrapImport::query()->delete();
+        Enrollment::query()->delete();
+        Student::query()->delete();
+        StaffMember::query()->delete();
+
+        app(MasterStudentImportService::class)->apply($this->actor, $this->studentPath);
+        app(MasterStaffImportService::class)->apply($this->actor, $this->staffPath, $this->transportPaths);
+        $students = app(RealStudentTransportAssignmentBootstrapService::class);
+        $staff = app(RealStaffTransportAssignmentBootstrapService::class);
+        $studentFirst = $students->apply($this->actor, $this->transportPaths, $this->studentPath);
+        $staffFirst = $staff->apply($this->actor, $this->transportPaths, $this->staffPath);
+        $studentSecond = $students->apply($this->actor, $this->transportPaths, $this->studentPath);
+        $staffSecond = $staff->apply($this->actor, $this->transportPaths, $this->staffPath);
+
+        $this->assertSame(63, $studentFirst['created_assignments']);
+        $this->assertSame(11, $staffFirst['created_assignments']);
+        $this->assertSame(0, $studentSecond['created_assignments']);
+        $this->assertSame(0, $staffSecond['created_assignments']);
+        $this->assertSame(63, StudentTransportAssignment::where('status', 'active')->whereNull('effective_to')->count());
+        $this->assertSame(11, VehicleStaffAssignment::count());
+        $denis = MasterStudentImport::where('raw_name', 'Денисенко Александра')->sole();
+        $this->assertSame(['Эль Ахья'], StudentTransportAssignment::where('enrollment_id', $denis->enrollment_id)->where('status', 'active')
+            ->join('transport_routes', 'transport_routes.id', '=', 'student_transport_assignments.transport_route_id')->pluck('transport_routes.name')->all());
+        $this->assertSame(0, StudentTransportAssignment::where('enrollment_id', $denis->enrollment_id)->where('transport_route_id', 3)->where('status', 'active')->count());
+        $this->assertSame(0, \App\Models\StaffTransportBootstrapImport::count());
+        $this->assertSame(0, StudentBootstrapImport::count());
     }
 
     public function test_eighteen_existing_students_without_bootstrap_are_reconciled_deterministically(): void
@@ -326,10 +411,20 @@ class MasterDataImportTest extends TestCase
         $staffRows = collect($full)->map(fn ($name, $i) => [$i + 1, $name, null, null, null, '01.01.1900', 'Сотрудник', null, null, '+200'.$i])->all();
         $this->writeWorkbook($this->staffPath, [['№', 'ФИО', '', '', '', 'Дата рождения', 'Должность', '', '', 'Телефон']], $staffRows, 4);
 
-        $routes = ['Арабия' => ['Егорова О.В.', 'Герасимович Н.И.'], 'Бествэй' => ['Лебедева Г.Г.', 'Карев Н.А. (пн, чт)', 'Гринько М.Д.'], 'Бритиш' => ['Чумакова В.В.', 'Зоценко С.З.'], 'Каусер' => ['Заморева М.М.'], 'Эль Ахья' => ['Мазитова Р.Р.', 'Реда', 'Щербакова О.В. (чт)']];
-        foreach ($routes as $route => $names) {
+        $staffByRoute = ['Арабия' => ['Егорова О.В.', 'Герасимович Н.И.'], 'Бествэй' => ['Лебедева Г.Г.', 'Карев Н.А. (пн, чт)', 'Гринько М.Д.'], 'Бритиш' => ['Чумакова В.В.', 'Зоценко С.З.'], 'Каусер' => ['Заморева М.М.'], 'Эль Ахья' => ['Мазитова Р.Р.', 'Реда', 'Щербакова О.В. (чт)']];
+        $ordinary = collect(range(1, 60))->map(fn ($n) => "Ученик {$n}");
+        $studentsByRoute = [
+            'Арабия' => $ordinary->slice(0, 13)->values()->all(),
+            'Бествэй' => $ordinary->slice(13, 12)->values()->all(),
+            'Бритиш' => [...$ordinary->slice(25, 12)->values()->all(), 'Денисенко Александра'],
+            'Каусер' => [...$ordinary->slice(37, 13)->values()->all(), 'Эльшейх Адам'],
+            'Эль Ахья' => [...$ordinary->slice(50, 10)->values()->all(), 'Блинов Добрыня', 'Денисенко Александра'],
+        ];
+        foreach ($staffByRoute as $route => $names) {
             $path = $dir.'/Трансфер_'.$route.'.xlsx';
-            $this->writeWorkbook($path, [['ФИО', 'Класс', 'Остановка', 'Телефон', 'Примечание']], collect($names)->map(fn ($name) => [$name, 'сотр', 'Точка', '', ''])->all(), 1);
+            $studentRowsForRoute = collect($studentsByRoute[$route])->map(fn ($name) => [$name, '1', 'Точка ученика', '', ''])->all();
+            $staffRowsForRoute = collect($names)->map(fn ($name) => [$name, 'сотр', 'Точка', '', ''])->all();
+            $this->writeWorkbook($path, [['ФИО', 'Класс', 'Остановка', 'Телефон', 'Примечание']], [...$studentRowsForRoute, ...$staffRowsForRoute], 1);
             $this->transportPaths[] = $path;
         }
     }

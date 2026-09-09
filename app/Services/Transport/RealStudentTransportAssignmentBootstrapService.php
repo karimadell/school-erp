@@ -4,17 +4,19 @@ namespace App\Services\Transport;
 
 use App\Models\Bus;
 use App\Models\Enrollment;
-use App\Models\StudentBootstrapImport;
+use App\Models\MasterStudentImport;
+use App\Models\Student;
 use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
+use App\Services\MasterData\MasterStudentImportService;
 use App\Support\TransportPermissions;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Normalizer;
 
-/** Source-keyed, preview-first bootstrap for the approved real transport assignments. */
+/** Plans authoritative current transport assignments without bootstrap identity rows. */
 class RealStudentTransportAssignmentBootstrapService
 {
     public const TARGET_YEAR_ID = 1;
@@ -22,16 +24,17 @@ class RealStudentTransportAssignmentBootstrapService
     public const EFFECTIVE_FROM = '2026-09-01';
 
     private const ROUTES = [
-        'Арабия' => ['route_id' => 1, 'bus_id' => 1, 'vehicle_code' => '1', 'pricing_zone' => 'Zone 2', 'students' => 13],
-        'Бествэй' => ['route_id' => 2, 'bus_id' => 2, 'vehicle_code' => '2', 'pricing_zone' => null, 'students' => 12],
-        'Бритиш' => ['route_id' => 3, 'bus_id' => 3, 'vehicle_code' => '3', 'pricing_zone' => null, 'students' => 13],
-        'Каусер' => ['route_id' => 4, 'bus_id' => 4, 'vehicle_code' => '4', 'pricing_zone' => 'Zone 1', 'students' => 14],
-        'Эль Ахья' => ['route_id' => 5, 'bus_id' => 5, 'vehicle_code' => '5', 'pricing_zone' => 'Zone 3', 'students' => 12],
+        'Арабия' => ['vehicle_code' => '1', 'pricing_zone' => 'Zone 2', 'students' => 13],
+        'Бествэй' => ['vehicle_code' => '2', 'pricing_zone' => null, 'students' => 12],
+        'Бритиш' => ['vehicle_code' => '3', 'pricing_zone' => null, 'students' => 13],
+        'Каусер' => ['vehicle_code' => '4', 'pricing_zone' => 'Zone 1', 'students' => 14],
+        'Эль Ахья' => ['vehicle_code' => '5', 'pricing_zone' => 'Zone 3', 'students' => 12],
     ];
 
     public function __construct(
         private TransportImportPreviewService $workbooks,
         private TransportAssignmentService $assignments,
+        private MasterStudentImportService $masterStudents,
     ) {}
 
     public function defaultPaths(): array
@@ -42,36 +45,28 @@ class RealStudentTransportAssignmentBootstrapService
         return array_values($paths);
     }
 
-    public function preview(array $paths = []): array
+    public function preview(array $paths = [], ?string $masterPath = null): array
     {
-        return $this->result('PREVIEW', $this->plan($paths ?: $this->defaultPaths()));
+        return $this->result('PREVIEW', $this->plan($paths ?: $this->defaultPaths(), $masterPath));
     }
 
-    public function apply(User $actor, array $paths = []): array
+    public function apply(User $actor, array $paths = [], ?string $masterPath = null): array
     {
         abort_unless($actor->isActive() && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
-        return DB::transaction(function () use ($actor, $paths): array {
-            $plan = $this->plan($paths ?: $this->defaultPaths());
+        return DB::transaction(function () use ($actor, $paths, $masterPath): array {
+            $plan = $this->plan($paths ?: $this->defaultPaths(), $masterPath);
             $created = 0;
-
-            foreach ($plan as $item) {
+            foreach ($plan['current'] as $item) {
                 if ($item['assignment_exists']) {
                     continue;
                 }
-
-                $this->assignments->assign(
-                    Enrollment::findOrFail($item['enrollment_id']),
-                    TransportRoute::findOrFail($item['transport_route_id']),
-                    Bus::findOrFail($item['bus_id']),
-                    [
-                        'pickup_point' => $item['pickup_point'],
-                        'effective_from' => self::EFFECTIVE_FROM,
-                        'effective_to' => null,
-                        'change_reason' => 'Controlled real transport bootstrap: '.$item['source_key'],
-                    ],
-                    $actor,
-                );
+                $enrollment = $this->resolveEnrollmentForApply($item);
+                [$route, $bus] = $this->resolveCatalogForApply($item);
+                $this->assignments->assign($enrollment, $route, $bus, [
+                    'pickup_point' => $item['pickup_point'], 'effective_from' => self::EFFECTIVE_FROM,
+                    'effective_to' => null, 'change_reason' => $item['source_trace'],
+                ], $actor);
                 $created++;
             }
 
@@ -79,137 +74,187 @@ class RealStudentTransportAssignmentBootstrapService
         });
     }
 
-    private function plan(array $paths): Collection
+    private function plan(array $paths, ?string $masterPath): array
     {
         if (count($paths) !== 5) {
             throw ValidationException::withMessages(['sources' => 'Expected exactly five approved XLSX source files.']);
         }
-
         $all = collect($paths)->flatMap(fn (string $path) => $this->workbooks->parseWorkbook($path));
         $types = $all->map(fn (array $row) => $this->workbooks->classify($row));
-        $typeCounts = $types->countBy();
-        if ($all->count() !== 75 || $typeCounts->get('STUDENT', 0) !== 64
-            || $typeCounts->get('STAFF', 0) !== 11 || $typeCounts->get('UNKNOWN', 0) !== 0) {
+        $counts = $types->countBy();
+        if ($all->count() !== 75 || $counts->get('STUDENT', 0) !== 64 || $counts->get('STAFF', 0) !== 11 || $counts->get('UNKNOWN', 0) !== 0) {
             throw ValidationException::withMessages(['sources' => 'Expected exactly 64 student rows, 11 staff rows, and no unknown rows.']);
         }
-
         $rows = $all->zip($types)->filter(fn (Collection $pair) => $pair[1] === 'STUDENT')->map(fn (Collection $pair) => $pair[0])->values();
-        $routeCounts = $rows->countBy(fn (array $row) => $this->canonical((string) $row['route']));
         foreach (self::ROUTES as $name => $mapping) {
-            if ($routeCounts->get($name, 0) !== $mapping['students']) {
-                throw ValidationException::withMessages(['sources' => "Route {$name} must contain exactly {$mapping['students']} student rows."]);
+            if ($rows->filter(fn ($row) => $this->canonical($row['route']) === $name)->count() !== $mapping['students']) {
+                throw ValidationException::withMessages(['sources' => "Route {$name} has an unexpected student count."]);
             }
         }
-        if ($routeCounts->count() !== count(self::ROUTES)) {
-            throw ValidationException::withMessages(['sources' => 'An unapproved route entered the student assignment flow.']);
-        }
 
-        $plan = $rows->map(function (array $row): array {
-            $routeName = $this->canonical((string) $row['route']);
-            $mapping = self::ROUTES[$routeName] ?? null;
-            if (! $mapping) {
-                throw ValidationException::withMessages(['route' => "No approved mapping for {$routeName}."]);
-            }
+        $identities = $this->studentIdentityPlan($masterPath);
+        $current = collect();
+        $history = collect();
+        foreach ($rows as $row) {
+            $routeName = $this->canonical($row['route']);
+            $sourceKey = $this->sourceKey($row);
+            $identity = $this->resolveIdentity($identities, $row['raw_full_name']);
+            if ($row['raw_full_name'] === 'Денисенко Александра' && $routeName === 'Бритиш') {
+                $history->push($row + [
+                    'source_key' => $sourceKey, 'student_planning_key' => $identity['planning_key'],
+                    'canonical_name' => $identity['canonical_name'], 'route' => $routeName,
+                    'assignment_semantics' => 'HISTORICAL_SOURCE_EVIDENCE', 'current' => false,
+                    'history_reason' => 'Confirmed historical Бритиш evidence; current route is Эль Ахья',
+                ]);
 
-            $sourceKey = hash('sha256', json_encode([
-                $row['source_file'], $row['source_sheet'], $row['source_row'], $row['raw_full_name'],
-            ], JSON_UNESCAPED_UNICODE));
-            $imports = StudentBootstrapImport::query()->where('source_key', $sourceKey)->get();
-            if ($imports->count() !== 1) {
-                throw ValidationException::withMessages(['source_key' => "Source row {$row['source_file']}:{$row['source_row']} has no unique bootstrap metadata."]);
+                continue;
             }
-            $import = $imports->first();
-            if ($import->source_file !== $row['source_file'] || $import->source_sheet !== $row['source_sheet']
-                || (int) $import->source_row !== (int) $row['source_row'] || $import->raw_full_name !== $row['raw_full_name']
-                || $this->canonical($import->route) !== $routeName || $import->raw_pickup_point !== $row['raw_pickup_point']) {
-                throw ValidationException::withMessages(['source_key' => "Bootstrap metadata conflicts with source row {$row['source_file']}:{$row['source_row']}."]);
-            }
-
-            $enrollment = Enrollment::query()->with('student')->find($import->enrollment_id);
-            if (! $enrollment || ! $enrollment->is_active || $enrollment->status !== 'active'
-                || (int) $enrollment->academic_year_id !== self::TARGET_YEAR_ID
-                || (int) $enrollment->student_id !== (int) $import->student_id || ! $enrollment->student) {
-                throw ValidationException::withMessages(['enrollment' => "Inactive, missing, or conflicting enrollment for source key {$sourceKey}."]);
-            }
-
-            [$route, $bus] = $this->canonicalTransport($routeName, $mapping);
-            $overlaps = StudentTransportAssignment::query()->where('enrollment_id', $enrollment->id)
+            $catalog = $this->catalogReference($routeName);
+            $enrollmentId = $identity['enrollment_id'];
+            $overlaps = $enrollmentId ? StudentTransportAssignment::query()->where('enrollment_id', $enrollmentId)
                 ->whereDate('effective_from', '<=', '9999-12-31')
-                ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', self::EFFECTIVE_FROM))
-                ->get();
-            $exact = $overlaps->filter(fn (StudentTransportAssignment $assignment) => (int) $assignment->transport_route_id === $route->id
-                && (int) $assignment->bus_id === $bus->id
-                && $assignment->pickup_point === $row['raw_pickup_point']
-                && $assignment->effective_from?->toDateString() === self::EFFECTIVE_FROM
-                && $assignment->effective_to === null
-                && $assignment->status === StudentTransportAssignment::STATUS_ACTIVE
-                && $assignment->pricing_zone === $route->pricing_zone
-            );
+                ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', self::EFFECTIVE_FROM))->get() : collect();
+            $exact = $overlaps->filter(fn ($assignment) => $catalog['route_id'] && $catalog['bus_id']
+                && (int) $assignment->transport_route_id === (int) $catalog['route_id'] && (int) $assignment->bus_id === (int) $catalog['bus_id']
+                && $assignment->pickup_point === $row['raw_pickup_point'] && $assignment->effective_from?->toDateString() === self::EFFECTIVE_FROM
+                && $assignment->effective_to === null && $assignment->status === StudentTransportAssignment::STATUS_ACTIVE);
             if ($overlaps->count() > 1 || ($overlaps->isNotEmpty() && $exact->count() !== 1)) {
-                throw ValidationException::withMessages(['assignment' => "Conflicting overlapping assignment for enrollment {$enrollment->id}."]);
+                throw ValidationException::withMessages(['assignment' => "Conflicting assignment for {$identity['canonical_name']}."]);
             }
-
-            return [
-                'source_key' => $sourceKey,
-                'source_file' => $row['source_file'],
-                'source_sheet' => $row['source_sheet'],
-                'source_row' => (int) $row['source_row'],
-                'raw_full_name' => $row['raw_full_name'],
-                'student_id' => (int) $import->student_id,
-                'enrollment_id' => (int) $import->enrollment_id,
-                'route' => $routeName,
-                'transport_route_id' => $route->id,
-                'bus_id' => $bus->id,
-                'vehicle_code' => $bus->vehicle_code,
-                'pickup_point' => $row['raw_pickup_point'],
-                'effective_from' => self::EFFECTIVE_FROM,
-                'effective_to' => null,
-                'assignment_exists' => $exact->count() === 1,
-            ];
-        });
-
-        if ($plan->count() !== 64 || $plan->pluck('source_key')->unique()->count() !== 64
-            || $plan->pluck('enrollment_id')->unique()->count() !== 64) {
-            throw ValidationException::withMessages(['bootstrap' => 'Expected 64 unique source keys and enrollments.']);
+            $trace = 'Authoritative master transport: '.$sourceKey;
+            $current->push($row + $identity + $catalog + [
+                'source_key' => $sourceKey, 'student_planning_key' => $identity['planning_key'],
+                'route' => $routeName, 'pickup_point' => $row['raw_pickup_point'],
+                'effective_from' => self::EFFECTIVE_FROM, 'effective_to' => null, 'current' => true,
+                'assignment_semantics' => 'CURRENT', 'source_trace' => $trace, 'assignment_exists' => $exact->count() === 1,
+            ]);
         }
-
+        if ($current->count() !== 63 || $current->pluck('student_planning_key')->unique()->count() !== 63 || $history->count() !== 1) {
+            throw ValidationException::withMessages(['identity' => 'Expected 63 unique current identities and one approved historical Денисенко row.']);
+        }
         foreach (self::ROUTES as $name => $mapping) {
-            $existing = StudentTransportAssignment::query()->where('bus_id', $mapping['bus_id'])
-                ->whereDate('effective_from', '<=', '2027-06-30')
-                ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', self::EFFECTIVE_FROM))->count();
-            $new = $plan->where('route', $name)->where('assignment_exists', false)->count();
-            if ($existing + $new > 14) {
-                throw ValidationException::withMessages(['capacity' => "Approved plan would exceed 14 student seats on {$name}."]);
+            if ($current->where('route', $name)->count() > 14) {
+                throw ValidationException::withMessages(['capacity' => "Approved plan exceeds 14 student seats on {$name}."]);
             }
         }
 
-        return $plan;
+        return ['current' => $current, 'history' => $history];
     }
 
-    private function canonicalTransport(string $name, array $mapping): array
+    private function studentIdentityPlan(?string $masterPath): Collection
     {
-        $route = TransportRoute::find($mapping['route_id']);
-        $bus = Bus::find($mapping['bus_id']);
-        if (! $route || ! $bus || $this->canonical($route->name) !== $name
-            || $route->pricing_zone !== $mapping['pricing_zone'] || ! $route->is_active
-            || $bus->vehicle_code !== $mapping['vehicle_code'] || ! $bus->is_active
-            || (int) $bus->transport_route_id !== $route->id || (int) $bus->student_capacity !== 14) {
-            throw ValidationException::withMessages(['mapping' => "Canonical route/bus mapping conflicts for {$name}."]);
+        if ($masterPath !== null && is_file($masterPath)) {
+            $preview = $this->masterStudents->preview($masterPath);
+            if ($preview['review_required'] !== []) {
+                throw ValidationException::withMessages(['identity' => 'Master Student preview contains REVIEW_REQUIRED identities.']);
+            }
+
+            return collect($preview['rows'])->map(fn ($row) => [
+                'planning_key' => $row['planning_key'], 'master_source_key' => $row['source_key'],
+                'canonical_name' => $row['canonical_name'], 'aliases' => $row['source_aliases'],
+                'student_id' => $row['student_id'], 'enrollment_id' => $row['enrollment_id'],
+            ]);
+        }
+
+        // Portable legacy-test compatibility: exact existing identities only; never bootstrap metadata.
+        return Student::query()->whereNull('merged_into_student_id')->with(['enrollments' => fn ($q) => $q->where('academic_year_id', self::TARGET_YEAR_ID)->where('is_active', true)])->get()
+            ->groupBy(fn ($student) => $this->key($student->name))->map(function ($matches, $name) {
+                if ($matches->count() > 1 && $name !== $this->key('Денисенко Александра')) {
+                    throw ValidationException::withMessages(['identity' => "Existing Student identity {$name} is ambiguous."]);
+                }
+                $student = $matches->last();
+                if ($student->enrollments->count() !== 1) {
+                    throw ValidationException::withMessages(['identity' => "Existing Student {$student->name} has no unique active AY1 enrollment."]);
+                }
+
+                return ['planning_key' => 'existing-student:'.$student->id, 'master_source_key' => null,
+                    'canonical_name' => $student->name, 'aliases' => [], 'student_id' => $student->id,
+                    'enrollment_id' => $student->enrollments->first()->id];
+            })->values();
+    }
+
+    private function resolveIdentity(Collection $identities, string $sourceName): array
+    {
+        $key = $this->key($sourceName === 'Эльшейх Адам' ? 'Эльшейх Сухайб' : $sourceName);
+        $matches = $identities->filter(fn ($item) => $this->key($item['canonical_name']) === $key
+            || collect($item['aliases'])->contains(fn ($alias) => $this->key($alias) === $this->key($sourceName)))->values();
+        if ($matches->count() !== 1) {
+            throw ValidationException::withMessages(['identity' => "Transport identity {$sourceName} has {$matches->count()} canonical master matches."]);
+        }
+
+        return $matches->first();
+    }
+
+    private function catalogReference(string $name): array
+    {
+        $mapping = self::ROUTES[$name] ?? throw ValidationException::withMessages(['route' => "Unknown route {$name}."]);
+        $routes = TransportRoute::query()->get()->filter(fn ($route) => $this->key($route->name) === $this->key($name))->values();
+        $buses = Bus::query()->where('vehicle_code', $mapping['vehicle_code'])->get();
+        if ($routes->count() > 1 || $buses->count() > 1) {
+            throw ValidationException::withMessages(['mapping' => "Canonical catalog reference {$name} is ambiguous."]);
+        }
+        $route = $routes->first();
+        $bus = $buses->first();
+        if ($route && (! $route->is_active || $route->pricing_zone !== $mapping['pricing_zone'])) {
+            throw ValidationException::withMessages(['mapping' => "Canonical route {$name} conflicts."]);
+        }
+        if ($bus && (! $bus->is_active || (int) $bus->student_capacity !== 14 || (int) $bus->passenger_capacity !== 15
+            || ($route && (int) $bus->transport_route_id !== (int) $route->id))) {
+            throw ValidationException::withMessages(['mapping' => "Canonical bus {$mapping['vehicle_code']} conflicts."]);
+        }
+
+        return ['route_planning_key' => 'route:'.$name, 'bus_planning_key' => 'bus:'.$mapping['vehicle_code'],
+            'transport_route_id' => $route?->id, 'route_id' => $route?->id, 'bus_id' => $bus?->id,
+            'vehicle_code' => $mapping['vehicle_code'], 'pricing_zone' => $mapping['pricing_zone'],
+            'catalog_status' => $route && $bus ? 'REUSE' : 'PLANNED'];
+    }
+
+    private function resolveEnrollmentForApply(array $item): Enrollment
+    {
+        if ($item['master_source_key']) {
+            $meta = MasterStudentImport::query()->where('source_key', $item['master_source_key'])->lockForUpdate()->first();
+            if (! $meta?->enrollment_id || ! $meta->enrollment?->is_active) {
+                throw ValidationException::withMessages(['dependency' => 'Master Student and formal enrollment must be applied before Transport assignments.']);
+            }
+
+            return $meta->enrollment;
+        }
+
+        return Enrollment::query()->lockForUpdate()->findOrFail($item['enrollment_id']);
+    }
+
+    private function resolveCatalogForApply(array $item): array
+    {
+        $routes = TransportRoute::query()->lockForUpdate()->get()->filter(fn ($route) => $this->key($route->name) === $this->key($item['route']))->values();
+        if ($routes->count() !== 1) {
+            throw ValidationException::withMessages(['dependency' => 'Canonical route must be uniquely applied before assignments.']);
+        }
+        $route = $routes->first();
+        $bus = Bus::query()->where('vehicle_code', $item['vehicle_code'])->lockForUpdate()->sole();
+        if ((int) $bus->transport_route_id !== (int) $route->id) {
+            throw ValidationException::withMessages(['dependency' => 'Canonical route/bus catalog must be applied before assignments.']);
         }
 
         return [$route, $bus];
     }
 
-    private function result(string $mode, Collection $plan): array
+    private function result(string $mode, array $plan): array
     {
-        return [
-            'mode' => $mode,
-            'expected_assignments' => 64,
-            'new_assignments' => $plan->where('assignment_exists', false)->count(),
-            'existing_assignments' => $plan->where('assignment_exists', true)->count(),
-            'by_route' => $plan->groupBy('route')->map->count()->all(),
-            'rows' => $plan->values()->all(),
-        ];
+        $current = $plan['current'];
+
+        return ['mode' => $mode, 'expected_assignments' => 63, 'new_assignments' => $current->where('assignment_exists', false)->count(),
+            'existing_assignments' => $current->where('assignment_exists', true)->count(), 'by_route' => $current->countBy('route')->all(),
+            'historical_evidence' => $plan['history']->values()->all(), 'rows' => $current->values()->all()];
+    }
+
+    private function sourceKey(array $row): string
+    {
+        return hash('sha256', json_encode([$row['source_file'], $row['source_sheet'], $row['source_row'], $row['raw_full_name']], JSON_UNESCAPED_UNICODE));
+    }
+
+    private function key(string $value): string
+    {
+        return mb_strtolower(str_replace('ё', 'е', trim(preg_replace('/\s+/u', ' ', $this->canonical($value)))));
     }
 
     private function canonical(string $value): string

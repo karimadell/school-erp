@@ -10,6 +10,7 @@ class RealStudentTransportAssignmentBootstrap extends Command
 {
     protected $signature = 'transport:real-student-assignments
         {--path=* : Approved transport XLSX path; defaults to storage/app/transport-import/*.xlsx}
+        {--master-path= : Authoritative master Student XLSX path}
         {--apply : Explicitly create assignments}
         {--actor-id= : Authorized active user recorded as assignment creator}';
 
@@ -25,9 +26,9 @@ class RealStudentTransportAssignmentBootstrap extends Command
                 if (! $actorId || ! ($actor = User::query()->where('is_active', true)->find($actorId))) {
                     throw new \InvalidArgumentException('--apply requires a valid active --actor-id.');
                 }
-                $result = $service->apply($actor, $paths);
+                $result = $service->apply($actor, $paths, $this->option('master-path') ?: app(\App\Services\MasterData\MasterStudentImportService::class)->defaultPath());
             } else {
-                $result = $service->preview($paths);
+                $result = $service->preview($paths, $this->option('master-path') ?: app(\App\Services\MasterData\MasterStudentImportService::class)->defaultPath());
             }
 
             $this->table(['Metric', 'Value'], collect($result)->except('rows')->map(fn ($value, $key) => [

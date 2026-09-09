@@ -62,7 +62,11 @@ class MasterStudentImportService
                 $enrollmentId = $item['enrollment_id'];
                 $listenerPlacementId = null;
                 if (in_array($item['action'], ['CREATE_ENROLLED', 'CREATE_LISTENER'], true)) {
-                    $student = Student::create(['name' => $item['raw_name'], 'status' => Student::STATUS_ACTIVE]);
+                    $student = Student::create([
+                        'name' => $item['canonical_name'],
+                        'preferred_name' => $item['preferred_name'],
+                        'status' => Student::STATUS_ACTIVE,
+                    ]);
                     $studentId = $student->id;
                     $this->audit($actor, 'master_student_created', $student);
                     $created++;
@@ -128,6 +132,15 @@ class MasterStudentImportService
                     $student->update(['name' => $item['raw_name']]);
                     AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_name_updated', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
                     $renamed++;
+                }
+                if ($studentId && $item['preferred_name'] !== null) {
+                    $student = Student::lockForUpdate()->findOrFail($studentId);
+                    if ($student->preferred_name !== $item['preferred_name']) {
+                        $old = $student->toArray();
+                        $student->update(['preferred_name' => $item['preferred_name']]);
+                        AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_preferred_name_confirmed', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
+                        $renamed++;
+                    }
                 }
                 MasterStudentImport::create(['source_key' => $item['source_key'], 'source_file' => $item['source_file'], 'source_sheet' => $item['source_sheet'], 'source_row' => $item['source_row'],
                     'raw_name' => $item['raw_name'], 'raw_class_group' => $item['raw_class_group'], 'attendance_marker' => $item['attendance_marker'], 'resolution_status' => $item['resolution_status'],
@@ -218,7 +231,11 @@ class MasterStudentImportService
             $finance = $matches->mapWithKeys(fn ($student) => [$student->id => $this->financeEvidence($student)])->all();
             $nameChange = $studentId ? trim((string) $matches->firstWhere('id', $studentId)?->name) !== $row['raw_name'] : false;
 
-            $item = $row + ['source_key' => $sourceKey, 'stage_id' => $stage, 'grade_id' => $grade, 'class_id' => $class, 'action' => $action, 'resolution_status' => $status, 'evidence' => $evidence,
+            $preferredName = $row['raw_name'] === 'Эльшейх Сухайб' ? 'Адам' : null;
+            $item = $row + ['source_key' => $sourceKey, 'planning_key' => 'master-student:'.$sourceKey,
+                'canonical_name' => $row['raw_name'], 'preferred_name' => $preferredName,
+                'source_aliases' => $preferredName ? [$preferredName, 'Эльшейх Адам'] : [],
+                'stage_id' => $stage, 'grade_id' => $grade, 'class_id' => $class, 'action' => $action, 'resolution_status' => $status, 'evidence' => $evidence,
                 'student_id' => $studentId, 'enrollment_id' => $enrollmentId, 'name_change' => $nameChange, 'already_imported' => (bool) $existing, 'source_data' => $row,
                 'finance_linked' => collect($finance)->contains(fn ($counts) => array_sum($counts) > 0), 'finance_evidence' => $finance];
             $item += $special;
@@ -322,12 +339,17 @@ class MasterStudentImportService
             $identityMatches = (int) $m->listenerPlacement->student_id === (int) $m->student_id && $m->enrollment_id === null
                 && (int) $m->listenerPlacement->academic_year_id === self::YEAR_ID && $m->listenerPlacement->status === 'active'
                 && (int) $m->listenerPlacement->stage_id === (int) $i['stage_id'] && (int) $m->listenerPlacement->grade_id === (int) $i['grade_id']
-                && (int) $m->listenerPlacement->class_id === (int) $i['class_id'] && $m->listenerPlacement->source_marker === 'БЗ';
+                && (int) $m->listenerPlacement->class_id === (int) $i['class_id'] && $m->listenerPlacement->source_marker === 'БЗ'
+                && $m->student->name === $i['canonical_name'] && $m->student->preferred_name === $i['preferred_name'];
         } elseif ($m->student && $m->enrollment) {
             $identityMatches = (int) $m->enrollment->student_id === (int) $m->student_id
                 && (int) $m->enrollment->academic_year_id === self::YEAR_ID && $m->enrollment->is_active
                 && (int) $m->enrollment->stage_id === (int) $i['stage_id'] && (int) $m->enrollment->grade_id === (int) $i['grade_id']
-                && (int) $m->enrollment->class_id === (int) $i['class_id'] && $m->enrollment->study_attendance_mode === $i['attendance_marker'];
+                && (int) $m->enrollment->class_id === (int) $i['class_id'] && $m->enrollment->study_attendance_mode === $i['attendance_marker']
+                && $m->student->name === $i['canonical_name'] && $m->student->preferred_name === $i['preferred_name'];
+        }
+        if ($i['raw_name'] === 'Эльшейх Сухайб') {
+            $identityMatches = $identityMatches && $m->student?->name === 'Эльшейх Сухайб' && $m->student?->preferred_name === 'Адам';
         }
         if ($m->source_file !== $i['source_file'] || $m->source_sheet !== $i['source_sheet'] || (int) $m->source_row !== $i['source_row'] || $m->raw_name !== $i['raw_name']
             || $m->raw_class_group !== $i['raw_class_group'] || $m->attendance_marker !== $i['attendance_marker'] || $m->resolution_status !== $i['resolution_status']

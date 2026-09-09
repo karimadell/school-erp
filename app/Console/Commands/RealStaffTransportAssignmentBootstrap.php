@@ -10,6 +10,7 @@ class RealStaffTransportAssignmentBootstrap extends Command
 {
     protected $signature = 'transport:real-staff-assignments
         {--path=* : Approved XLSX path; defaults to storage/app/transport-import/*.xlsx}
+        {--master-path= : Authoritative master Staff XLSX path}
         {--apply : Explicitly create resolved staff-passenger assignments}
         {--actor-id= : Authorized active user recorded as assignment creator}
         {--json : Print complete preview details}';
@@ -25,9 +26,9 @@ class RealStaffTransportAssignmentBootstrap extends Command
                 if (! $actorId || ! ($actor = User::query()->where('is_active', true)->find($actorId))) {
                     throw new \InvalidArgumentException('--apply requires a valid active --actor-id.');
                 }
-                $result = $service->apply($actor, $paths);
+                $result = $service->apply($actor, $paths, $this->option('master-path') ?: app(\App\Services\MasterData\MasterStaffImportService::class)->defaultPath());
             } else {
-                $result = $service->preview($paths);
+                $result = $service->preview($paths, $this->option('master-path') ?: app(\App\Services\MasterData\MasterStaffImportService::class)->defaultPath());
             }
             if ($this->option('json')) {
                 $this->line(json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));

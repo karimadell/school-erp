@@ -76,12 +76,11 @@ class RealStaffTransportAssignmentBootstrapTest extends TestCase
         $this->assertSame(11, $first['created_staff_members']);
         $this->assertSame(0, $second['created_assignments']);
         $this->assertSame(11, StaffMember::count());
-        $this->assertSame(11, StaffTransportBootstrapImport::count());
-        $this->assertSame(11, StaffTransportBootstrapImport::distinct('staff_member_id')->count('staff_member_id'));
+        $this->assertSame(0, StaffTransportBootstrapImport::count());
         $this->assertSame(0, StaffMember::whereNotNull('user_id')->count());
         $this->assertSame(11, VehicleStaffAssignment::count());
         $this->assertSame(11, VehicleStaffAssignment::where('role', 'staff_passenger')->count());
-        $this->assertSame(11, VehicleStaffAssignment::where('change_reason', 'like', 'Controlled real staff transport bootstrap:%')->count());
+        $this->assertSame(11, VehicleStaffAssignment::where('change_reason', 'like', 'Authoritative master staff transport:%')->count());
         $this->assertStringContainsString('  Staff stop Арабия 0  ', VehicleStaffAssignment::where('bus_id', 1)->oldest('id')->value('change_reason'));
         $this->assertSame($studentHash, $this->studentAssignmentHash());
         $after = $this->counts();

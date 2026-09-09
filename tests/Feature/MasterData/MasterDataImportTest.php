@@ -163,19 +163,86 @@ class MasterDataImportTest extends TestCase
         $this->assertSame($before, $this->counts());
     }
 
-    public function test_baseline_drift_fails_closed_without_writes(): void
+    public function test_missing_bootstrap_metadata_does_not_block_preview_or_write(): void
     {
-        StudentBootstrapImport::query()->firstOrFail()->delete();
+        StudentBootstrapImport::query()->delete();
         $before = $this->counts();
-
-        try {
-            app(MasterStudentImportService::class)->preview($this->studentPath);
-            $this->fail('Expected baseline rejection');
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            $this->assertArrayHasKey('baseline', $e->errors());
-        }
-
+        $preview = app(MasterStudentImportService::class)->preview($this->studentPath);
+        $this->assertSame(134, $preview['source_rows']);
+        $this->assertSame([], $preview['review_required']);
         $this->assertSame($before, $this->counts());
+    }
+
+    public function test_eighteen_existing_students_without_bootstrap_are_reconciled_deterministically(): void
+    {
+        StudentTransportAssignment::query()->delete();
+        StudentBootstrapImport::query()->delete();
+        Enrollment::query()->delete();
+        Student::query()->delete();
+        $rows = collect(app(MasterDataWorkbookParser::class)->students($this->studentPath))->take(18);
+        foreach ($rows as $row) {
+            Student::create(['name' => $row['raw_name'], 'status' => Student::STATUS_ACTIVE]);
+        }
+        $before = $this->counts();
+        $first = app(MasterStudentImportService::class)->preview($this->studentPath);
+        $second = app(MasterStudentImportService::class)->preview($this->studentPath);
+        $this->assertSame(18, $first['safe_existing_matches']);
+        $this->assertSame(116, $first['new_students']);
+        $this->assertSame($first, $second);
+        $this->assertSame($before, $this->counts());
+    }
+
+    public function test_finance_linked_exact_student_is_reused_and_ambiguous_finance_identity_is_review_required(): void
+    {
+        $row = app(MasterDataWorkbookParser::class)->students($this->studentPath)[0];
+        $student = Student::where('name', $row['raw_name'])->firstOrFail();
+        DB::table('invoices')->insert(['student_id' => $student->id, 'academic_year_id' => 1, 'customer_name' => $student->name, 'total_amount' => 100, 'subtotal_amount' => 100,
+            'paid_amount' => 0, 'remaining_amount' => 100, 'status' => 'unpaid', 'currency' => 'EGP', 'created_at' => now(), 'updated_at' => now()]);
+        $preview = app(MasterStudentImportService::class)->preview($this->studentPath);
+        $item = collect($preview['rows'])->firstWhere('raw_name', $row['raw_name']);
+        $this->assertSame($student->id, $item['student_id']);
+        $this->assertTrue($item['finance_linked']);
+        $this->assertSame(1, $item['finance_evidence'][$student->id]['invoices']);
+
+        Student::create(['name' => $row['raw_name'], 'status' => Student::STATUS_ACTIVE]);
+        $before = $this->counts();
+        $ambiguous = app(MasterStudentImportService::class)->preview($this->studentPath);
+        $review = collect($ambiguous['review_required'])->firstWhere('raw_name', $row['raw_name']);
+        $this->assertSame('REVIEW_REQUIRED', $review['action']);
+        $this->assertTrue($review['finance_linked']);
+        $this->assertSame($before, $this->counts());
+    }
+
+    public function test_staff_identity_and_catalog_preview_succeeds_without_buses_and_reuses_routes(): void
+    {
+        StudentTransportAssignment::query()->delete();
+        Bus::query()->delete();
+        TransportRoute::whereNotIn('name', ['Арабия', 'Бритиш', 'Каусер'])->delete();
+        $before = $this->counts();
+        $first = app(MasterStaffImportService::class)->preview($this->staffPath, $this->transportPaths);
+        $second = app(MasterStaffImportService::class)->preview($this->staffPath, $this->transportPaths);
+        $catalog = collect($first['transport_catalog']);
+        $this->assertSame(26, $first['new_staff_members']);
+        $this->assertSame(11, $first['transport_links_confirmed']);
+        $this->assertSame(0, $first['vehicle_staff_assignments_ready']);
+        $this->assertSame(5, $catalog->count());
+        $this->assertSame(3, $catalog->where('route_action', 'REUSE_ROUTE')->count());
+        $this->assertSame(2, $catalog->where('route_action', 'CREATE_ROUTE')->count());
+        $this->assertSame(5, $catalog->where('bus_action', 'CREATE_BUS')->count());
+        $this->assertSame($first, $second);
+        $this->assertSame($before, $this->counts());
+    }
+
+    public function test_transport_catalog_preview_enforces_student_and_passenger_capacity(): void
+    {
+        $path = sys_get_temp_dir().'/Трансфер_Арабия_'.bin2hex(random_bytes(3)).'.xlsx';
+        $rows = collect(range(1, 15))->map(fn ($i) => ["Ребенок {$i}", '1', 'Точка', '', ''])->all();
+        $rows[] = ['Егорова О.В.', 'сотр', 'Точка', '', ''];
+        $this->writeWorkbook($path, [['ФИО', 'Класс', 'Остановка', 'Телефон', 'Примечание']], $rows, 1);
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $this->expectExceptionMessage('exceeds 14 students / 15 passengers');
+        app(MasterStaffImportService::class)->preview($this->staffPath, [$path]);
     }
 
     public function test_staff_apply_rolls_back_on_failure(): void
@@ -217,7 +284,7 @@ class MasterDataImportTest extends TestCase
 
     private function counts(): array
     {
-        return ['students' => Student::count(), 'enrollments' => Enrollment::count(), 'listeners' => StudentListenerPlacement::count(), 'master_students' => MasterStudentImport::count(), 'staff' => StaffMember::count(), 'master_staff' => StaffMasterImport::count(), 'student_transport' => StudentTransportAssignment::count(), 'staff_transport' => VehicleStaffAssignment::count()] + $this->finance();
+        return ['students' => Student::count(), 'enrollments' => Enrollment::count(), 'listeners' => StudentListenerPlacement::count(), 'master_students' => MasterStudentImport::count(), 'staff' => StaffMember::count(), 'master_staff' => StaffMasterImport::count(), 'routes' => TransportRoute::count(), 'buses' => Bus::count(), 'student_transport' => StudentTransportAssignment::count(), 'staff_transport' => VehicleStaffAssignment::count()] + $this->finance();
     }
 
     private function finance(): array

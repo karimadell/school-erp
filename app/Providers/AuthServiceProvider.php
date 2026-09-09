@@ -7,6 +7,8 @@ use App\Models\Bus;
 use App\Models\ClassTeacher;
 use App\Models\Curriculum;
 use App\Models\Expense;
+use App\Models\ExpenseCategory;
+use App\Models\Payee;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
@@ -24,7 +26,9 @@ use App\Policies\AcademicYearPolicy;
 use App\Policies\BusPolicy;
 use App\Policies\ClassTeacherPolicy;
 use App\Policies\CurriculumPolicy;
+use App\Policies\ExpenseCategoryPolicy;
 use App\Policies\ExpensePolicy;
+use App\Policies\PayeePolicy;
 use App\Policies\FeePolicy;
 use App\Policies\FeePricePolicy;
 use App\Policies\InvoicePolicy;
@@ -71,6 +75,8 @@ class AuthServiceProvider extends ServiceProvider
         FeePrice::class => FeePricePolicy::class,
         Invoice::class => InvoicePolicy::class,
         Expense::class => ExpensePolicy::class,
+        ExpenseCategory::class => ExpenseCategoryPolicy::class,
+        Payee::class => PayeePolicy::class,
         LessonJournalEntry::class => LessonJournalEntryPolicy::class,
         StudentServiceSubscription::class => StudentServiceSubscriptionPolicy::class,
         TeacherAssignment::class => TeacherAssignmentPolicy::class,

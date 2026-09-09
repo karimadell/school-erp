@@ -100,6 +100,8 @@
                 ['label' => 'Кассовые смены', 'icon' => 'briefcase', 'route' => auth()->user()?->can('view cash sessions') ? 'dashboard.cash.sessions.index' : null, 'active' => 'dashboard.cash.sessions.*'],
                 ['label' => 'Кассовые счета', 'icon' => 'briefcase', 'route' => 'dashboard.cash.accounts', 'active' => 'dashboard.cash.accounts'],
                 ['label' => __('finance_uat.expenses'), 'icon' => 'trending_down', 'href' => (Route::has('filament.admin.resources.expenses.index') && (auth()->user()?->can('manage expenses') ?? false)) ? route('filament.admin.resources.expenses.index') : null],
+                ['label' => __('expenses.nav_categories'), 'icon' => 'tag', 'href' => (Route::has('filament.admin.resources.expense-categories.index') && (auth()->user()?->can('manage expenses') ?? false)) ? route('filament.admin.resources.expense-categories.index') : null],
+                ['label' => __('expenses.nav_payees'), 'icon' => 'contacts', 'href' => (Route::has('filament.admin.resources.payees.index') && (auth()->user()?->can('manage expenses') ?? false)) ? route('filament.admin.resources.payees.index') : null],
                 ['label' => __('finance_uat.financial_reports'), 'icon' => 'pie_chart', 'route' => auth()->user()?->can('view cash reports') ? 'dashboard.cash.reports' : null, 'active' => 'dashboard.cash.reports'],
             ],
         ],

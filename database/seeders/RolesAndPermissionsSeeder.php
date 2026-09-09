@@ -72,6 +72,13 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage fees',
             'manage fee prices',
             'manage expenses',
+            // Expenses V1: narrower than 'manage expenses' (create/edit-draft/
+            // view), gating the sensitive draft->approved->paid->void
+            // transitions independently, the same separation-of-duties
+            // pattern as 'void invoices'/'refund payments' above.
+            'approve expenses',
+            'post expenses',
+            'void expenses',
             'manage student service subscriptions',
             'override service prices',
             'view student balances',
@@ -173,6 +180,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage fees',
             'manage fee prices',
             'manage expenses',
+            'approve expenses',
+            'post expenses',
+            'void expenses',
             'manage student service subscriptions',
             'void invoices',
             'refund payments',

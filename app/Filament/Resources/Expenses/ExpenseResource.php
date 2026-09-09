@@ -5,6 +5,7 @@ namespace App\Filament\Resources\Expenses;
 use App\Filament\Resources\Expenses\Pages\CreateExpense;
 use App\Filament\Resources\Expenses\Pages\EditExpense;
 use App\Filament\Resources\Expenses\Pages\ListExpenses;
+use App\Filament\Resources\Expenses\Pages\ViewExpense;
 use App\Filament\Resources\Expenses\Schemas\ExpenseForm;
 use App\Filament\Resources\Expenses\Tables\ExpensesTable;
 use App\Models\Expense;
@@ -28,7 +29,7 @@ class ExpenseResource extends Resource
 
     protected static ?int $navigationSort = 40;
 
-    protected static ?string $recordTitleAttribute = 'title';
+    protected static ?string $recordTitleAttribute = 'reference_number';
 
     public static function form(Schema $schema): Schema
     {
@@ -52,6 +53,7 @@ class ExpenseResource extends Resource
         return [
             'index' => ListExpenses::route('/'),
             'create' => CreateExpense::route('/create'),
+            'view' => ViewExpense::route('/{record}'),
             'edit' => EditExpense::route('/{record}/edit'),
         ];
     }

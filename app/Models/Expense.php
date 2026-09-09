@@ -2,82 +2,217 @@
 
 namespace App\Models;
 
+use App\Services\Finance\ExpenseService;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
+use LogicException;
 
+/**
+ * Status workflow: draft -> approved -> paid, with void reachable only from
+ * draft/approved (a paid expense's ledger effect is never reversed or
+ * mutated in this version — see ExpenseService::void()).
+ *
+ * Backward compatibility: status defaults to 'paid' (see $attributes
+ * below). Any Expense::create() call that omits status — every pre-existing
+ * caller and regression test uses this shape — behaves exactly like the
+ * original unconditional-post hook: it posts to the cash ledger immediately,
+ * exactly once. New callers (the Filament create form) opt into the review
+ * workflow by creating with status = STATUS_DRAFT explicitly.
+ *
+ * Posting itself lives in ExpenseService::postToLedger(), which is
+ * idempotent (row lock + existence check + the unique constraint on
+ * cash_transactions.expense_id as a database-level backstop). This model's
+ * hooks only decide *when* to call it — on creation for the legacy
+ * immediate-paid path, and on any transition into 'paid' for the explicit
+ * approve/pay workflow.
+ */
 class Expense extends Model
 {
+    const STATUS_DRAFT = 'draft';
+
+    const STATUS_APPROVED = 'approved';
+
+    const STATUS_PAID = 'paid';
+
+    const STATUS_VOID = 'void';
 
     protected $fillable = [
-
+        'reference_number',
         'title',
         'amount',
         'category',
+        'expense_category_id',
+        'payee_id',
         'description',
+        'notes',
         'expense_date',
-        'cash_account_id'
+        'cash_account_id',
+        'payment_method',
+        'currency',
+        'external_reference',
+        'attachment_path',
+        'attachment_name',
+        'attachment_type',
+        'attachment_size',
+        'status',
+        'created_by',
+        'approved_by',
+        'approved_at',
+        'paid_by',
+        'paid_at',
+        'voided_by',
+        'voided_at',
+        'void_reason',
+    ];
 
+    protected $attributes = [
+        'status' => self::STATUS_PAID,
+        'currency' => 'EGP',
     ];
 
     protected $casts = [
-
-        'expense_date' => 'date'
-
+        'expense_date' => 'date',
+        'amount' => 'decimal:2',
+        'attachment_size' => 'integer',
+        'approved_at' => 'datetime',
+        'paid_at' => 'datetime',
+        'voided_at' => 'datetime',
     ];
+
+    public static function numberFor(int $id, int|string $year): string
+    {
+        return sprintf('EXP-%s-%06d', $year, $id);
+    }
+
+    /**
+     * Derives receipt/invoice attachment metadata from an already-stored
+     * private-disk path, for the Filament create/edit pages to merge into
+     * form data after FileUpload has moved the file.
+     */
+    public static function attachmentMetadataFrom(?string $path): array
+    {
+        if (! $path) {
+            return [];
+        }
+
+        $disk = Storage::disk(config('filesystems.uploads.private'));
+        if (! $disk->exists($path)) {
+            return [];
+        }
+
+        return [
+            'attachment_name' => basename($path),
+            'attachment_size' => $disk->size($path),
+            'attachment_type' => $disk->mimeType($path),
+        ];
+    }
 
     public function cashAccount()
     {
         return $this->belongsTo(CashAccount::class);
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Automatic Cash Transaction
-    |--------------------------------------------------------------------------
-    */
-
-    protected static function booted()
+    // expense_category_id is intentionally not named category() — the
+    // legacy free-text `category` column already occupies that attribute
+    // name, and colliding the two would make $expense->category ambiguous.
+    public function expenseCategory()
     {
-
-        static::created(function ($expense) {
-
-            // Phase 0 safety fix: the previous hook wrote type='expense', which
-            // is not a valid cash_transactions.type ('in','out') and was
-            // ignored by the balance hook, so expenses never reduced the cash
-            // account. Post a valid outgoing, expense-category transaction so
-            // the linked balance is decremented exactly once.
-            //
-            // Cash Operations Phase 1: attribute the movement to the
-            // currently open shift on this drawer, if any, so cash expenses
-            // correctly count against that session's expected closing cash
-            // (CashSession::cashOut()) — the same "- Cash Expenses" term the
-            // reconciliation formula already expects. Best-effort only: no
-            // open shift is required to record an expense (unchanged
-            // behaviour), it just won't be attributed to any session.
-            $account = $expense->cashAccount;
-            $cashSessionId = $account && $account->isCashDrawer()
-                ? app(\App\Services\Finance\CashSessionService::class)->activeFor($account)?->id
-                : null;
-
-            CashTransaction::create([
-
-                'type' => CashTransaction::TYPE_OUT,
-
-                'category' => CashTransaction::CATEGORY_EXPENSE,
-
-                'amount' => $expense->amount,
-
-                'cash_account_id' => $expense->cash_account_id,
-
-                'cash_session_id' => $cashSessionId,
-
-                'created_by' => auth()->id(),
-
-                'description' => 'Расход: ' . $expense->title
-
-            ]);
-
-        });
-
+        return $this->belongsTo(ExpenseCategory::class, 'expense_category_id');
     }
 
+    public function payee()
+    {
+        return $this->belongsTo(Payee::class);
+    }
+
+    public function cashTransaction()
+    {
+        return $this->hasOne(CashTransaction::class, 'expense_id');
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function approver()
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function payer()
+    {
+        return $this->belongsTo(User::class, 'paid_by');
+    }
+
+    public function voider()
+    {
+        return $this->belongsTo(User::class, 'voided_by');
+    }
+
+    public function isDraft(): bool
+    {
+        return $this->status === self::STATUS_DRAFT;
+    }
+
+    public function isApproved(): bool
+    {
+        return $this->status === self::STATUS_APPROVED;
+    }
+
+    public function isPaid(): bool
+    {
+        return $this->status === self::STATUS_PAID;
+    }
+
+    public function isVoid(): bool
+    {
+        return $this->status === self::STATUS_VOID;
+    }
+
+    protected static function booted(): void
+    {
+        static::creating(function (Expense $expense) {
+            $expense->created_by = $expense->created_by ?: auth()->id();
+        });
+
+        static::created(function (Expense $expense) {
+            if ($expense->reference_number === null) {
+                $expense->reference_number = self::numberFor(
+                    $expense->id,
+                    $expense->created_at?->format('Y') ?? now()->format('Y')
+                );
+                $expense->saveQuietly();
+            }
+
+            if ($expense->status === self::STATUS_PAID) {
+                app(ExpenseService::class)->postToLedger($expense);
+            }
+        });
+
+        // A paid or voided expense is terminal — no further mutation of any
+        // kind, mirroring CashSession's immutable-once-closed rule. Uses
+        // isDirty() (not a blanket block) so an incidental no-op save never
+        // throws; saveQuietly() (reference-number stamping, the paid_at
+        // stamp in ExpenseService::postToLedger) bypasses this entirely.
+        static::saving(function (Expense $expense) {
+            if (
+                $expense->exists
+                && $expense->isDirty()
+                && in_array($expense->getOriginal('status'), [self::STATUS_PAID, self::STATUS_VOID], true)
+            ) {
+                throw new LogicException("Расход в статусе «{$expense->getOriginal('status')}» нельзя изменить.");
+            }
+        });
+
+        static::updated(function (Expense $expense) {
+            if ($expense->wasChanged('status') && $expense->status === self::STATUS_PAID) {
+                app(ExpenseService::class)->postToLedger($expense->fresh());
+            }
+        });
+
+        static::deleting(function () {
+            throw new LogicException('Финансовые расходы нельзя удалять.');
+        });
+    }
 }

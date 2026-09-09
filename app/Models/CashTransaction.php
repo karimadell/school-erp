@@ -52,6 +52,7 @@ class CashTransaction extends Model
         'invoice_id',
         'invoice_payment_id',
         'teacher_salary_id',
+        'expense_id',
         'amount',
         'type',
         'category', // 🔥 جديد
@@ -106,6 +107,11 @@ class CashTransaction extends Model
     public function payroll()
     {
         return $this->belongsTo(TeacherSalary::class, 'teacher_salary_id');
+    }
+
+    public function expense()
+    {
+        return $this->belongsTo(Expense::class, 'expense_id');
     }
 
     /*

@@ -77,8 +77,11 @@ final class MasterDataReconciliationApplyService
 
     private function lockBaseline(): void
     {
-        if (DB::getDriverName() !== 'pgsql') {
+        if (DB::getDriverName() === 'sqlite' && app()->environment('testing')) {
             return;
+        }
+        if (DB::getDriverName() !== 'pgsql') {
+            throw new \RuntimeException('Atomic master-data reconciliation APPLY requires PostgreSQL table locking.');
         }
         foreach (self::LOCK_TABLES as $table) {
             DB::statement("LOCK TABLE {$table} IN SHARE ROW EXCLUSIVE MODE");

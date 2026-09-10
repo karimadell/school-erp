@@ -385,6 +385,7 @@ class MasterDataImportTest extends TestCase
         $this->assertSame($before, $this->counts());
         $this->assertSame($first->planHash, $second->planHash);
         $this->assertSame(7, app(WorkbookLoader::class)->physicalLoadCount());
+        $this->assertCount(7, $first->sourceHashes);
         $this->assertSame(134, $first->summary()['master_students']);
         $this->assertSame(63, $first->summary()['new_student_assignments']);
         $this->assertSame(11, $first->summary()['new_staff_assignments']);
@@ -491,6 +492,8 @@ class MasterDataImportTest extends TestCase
         $this->assertSame(5, Bus::count());
         $this->assertSame(63, StudentTransportAssignment::count());
         $this->assertSame(11, VehicleStaffAssignment::count());
+        $this->assertSame(134, MasterStudentImport::count());
+        $this->assertSame(26, StaffMasterImport::count());
         $this->assertLessThan(60, $result['transaction_seconds']);
 
         // A command/app lifecycle owns one immutable loader. A new scope models
@@ -498,7 +501,11 @@ class MasterDataImportTest extends TestCase
         app()->forgetScopedInstances();
         $next = app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths)->summary();
         $this->assertSame(0, $next['new_students']);
+        $this->assertSame(0, $next['new_enrollments']);
+        $this->assertSame(0, $next['new_listeners']);
+        $this->assertSame(0, $next['new_student_metadata']);
         $this->assertSame(0, $next['new_staff']);
+        $this->assertSame(0, $next['new_staff_metadata']);
         $this->assertSame(0, $next['new_routes']);
         $this->assertSame(0, $next['new_buses']);
         $this->assertSame(0, $next['new_student_assignments']);
@@ -563,7 +570,7 @@ class MasterDataImportTest extends TestCase
 
     private function counts(): array
     {
-        return ['students' => Student::count(), 'enrollments' => Enrollment::count(), 'listeners' => StudentListenerPlacement::count(), 'master_students' => MasterStudentImport::count(), 'staff' => StaffMember::count(), 'master_staff' => StaffMasterImport::count(), 'routes' => TransportRoute::count(), 'buses' => Bus::count(), 'student_transport' => StudentTransportAssignment::count(), 'staff_transport' => VehicleStaffAssignment::count()] + $this->finance();
+        return ['students' => Student::count(), 'enrollments' => Enrollment::count(), 'listeners' => StudentListenerPlacement::count(), 'master_students' => MasterStudentImport::count(), 'staff' => StaffMember::count(), 'master_staff' => StaffMasterImport::count(), 'routes' => TransportRoute::count(), 'buses' => Bus::count(), 'student_transport' => StudentTransportAssignment::count(), 'staff_transport' => VehicleStaffAssignment::count(), 'audit_logs' => AuditLog::count()] + $this->finance();
     }
 
     private function finance(): array

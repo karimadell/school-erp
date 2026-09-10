@@ -40,115 +40,129 @@ class MasterStudentImportService
     {
         abort_unless($actor->isActive() && $actor->can('manage students') && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
-        return DB::transaction(function () use ($actor, $path) {
-            $plan = $this->plan($path ?? $this->defaultPath());
-            if ($plan->where('action', 'REVIEW_REQUIRED')->isNotEmpty()) {
-                throw ValidationException::withMessages(['identity' => 'Master student apply is blocked by REVIEW_REQUIRED identities.']);
-            }
-            $created = $enrolled = $listeners = $corrected = $renamed = $merged = $transportEnded = 0;
-            foreach ($plan as $item) {
-                $locator = MasterStudentImport::where('source_file', $item['source_file'])
-                    ->where('source_sheet', $item['source_sheet'])->where('source_row', $item['source_row'])->lockForUpdate()->first();
-                if ($locator && $locator->source_key !== $item['source_key']) {
-                    throw ValidationException::withMessages(['source' => 'Master student source row changed after import.']);
-                }
-                $meta = MasterStudentImport::where('source_key', $item['source_key'])->lockForUpdate()->first();
-                if ($meta) {
-                    $this->assertMetadata($meta, $item);
+        $plan = $this->preparePlan($path);
 
-                    continue;
-                }
-                $studentId = $item['student_id'];
-                $enrollmentId = $item['enrollment_id'];
-                $listenerPlacementId = null;
-                if (in_array($item['action'], ['CREATE_ENROLLED', 'CREATE_LISTENER'], true)) {
-                    $student = Student::create([
-                        'name' => $item['canonical_name'],
-                        'preferred_name' => $item['preferred_name'],
-                        'status' => Student::STATUS_ACTIVE,
-                    ]);
-                    $studentId = $student->id;
-                    $this->audit($actor, 'master_student_created', $student);
-                    $created++;
-                    if ($item['action'] === 'CREATE_LISTENER') {
-                        $listener = StudentListenerPlacement::create(['student_id' => $student->id, 'academic_year_id' => self::YEAR_ID, 'stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id'], 'source_marker' => 'БЗ', 'status' => 'active', 'effective_from' => self::DATE]);
-                        $listenerPlacementId = $listener->id;
-                        $this->auditModel($actor, 'master_student_listener_created', $listener);
-                        $listeners++;
-                    } else {
-                        $enrollment = Enrollment::create(['student_id' => $student->id, 'academic_year_id' => self::YEAR_ID, 'enrollment_mode_id' => 1,
-                            'study_attendance_mode' => $item['attendance_marker'], 'stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id'],
-                            'academic_year' => AcademicYear::findOrFail(self::YEAR_ID)->name, 'enrollment_date' => self::DATE, 'enrolled_at' => self::DATE, 'status' => 'active', 'is_active' => true]);
-                        $enrollmentId = $enrollment->id;
-                        $this->audit($actor, 'master_enrollment_created', $enrollment);
-                        $enrolled++;
-                    }
-                } elseif (in_array($item['action'], ['UPDATE_ENROLLMENT', 'BLINOV_CORRECTION'], true)) {
-                    $enrollment = Enrollment::lockForUpdate()->findOrFail($enrollmentId);
-                    if ((int) $enrollment->student_id !== (int) $studentId || (int) $enrollment->academic_year_id !== self::YEAR_ID || ! $enrollment->is_active) {
-                        throw ValidationException::withMessages(['academic' => 'Planned academic update no longer targets the same active AY1 enrollment.']);
-                    }
-                    $old = $enrollment->toArray();
-                    $enrollment->update(['stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id']]);
-                    AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_placement_corrected', 'model' => Enrollment::class, 'model_id' => $enrollment->id, 'old_values' => $old, 'new_values' => $enrollment->fresh()->toArray()]);
-                    $corrected++;
-                } elseif ($item['action'] === 'ENROLL_EXISTING') {
-                    $student = Student::lockForUpdate()->findOrFail($studentId);
+        return DB::transaction(fn () => $this->persistPlan($actor, $plan));
+    }
+
+    public function preparePlan(?string $path = null): Collection
+    {
+        return $this->plan($path ?? $this->defaultPath());
+    }
+
+    /** Persist a previously validated plan. The caller owns the transaction. */
+    public function persistPlan(User $actor, Collection $plan): array
+    {
+        abort_unless($actor->isActive() && $actor->can('manage students') && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
+
+        if ($plan->where('action', 'REVIEW_REQUIRED')->isNotEmpty()) {
+            throw ValidationException::withMessages(['identity' => 'Master student apply is blocked by REVIEW_REQUIRED identities.']);
+        }
+        $created = $enrolled = $listeners = $corrected = $renamed = $merged = $transportEnded = 0;
+        $metadata = MasterStudentImport::query()->whereIn('source_key', $plan->pluck('source_key'))->lockForUpdate()->get()->keyBy('source_key');
+        $locators = MasterStudentImport::query()->whereIn('source_file', $plan->pluck('source_file')->unique())->lockForUpdate()->get()
+            ->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        foreach ($plan as $item) {
+            $locator = $locators->get($item['source_file']."\0".$item['source_sheet']."\0".$item['source_row']);
+            if ($locator && $locator->source_key !== $item['source_key']) {
+                throw ValidationException::withMessages(['source' => 'Master student source row changed after import.']);
+            }
+            $meta = $metadata->get($item['source_key']);
+            if ($meta) {
+                $this->assertMetadata($meta, $item);
+
+                continue;
+            }
+            $studentId = $item['student_id'];
+            $enrollmentId = $item['enrollment_id'];
+            $listenerPlacementId = null;
+            if (in_array($item['action'], ['CREATE_ENROLLED', 'CREATE_LISTENER'], true)) {
+                $student = Student::create([
+                    'name' => $item['canonical_name'],
+                    'preferred_name' => $item['preferred_name'],
+                    'status' => Student::STATUS_ACTIVE,
+                ]);
+                $studentId = $student->id;
+                $this->audit($actor, 'master_student_created', $student);
+                $created++;
+                if ($item['action'] === 'CREATE_LISTENER') {
+                    $listener = StudentListenerPlacement::create(['student_id' => $student->id, 'academic_year_id' => self::YEAR_ID, 'stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id'], 'source_marker' => 'БЗ', 'status' => 'active', 'effective_from' => self::DATE]);
+                    $listenerPlacementId = $listener->id;
+                    $this->auditModel($actor, 'master_student_listener_created', $listener);
+                    $listeners++;
+                } else {
                     $enrollment = Enrollment::create(['student_id' => $student->id, 'academic_year_id' => self::YEAR_ID, 'enrollment_mode_id' => 1,
                         'study_attendance_mode' => $item['attendance_marker'], 'stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id'],
                         'academic_year' => AcademicYear::findOrFail(self::YEAR_ID)->name, 'enrollment_date' => self::DATE, 'enrolled_at' => self::DATE, 'status' => 'active', 'is_active' => true]);
                     $enrollmentId = $enrollment->id;
                     $this->audit($actor, 'master_enrollment_created', $enrollment);
                     $enrolled++;
-                } elseif ($item['action'] === 'PLACE_EXISTING_LISTENER') {
-                    $student = Student::lockForUpdate()->findOrFail($studentId);
-                    $listener = StudentListenerPlacement::create(['student_id' => $student->id, 'academic_year_id' => self::YEAR_ID, 'stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id'], 'source_marker' => 'БЗ', 'status' => 'active', 'effective_from' => self::DATE]);
-                    $listenerPlacementId = $listener->id;
-                    $this->auditModel($actor, 'master_student_listener_created', $listener);
-                    $listeners++;
-                } elseif ($item['action'] === 'ELSHEIKH_RESOLUTION') {
-                    $student = Student::lockForUpdate()->findOrFail($studentId);
-                    $old = $student->toArray();
-                    $student->update(['name' => 'Эльшейх Сухайб', 'preferred_name' => 'Адам']);
-                    AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_identity_confirmed', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
-                    $renamed++;
-                } elseif ($item['action'] === 'DENISENKO_RESOLUTION') {
-                    $duplicate = Student::lockForUpdate()->findOrFail($item['duplicate_student_id']);
-                    $duplicateEnrollment = Enrollment::lockForUpdate()->findOrFail($item['duplicate_enrollment_id']);
-                    $oldStudent = $duplicate->toArray();
-                    $oldEnrollment = $duplicateEnrollment->toArray();
-                    $assignment = \App\Models\StudentTransportAssignment::findOrFail($item['duplicate_assignment_id']);
-                    $this->transportAssignments->end($assignment, self::DATE, $actor, 'Confirmed duplicate identity; canonical Transport route is Эль Ахья');
-                    $duplicateEnrollment->update(['is_active' => false, 'status' => 'withdrawn']);
-                    $duplicate->update(['merged_into_student_id' => $studentId, 'status' => 'suspended']);
-                    $this->auditChange($actor, 'master_duplicate_enrollment_merged', $duplicateEnrollment, $oldEnrollment);
-                    $this->auditChange($actor, 'master_student_identity_merged', $duplicate, $oldStudent);
-                    $merged++;
-                    $transportEnded++;
                 }
-                if ($studentId && $item['name_change'] && ! in_array($item['action'], ['ELSHEIKH_RESOLUTION'], true)) {
-                    $student = Student::lockForUpdate()->findOrFail($studentId);
-                    $old = $student->toArray();
-                    $student->update(['name' => $item['raw_name']]);
-                    AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_name_updated', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
-                    $renamed++;
+            } elseif (in_array($item['action'], ['UPDATE_ENROLLMENT', 'BLINOV_CORRECTION'], true)) {
+                $enrollment = Enrollment::lockForUpdate()->findOrFail($enrollmentId);
+                if ((int) $enrollment->student_id !== (int) $studentId || (int) $enrollment->academic_year_id !== self::YEAR_ID || ! $enrollment->is_active) {
+                    throw ValidationException::withMessages(['academic' => 'Planned academic update no longer targets the same active AY1 enrollment.']);
                 }
-                if ($studentId && $item['preferred_name'] !== null) {
-                    $student = Student::lockForUpdate()->findOrFail($studentId);
-                    if ($student->preferred_name !== $item['preferred_name']) {
-                        $old = $student->toArray();
-                        $student->update(['preferred_name' => $item['preferred_name']]);
-                        AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_preferred_name_confirmed', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
-                        $renamed++;
-                    }
-                }
-                MasterStudentImport::create(['source_key' => $item['source_key'], 'source_file' => $item['source_file'], 'source_sheet' => $item['source_sheet'], 'source_row' => $item['source_row'],
-                    'raw_name' => $item['raw_name'], 'raw_class_group' => $item['raw_class_group'], 'attendance_marker' => $item['attendance_marker'], 'resolution_status' => $item['resolution_status'],
-                    'resolution_evidence' => $item['evidence'], 'source_data' => $item['source_data'], 'student_id' => $studentId, 'enrollment_id' => $enrollmentId, 'listener_placement_id' => $listenerPlacementId]);
+                $old = $enrollment->toArray();
+                $enrollment->update(['stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id']]);
+                AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_placement_corrected', 'model' => Enrollment::class, 'model_id' => $enrollment->id, 'old_values' => $old, 'new_values' => $enrollment->fresh()->toArray()]);
+                $corrected++;
+            } elseif ($item['action'] === 'ENROLL_EXISTING') {
+                $student = Student::lockForUpdate()->findOrFail($studentId);
+                $enrollment = Enrollment::create(['student_id' => $student->id, 'academic_year_id' => self::YEAR_ID, 'enrollment_mode_id' => 1,
+                    'study_attendance_mode' => $item['attendance_marker'], 'stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id'],
+                    'academic_year' => AcademicYear::findOrFail(self::YEAR_ID)->name, 'enrollment_date' => self::DATE, 'enrolled_at' => self::DATE, 'status' => 'active', 'is_active' => true]);
+                $enrollmentId = $enrollment->id;
+                $this->audit($actor, 'master_enrollment_created', $enrollment);
+                $enrolled++;
+            } elseif ($item['action'] === 'PLACE_EXISTING_LISTENER') {
+                $student = Student::lockForUpdate()->findOrFail($studentId);
+                $listener = StudentListenerPlacement::create(['student_id' => $student->id, 'academic_year_id' => self::YEAR_ID, 'stage_id' => $item['stage_id'], 'grade_id' => $item['grade_id'], 'class_id' => $item['class_id'], 'source_marker' => 'БЗ', 'status' => 'active', 'effective_from' => self::DATE]);
+                $listenerPlacementId = $listener->id;
+                $this->auditModel($actor, 'master_student_listener_created', $listener);
+                $listeners++;
+            } elseif ($item['action'] === 'ELSHEIKH_RESOLUTION') {
+                $student = Student::lockForUpdate()->findOrFail($studentId);
+                $old = $student->toArray();
+                $student->update(['name' => 'Эльшейх Сухайб', 'preferred_name' => 'Адам']);
+                AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_identity_confirmed', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
+                $renamed++;
+            } elseif ($item['action'] === 'DENISENKO_RESOLUTION') {
+                $duplicate = Student::lockForUpdate()->findOrFail($item['duplicate_student_id']);
+                $duplicateEnrollment = Enrollment::lockForUpdate()->findOrFail($item['duplicate_enrollment_id']);
+                $oldStudent = $duplicate->toArray();
+                $oldEnrollment = $duplicateEnrollment->toArray();
+                $assignment = \App\Models\StudentTransportAssignment::findOrFail($item['duplicate_assignment_id']);
+                $this->transportAssignments->end($assignment, self::DATE, $actor, 'Confirmed duplicate identity; canonical Transport route is Эль Ахья');
+                $duplicateEnrollment->update(['is_active' => false, 'status' => 'withdrawn']);
+                $duplicate->update(['merged_into_student_id' => $studentId, 'status' => 'suspended']);
+                $this->auditChange($actor, 'master_duplicate_enrollment_merged', $duplicateEnrollment, $oldEnrollment);
+                $this->auditChange($actor, 'master_student_identity_merged', $duplicate, $oldStudent);
+                $merged++;
+                $transportEnded++;
             }
+            if ($studentId && $item['name_change'] && ! in_array($item['action'], ['ELSHEIKH_RESOLUTION'], true)) {
+                $student = Student::lockForUpdate()->findOrFail($studentId);
+                $old = $student->toArray();
+                $student->update(['name' => $item['raw_name']]);
+                AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_name_updated', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
+                $renamed++;
+            }
+            if ($studentId && $item['preferred_name'] !== null) {
+                $student = Student::lockForUpdate()->findOrFail($studentId);
+                if ($student->preferred_name !== $item['preferred_name']) {
+                    $old = $student->toArray();
+                    $student->update(['preferred_name' => $item['preferred_name']]);
+                    AuditLog::create(['user_id' => $actor->id, 'action' => 'master_student_preferred_name_confirmed', 'model' => Student::class, 'model_id' => $student->id, 'old_values' => $old, 'new_values' => $student->fresh()->toArray()]);
+                    $renamed++;
+                }
+            }
+            MasterStudentImport::create(['source_key' => $item['source_key'], 'source_file' => $item['source_file'], 'source_sheet' => $item['source_sheet'], 'source_row' => $item['source_row'],
+                'raw_name' => $item['raw_name'], 'raw_class_group' => $item['raw_class_group'], 'attendance_marker' => $item['attendance_marker'], 'resolution_status' => $item['resolution_status'],
+                'resolution_evidence' => $item['evidence'], 'source_data' => $item['source_data'], 'student_id' => $studentId, 'enrollment_id' => $enrollmentId, 'listener_placement_id' => $listenerPlacementId]);
+        }
 
-            return $this->result('APPLY', $plan) + ['created_students' => $created, 'created_enrollments' => $enrolled, 'created_listeners' => $listeners, 'corrected_enrollments' => $corrected, 'updated_names' => $renamed, 'merged_students' => $merged, 'ended_transport_assignments' => $transportEnded];
-        });
+        return $this->result('APPLY', $plan) + ['created_students' => $created, 'created_enrollments' => $enrolled, 'created_listeners' => $listeners, 'corrected_enrollments' => $corrected, 'updated_names' => $renamed, 'merged_students' => $merged, 'ended_transport_assignments' => $transportEnded];
     }
 
     private function plan(string $path): Collection

@@ -52,29 +52,45 @@ class RealStaffTransportAssignmentBootstrapService
     {
         abort_unless($actor->isActive() && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
-        return DB::transaction(function () use ($actor, $paths, $masterPath): array {
-            $plan = $this->plan($paths ?: $this->defaultPaths(), $masterPath);
-            $created = $createdMembers = 0;
-            foreach ($plan as $item) {
-                if ($item['assignment_exists']) {
-                    continue;
-                }
-                $member = $this->resolveStaffForApply($item, $createdMembers);
-                $bus = Bus::query()->where('vehicle_code', $item['vehicle_code'])->lockForUpdate()->sole();
-                $routes = TransportRoute::query()->lockForUpdate()->get()->filter(fn ($route) => $this->key($route->name) === $this->key($item['route']))->values();
-                if ($routes->count() !== 1) {
-                    throw ValidationException::withMessages(['dependency' => 'Canonical route must be uniquely applied before staff assignments.']);
-                }
-                $route = $routes->first();
-                if ((int) $bus->transport_route_id !== (int) $route->id) {
-                    throw ValidationException::withMessages(['dependency' => 'Canonical route/bus catalog must be applied before staff assignments.']);
-                }
-                $this->assignments->assign($bus, $member, $item['proposed_role'], self::EFFECTIVE_FROM, null, $item['weekdays'], $actor, $item['source_trace']);
-                $created++;
-            }
+        $plan = $this->preparePlan($paths, $masterPath);
 
-            return $this->result('APPLY', $plan) + ['created_staff_members' => $createdMembers, 'created_assignments' => $created];
-        });
+        return DB::transaction(fn (): array => $this->persistPlan($actor, $plan));
+    }
+
+    public function preparePlan(array $paths = [], ?string $masterPath = null): Collection
+    {
+        return $this->plan($paths ?: $this->defaultPaths(), $masterPath);
+    }
+
+    /** Persist a previously validated plan. The caller owns the transaction. */
+    public function persistPlan(User $actor, Collection $plan): array
+    {
+        abort_unless($actor->isActive() && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
+
+        $created = $createdMembers = 0;
+        $imports = StaffMasterImport::query()->with('staffMember')->whereIn('source_key', $plan->pluck('master_source_key')->filter()->unique())->lockForUpdate()->get()->keyBy('source_key');
+        $members = StaffMember::query()->whereIn('display_name', $plan->pluck('display_name')->unique())->lockForUpdate()->get()->groupBy('display_name');
+        $buses = Bus::query()->whereIn('vehicle_code', $plan->pluck('vehicle_code')->unique())->lockForUpdate()->get()->keyBy('vehicle_code');
+        $routes = TransportRoute::query()->lockForUpdate()->get()->groupBy(fn ($route) => $this->key($route->name));
+        foreach ($plan as $item) {
+            if ($item['assignment_exists']) {
+                continue;
+            }
+            $member = $this->resolveStaffForApply($item, $createdMembers, $imports, $members);
+            $bus = $buses->get($item['vehicle_code']) ?? throw ValidationException::withMessages(['dependency' => 'Canonical bus disappeared before staff assignment persistence.']);
+            $routeMatches = $routes->get($this->key($item['route']), collect());
+            if ($routeMatches->count() !== 1) {
+                throw ValidationException::withMessages(['dependency' => 'Canonical route must be uniquely applied before staff assignments.']);
+            }
+            $route = $routeMatches->first();
+            if ((int) $bus->transport_route_id !== (int) $route->id) {
+                throw ValidationException::withMessages(['dependency' => 'Canonical route/bus catalog must be applied before staff assignments.']);
+            }
+            $this->assignments->assignWithinTransaction($bus, $member, $item['proposed_role'], self::EFFECTIVE_FROM, null, $item['weekdays'], $actor, $item['source_trace']);
+            $created++;
+        }
+
+        return $this->result('APPLY', $plan) + ['created_staff_members' => $createdMembers, 'created_assignments' => $created];
     }
 
     private function plan(array $paths, ?string $masterPath): Collection
@@ -171,17 +187,17 @@ class RealStaffTransportAssignmentBootstrapService
             'route_id' => $route?->id, 'bus_id' => $bus?->id, 'vehicle_code' => $vehicleCode, 'catalog_status' => $route && $bus ? 'REUSE' : 'PLANNED'];
     }
 
-    private function resolveStaffForApply(array $item, int &$created): StaffMember
+    private function resolveStaffForApply(array $item, int &$created, Collection $imports, Collection $members): StaffMember
     {
         if ($item['master_source_key']) {
-            $meta = StaffMasterImport::query()->where('source_key', $item['master_source_key'])->lockForUpdate()->first();
+            $meta = $imports->get($item['master_source_key']);
             if (! $meta?->staffMember?->is_active) {
                 throw ValidationException::withMessages(['dependency' => 'Master Staff must be applied before staff assignments.']);
             }
 
             return $meta->staffMember;
         }
-        $matches = StaffMember::query()->where('display_name', $item['display_name'])->lockForUpdate()->get();
+        $matches = $members->get($item['display_name'], collect());
         if ($matches->count() > 1) {
             throw ValidationException::withMessages(['identity' => 'Staff identity became ambiguous during apply.']);
         }

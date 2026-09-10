@@ -2,57 +2,58 @@
 
 namespace App\Providers;
 
-use Illuminate\Support\ServiceProvider;
-
-// Contracts / Services
 use App\Contracts\HolidayCalendar;
+use App\Models\Academic\Timetable as AcademicTimetable;
+// Contracts / Services
+use App\Models\AcademicCalendar;
+use App\Models\AcademicYearUnlock;
+use App\Models\Attendance;
+use App\Models\BellSchedule;
+use App\Models\BellSchedulePeriod;
+use App\Models\CalendarEvent;
+use App\Models\CashAccount;
+use App\Models\CashTransaction;
+use App\Models\Enrollment;
+use App\Models\Exam;
+use App\Models\LessonJournalEntry;
+// Models
+use App\Models\PhysicalClassroom;
+use App\Models\Quarter;
+use App\Models\Student;
+use App\Models\StudentGrade;
+use App\Models\StudentServiceSubscription;
+use App\Models\StudentSubjectEnrollment;
+use App\Models\TeacherAssignment;
+use App\Models\TimetableEntry;
+use App\Models\TimetableVersion;
+use App\Models\User;
+use App\Observers\AcademicYearLockObserver;
+use App\Observers\AuditObserver;
+use App\Observers\CurriculumValidationObserver;
+use App\Observers\ExamSnapshotObserver;
+use App\Observers\StudentSubjectEnrollmentValidationObserver;
+use App\Observers\TeacherAssignmentCurriculumObserver;
 use App\Services\CurriculumAwareTimetableConflictChecker;
 use App\Services\DatabaseHolidayCalendar;
+use App\Services\MasterData\WorkbookLoader;
 use App\Support\ClassConflictRule;
 use App\Support\CurriculumSubjectRule;
 use App\Support\CurriculumWeeklyHoursRule;
+// Observer
 use App\Support\DuplicateLessonConflictRule;
 use App\Support\RoomConflictRule;
 use App\Support\TeacherAssignmentRule;
 use App\Support\TeacherConflictRule;
 use App\Support\WorkingDayRule;
-
-// Models
-use App\Models\User;
-use App\Models\Student;
-use App\Models\CashAccount;
-use App\Models\CashTransaction;
-use App\Models\StudentServiceSubscription;
-use App\Models\TeacherAssignment;
-use App\Models\Enrollment;
-use App\Models\Attendance;
-use App\Models\Exam;
-use App\Models\StudentGrade;
-use App\Models\LessonJournalEntry;
-use App\Models\Quarter;
-use App\Models\AcademicYearUnlock;
-use App\Models\StudentSubjectEnrollment;
-use App\Models\AcademicCalendar;
-use App\Models\CalendarEvent;
-use App\Models\BellSchedule;
-use App\Models\BellSchedulePeriod;
-use App\Models\PhysicalClassroom;
-use App\Models\TimetableEntry;
-use App\Models\TimetableVersion;
-use App\Models\Academic\Timetable as AcademicTimetable;
-
-// Observer
-use App\Observers\AuditObserver;
-use App\Observers\AcademicYearLockObserver;
-use App\Observers\ExamSnapshotObserver;
-use App\Observers\CurriculumValidationObserver;
-use App\Observers\TeacherAssignmentCurriculumObserver;
-use App\Observers\StudentSubjectEnrollmentValidationObserver;
+use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        // One cache per request/command: source files are parsed once and never
+        // carried across long-lived worker lifecycles.
+        $this->app->scoped(WorkbookLoader::class, fn () => new WorkbookLoader);
         // D1 Phase 2: holiday infrastructure only — no call site consults
         // this yet. See App\Contracts\HolidayCalendar's doc comment.
         $this->app->bind(HolidayCalendar::class, DatabaseHolidayCalendar::class);
@@ -69,14 +70,14 @@ class AppServiceProvider extends ServiceProvider
         // was removed; the class itself remains as this one's parent.
         $this->app->bind(CurriculumAwareTimetableConflictChecker::class, function () {
             return new CurriculumAwareTimetableConflictChecker([
-                new WorkingDayRule(),
-                new CurriculumSubjectRule(),
-                new CurriculumWeeklyHoursRule(),
-                new TeacherAssignmentRule(),
-                new DuplicateLessonConflictRule(),
-                new TeacherConflictRule(),
-                new ClassConflictRule(),
-                new RoomConflictRule(),
+                new WorkingDayRule,
+                new CurriculumSubjectRule,
+                new CurriculumWeeklyHoursRule,
+                new TeacherAssignmentRule,
+                new DuplicateLessonConflictRule,
+                new TeacherConflictRule,
+                new ClassConflictRule,
+                new RoomConflictRule,
             ]);
         });
     }

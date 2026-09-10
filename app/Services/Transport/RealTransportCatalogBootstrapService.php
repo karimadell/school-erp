@@ -36,31 +36,41 @@ class RealTransportCatalogBootstrapService
 
     public function apply(): array
     {
-        $plan = $this->plan();
+        $plan = $this->preparePlan();
         $this->assertGuard($plan);
 
-        return DB::transaction(function () use ($plan): array {
-            $routes = 0;
-            $vehicles = 0;
+        return DB::transaction(fn (): array => $this->persistPlan($plan));
+    }
 
-            foreach ($plan as $item) {
-                $route = $this->resolveRoute($item);
-                if (! $item['route_exists']) {
-                    $routes++;
-                }
+    public function preparePlan(): Collection
+    {
+        return $this->plan();
+    }
 
-                $vehicle = $this->resolveVehicle($item, $route);
-                if (! $item['vehicle_exists']) {
-                    $vehicles++;
-                }
+    /** Persist a previously validated plan. The caller owns the transaction. */
+    public function persistPlan(Collection $plan): array
+    {
+        $this->assertGuard($plan);
+        $routes = 0;
+        $vehicles = 0;
+
+        foreach ($plan as $item) {
+            $route = $this->resolveRoute($item);
+            if (! $item['route_exists']) {
+                $routes++;
             }
 
-            return [
-                'mode' => 'APPLY',
-                'created_routes' => $routes,
-                'created_vehicles' => $vehicles,
-            ];
-        });
+            $vehicle = $this->resolveVehicle($item, $route);
+            if (! $item['vehicle_exists']) {
+                $vehicles++;
+            }
+        }
+
+        return [
+            'mode' => 'APPLY',
+            'created_routes' => $routes,
+            'created_vehicles' => $vehicles,
+        ];
     }
 
     private function plan(): Collection

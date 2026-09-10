@@ -54,24 +54,41 @@ class RealStudentTransportAssignmentBootstrapService
     {
         abort_unless($actor->isActive() && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
-        return DB::transaction(function () use ($actor, $paths, $masterPath): array {
-            $plan = $this->plan($paths ?: $this->defaultPaths(), $masterPath);
-            $created = 0;
-            foreach ($plan['current'] as $item) {
-                if ($item['assignment_exists']) {
-                    continue;
-                }
-                $enrollment = $this->resolveEnrollmentForApply($item);
-                [$route, $bus] = $this->resolveCatalogForApply($item);
-                $this->assignments->assign($enrollment, $route, $bus, [
-                    'pickup_point' => $item['pickup_point'], 'effective_from' => self::EFFECTIVE_FROM,
-                    'effective_to' => null, 'change_reason' => $item['source_trace'],
-                ], $actor);
-                $created++;
-            }
+        $plan = $this->preparePlan($paths, $masterPath);
 
-            return $this->result('APPLY', $plan) + ['created_assignments' => $created];
-        });
+        return DB::transaction(fn (): array => $this->persistPlan($actor, $plan));
+    }
+
+    public function preparePlan(array $paths = [], ?string $masterPath = null): array
+    {
+        return $this->plan($paths ?: $this->defaultPaths(), $masterPath);
+    }
+
+    /** Persist a previously validated plan. The caller owns the transaction. */
+    public function persistPlan(User $actor, array $plan): array
+    {
+        abort_unless($actor->isActive() && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
+
+        $created = 0;
+        $masterKeys = $plan['current']->pluck('master_source_key')->filter()->unique()->values();
+        $masterImports = MasterStudentImport::query()->with('enrollment')->whereIn('source_key', $masterKeys)->lockForUpdate()->get()->keyBy('source_key');
+        $enrollments = Enrollment::query()->whereIn('id', $plan['current']->pluck('enrollment_id')->filter()->unique())->lockForUpdate()->get()->keyBy('id');
+        $routes = TransportRoute::query()->lockForUpdate()->get()->groupBy(fn ($route) => $this->key($route->name));
+        $buses = Bus::query()->whereIn('vehicle_code', $plan['current']->pluck('vehicle_code')->unique())->lockForUpdate()->get()->keyBy('vehicle_code');
+        foreach ($plan['current'] as $item) {
+            if ($item['assignment_exists']) {
+                continue;
+            }
+            $enrollment = $this->resolveEnrollmentForApply($item, $masterImports, $enrollments);
+            [$route, $bus] = $this->resolveCatalogForApply($item, $routes, $buses);
+            $this->assignments->assignWithinTransaction($enrollment, $route, $bus, [
+                'pickup_point' => $item['pickup_point'], 'effective_from' => self::EFFECTIVE_FROM,
+                'effective_to' => null, 'change_reason' => $item['source_trace'],
+            ], $actor);
+            $created++;
+        }
+
+        return $this->result('APPLY', $plan) + ['created_assignments' => $created];
     }
 
     private function plan(array $paths, ?string $masterPath): array
@@ -209,10 +226,10 @@ class RealStudentTransportAssignmentBootstrapService
             'catalog_status' => $route && $bus ? 'REUSE' : 'PLANNED'];
     }
 
-    private function resolveEnrollmentForApply(array $item): Enrollment
+    private function resolveEnrollmentForApply(array $item, Collection $masterImports, Collection $enrollments): Enrollment
     {
         if ($item['master_source_key']) {
-            $meta = MasterStudentImport::query()->where('source_key', $item['master_source_key'])->lockForUpdate()->first();
+            $meta = $masterImports->get($item['master_source_key']);
             if (! $meta?->enrollment_id || ! $meta->enrollment?->is_active) {
                 throw ValidationException::withMessages(['dependency' => 'Master Student and formal enrollment must be applied before Transport assignments.']);
             }
@@ -220,17 +237,17 @@ class RealStudentTransportAssignmentBootstrapService
             return $meta->enrollment;
         }
 
-        return Enrollment::query()->lockForUpdate()->findOrFail($item['enrollment_id']);
+        return $enrollments->get($item['enrollment_id']) ?? throw ValidationException::withMessages(['dependency' => 'Existing enrollment disappeared before assignment persistence.']);
     }
 
-    private function resolveCatalogForApply(array $item): array
+    private function resolveCatalogForApply(array $item, Collection $routes, Collection $buses): array
     {
-        $routes = TransportRoute::query()->lockForUpdate()->get()->filter(fn ($route) => $this->key($route->name) === $this->key($item['route']))->values();
-        if ($routes->count() !== 1) {
+        $routeMatches = $routes->get($this->key($item['route']), collect());
+        if ($routeMatches->count() !== 1) {
             throw ValidationException::withMessages(['dependency' => 'Canonical route must be uniquely applied before assignments.']);
         }
-        $route = $routes->first();
-        $bus = Bus::query()->where('vehicle_code', $item['vehicle_code'])->lockForUpdate()->sole();
+        $route = $routeMatches->first();
+        $bus = $buses->get($item['vehicle_code']) ?? throw ValidationException::withMessages(['dependency' => 'Canonical bus disappeared before assignment persistence.']);
         if ((int) $bus->transport_route_id !== (int) $route->id) {
             throw ValidationException::withMessages(['dependency' => 'Canonical route/bus catalog must be applied before assignments.']);
         }

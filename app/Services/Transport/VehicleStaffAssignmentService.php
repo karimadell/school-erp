@@ -21,43 +21,48 @@ class VehicleStaffAssignmentService
     {
         abort_unless($actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
-        return DB::transaction(function () use ($bus, $staff, $role, $effectiveFrom, $effectiveTo, $weekdays, $actor, $reason) {
-            $bus = Bus::query()->lockForUpdate()->findOrFail($bus->id);
-            if (! $bus->is_active || ! $this->isActive($staff)) {
-                throw ValidationException::withMessages(['identity' => 'Транспорт и сотрудник должны быть активны.']);
-            }
-            if (! in_array($role, VehicleStaffAssignment::ROLES, true)) {
-                throw ValidationException::withMessages(['role' => 'Недопустимая транспортная роль.']);
-            }
-            $from = CarbonImmutable::parse($effectiveFrom)->startOfDay();
-            $to = filled($effectiveTo) ? CarbonImmutable::parse($effectiveTo)->startOfDay() : null;
-            if ($to && $to->lt($from)) {
-                throw ValidationException::withMessages(['effective_to' => 'Дата окончания не может быть раньше даты начала.']);
-            }
-            $weekdays = $this->normalizeWeekdays($weekdays);
-            $this->capacity->assertStaffFits($bus, $role, $from, $to, $weekdays);
+        return DB::transaction(fn () => $this->assignWithinTransaction($bus, $staff, $role, $effectiveFrom, $effectiveTo, $weekdays, $actor, $reason));
+    }
 
-            if ($role === VehicleStaffAssignment::ROLE_SUPERVISOR) {
-                $conflict = VehicleStaffAssignment::where('bus_id', $bus->id)->where('role', $role)
-                    ->whereDate('effective_from', '<=', $to ?? '9999-12-31')->where(fn ($q) => $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $from))
-                    ->get()->contains(fn ($existing) => $this->weekdaysOverlap($existing->weekdays, $weekdays));
-                if ($conflict) {
-                    throw ValidationException::withMessages(['role' => 'На выбранные дни уже назначен ответственный сопровождающий.']);
-                }
+    /** Assign without opening a savepoint. The caller must own the transaction. */
+    public function assignWithinTransaction(Bus $bus, User|StaffMember $staff, string $role, string $effectiveFrom, ?string $effectiveTo, ?array $weekdays, User $actor, ?string $reason = null): VehicleStaffAssignment
+    {
+        abort_unless(DB::transactionLevel() > 0, 500, 'An active transaction is required.');
+        $bus = Bus::query()->lockForUpdate()->findOrFail($bus->id);
+        if (! $bus->is_active || ! $this->isActive($staff)) {
+            throw ValidationException::withMessages(['identity' => 'Транспорт и сотрудник должны быть активны.']);
+        }
+        if (! in_array($role, VehicleStaffAssignment::ROLES, true)) {
+            throw ValidationException::withMessages(['role' => 'Недопустимая транспортная роль.']);
+        }
+        $from = CarbonImmutable::parse($effectiveFrom)->startOfDay();
+        $to = filled($effectiveTo) ? CarbonImmutable::parse($effectiveTo)->startOfDay() : null;
+        if ($to && $to->lt($from)) {
+            throw ValidationException::withMessages(['effective_to' => 'Дата окончания не может быть раньше даты начала.']);
+        }
+        $weekdays = $this->normalizeWeekdays($weekdays);
+        $this->capacity->assertStaffFits($bus, $role, $from, $to, $weekdays);
+
+        if ($role === VehicleStaffAssignment::ROLE_SUPERVISOR) {
+            $conflict = VehicleStaffAssignment::where('bus_id', $bus->id)->where('role', $role)
+                ->whereDate('effective_from', '<=', $to ?? '9999-12-31')->where(fn ($q) => $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $from))
+                ->get()->contains(fn ($existing) => $this->weekdaysOverlap($existing->weekdays, $weekdays));
+            if ($conflict) {
+                throw ValidationException::withMessages(['role' => 'На выбранные дни уже назначен ответственный сопровождающий.']);
             }
+        }
 
-            $assignment = VehicleStaffAssignment::create([
-                'bus_id' => $bus->id,
-                'user_id' => $staff instanceof User ? $staff->id : null,
-                'staff_member_id' => $staff instanceof StaffMember ? $staff->id : null,
-                'role' => $role,
-                'effective_from' => $from, 'effective_to' => $to, 'weekdays' => $weekdays,
-                'created_by' => $actor->id, 'change_reason' => $reason,
-            ]);
-            $this->audit($actor, 'vehicle_staff_assigned', $assignment, null, $assignment->toArray());
+        $assignment = VehicleStaffAssignment::create([
+            'bus_id' => $bus->id,
+            'user_id' => $staff instanceof User ? $staff->id : null,
+            'staff_member_id' => $staff instanceof StaffMember ? $staff->id : null,
+            'role' => $role,
+            'effective_from' => $from, 'effective_to' => $to, 'weekdays' => $weekdays,
+            'created_by' => $actor->id, 'change_reason' => $reason,
+        ]);
+        $this->audit($actor, 'vehicle_staff_assigned', $assignment, null, $assignment->toArray());
 
-            return $assignment->fresh();
-        });
+        return $assignment->fresh();
     }
 
     public function end(VehicleStaffAssignment $assignment, string $effectiveTo, User $actor, ?string $reason = null): VehicleStaffAssignment

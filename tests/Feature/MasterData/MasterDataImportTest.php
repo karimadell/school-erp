@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\MasterData;
 
+use App\Events\MasterDataReconciliationPhase;
 use App\Models\AcademicYear;
 use App\Models\AuditLog;
 use App\Models\Bus;
@@ -20,10 +21,13 @@ use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
 use App\Models\VehicleStaffAssignment;
+use App\Services\MasterData\MasterDataReconciliationApplyService;
+use App\Services\MasterData\MasterDataReconciliationPlanner;
 use App\Services\MasterData\MasterDataReconciliationPreviewService;
 use App\Services\MasterData\MasterDataWorkbookParser;
 use App\Services\MasterData\MasterStaffImportService;
 use App\Services\MasterData\MasterStudentImportService;
+use App\Services\MasterData\WorkbookLoader;
 use App\Services\Transport\RealStaffTransportAssignmentBootstrapService;
 use App\Services\Transport\RealStudentTransportAssignmentBootstrapService;
 use App\Support\RouteNameNormalizer;
@@ -34,6 +38,7 @@ use Illuminate\Support\Facades\Event;
 use Normalizer;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class MasterDataImportTest extends TestCase
@@ -367,6 +372,171 @@ class MasterDataImportTest extends TestCase
             Event::forget('eloquent.created: '.StaffMasterImport::class);
         }
         $this->assertSame($before, $this->counts());
+    }
+
+    public function test_fast_plan_is_zero_write_deterministic_and_loads_each_workbook_once(): void
+    {
+        $this->resetToUatBaseline();
+        $before = $this->counts();
+        $planner = app(MasterDataReconciliationPlanner::class);
+        $first = $planner->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+        $second = $planner->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+
+        $this->assertSame($before, $this->counts());
+        $this->assertSame($first->planHash, $second->planHash);
+        $this->assertSame(7, app(WorkbookLoader::class)->physicalLoadCount());
+        $this->assertSame(134, $first->summary()['master_students']);
+        $this->assertSame(63, $first->summary()['new_student_assignments']);
+        $this->assertSame(11, $first->summary()['new_staff_assignments']);
+    }
+
+    public function test_fast_apply_rejects_a_stale_baseline_before_first_business_write(): void
+    {
+        $this->resetToUatBaseline();
+        $plan = app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+        Student::create(['name' => 'Concurrent change', 'status' => Student::STATUS_ACTIVE]);
+
+        try {
+            app(MasterDataReconciliationApplyService::class)->apply($this->actor, $plan);
+            $this->fail('Expected stale-plan abort.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('stale', $exception->getMessage());
+        }
+        $this->assertSame(0, MasterStudentImport::count());
+        $this->assertSame(0, StaffMasterImport::count());
+    }
+
+    public function test_fast_apply_rejects_finance_and_protected_student_drift_before_writing(): void
+    {
+        foreach (['finance', 'protected-student'] as $drift) {
+            $this->resetToUatBaseline();
+            $protected = Student::query()->firstOrFail();
+            $invoiceId = DB::table('invoices')->insertGetId([
+                'student_id' => $protected->id, 'academic_year_id' => 1, 'customer_name' => $protected->name,
+                'total_amount' => 100, 'subtotal_amount' => 100, 'paid_amount' => 0, 'remaining_amount' => 100,
+                'status' => 'unpaid', 'currency' => 'EGP', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $plan = app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+            if ($drift === 'finance') {
+                DB::table('invoices')->where('id', $invoiceId)->update(['customer_name' => 'Concurrent finance drift']);
+            } else {
+                Student::withoutEvents(fn () => Student::whereKey($protected->id)->update(['name' => 'Concurrent protected drift']));
+            }
+
+            try {
+                app(MasterDataReconciliationApplyService::class)->apply($this->actor, $plan);
+                $this->fail("Expected {$drift} stale-plan abort.");
+            } catch (\RuntimeException $exception) {
+                $this->assertStringContainsString('stale', $exception->getMessage());
+            }
+            $this->assertSame(0, MasterStudentImport::count());
+            $this->assertSame(0, StaffMasterImport::count());
+        }
+    }
+
+    public function test_workbook_loader_refuses_a_physical_load_after_persistence_starts(): void
+    {
+        $loader = new WorkbookLoader;
+        $loader->forbidFurtherPhysicalLoads();
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('forbidden inside');
+        $loader->load($this->studentPath);
+    }
+
+    #[DataProvider('reconciliationFailurePhases')]
+    public function test_fast_apply_rolls_back_every_phase(string $phase): void
+    {
+        $this->resetToUatBaseline();
+        $plan = app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+        $before = $this->counts();
+        Event::listen(MasterDataReconciliationPhase::class, function (MasterDataReconciliationPhase $event) use ($phase): void {
+            if ($event->phase === $phase) {
+                throw new \RuntimeException("forced {$phase}");
+            }
+        });
+        try {
+            app(MasterDataReconciliationApplyService::class)->apply($this->actor, $plan);
+            $this->fail('Expected injected failure.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame("forced {$phase}", $exception->getMessage());
+        } finally {
+            Event::forget(MasterDataReconciliationPhase::class);
+        }
+        $this->assertSame($before, $this->counts());
+    }
+
+    public static function reconciliationFailurePhases(): array
+    {
+        return [
+            'student persistence' => ['students_persisted'],
+            'staff persistence' => ['staff_persisted'],
+            'transport persistence' => ['transport_persisted'],
+            'final assertion' => ['final_assertions_passed'],
+        ];
+    }
+
+    public function test_fast_apply_succeeds_atomically_and_the_next_plan_is_idempotent(): void
+    {
+        $this->resetToUatBaseline();
+        $planner = app(MasterDataReconciliationPlanner::class);
+        $plan = $planner->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+        $result = app(MasterDataReconciliationApplyService::class)->apply($this->actor, $plan);
+
+        $this->assertSame(152, Student::count());
+        $this->assertSame(147, Enrollment::count());
+        $this->assertSame(4, StudentListenerPlacement::count());
+        $this->assertSame(26, StaffMember::count());
+        $this->assertSame(8, TransportRoute::count());
+        $this->assertSame(5, Bus::count());
+        $this->assertSame(63, StudentTransportAssignment::count());
+        $this->assertSame(11, VehicleStaffAssignment::count());
+        $this->assertLessThan(60, $result['transaction_seconds']);
+
+        // A command/app lifecycle owns one immutable loader. A new scope models
+        // the required post-apply preview invocation.
+        app()->forgetScopedInstances();
+        $next = app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths)->summary();
+        $this->assertSame(0, $next['new_students']);
+        $this->assertSame(0, $next['new_staff']);
+        $this->assertSame(0, $next['new_routes']);
+        $this->assertSame(0, $next['new_buses']);
+        $this->assertSame(0, $next['new_student_assignments']);
+        $this->assertSame(0, $next['new_staff_assignments']);
+    }
+
+    private function resetToUatBaseline(): void
+    {
+        DB::table('invoice_payments')->delete();
+        DB::table('invoice_items')->delete();
+        DB::table('invoices')->delete();
+        DB::table('student_service_subscriptions')->delete();
+        VehicleStaffAssignment::query()->delete();
+        StudentTransportAssignment::query()->delete();
+        StaffMasterImport::query()->delete();
+        MasterStudentImport::query()->delete();
+        StudentBootstrapImport::query()->delete();
+        \App\Models\StaffTransportBootstrapImport::query()->delete();
+        StudentListenerPlacement::query()->delete();
+        Enrollment::query()->delete();
+        StaffMember::query()->delete();
+        Bus::query()->delete();
+        TransportRoute::query()->delete();
+        Student::query()->delete();
+        AuditLog::query()->delete();
+
+        foreach (range(1, 18) as $number) {
+            $student = Student::create(['name' => "Preserved UAT {$number}", 'status' => Student::STATUS_ACTIVE]);
+            if ($number <= 17) {
+                Enrollment::create(['student_id' => $student->id, 'academic_year_id' => 1, 'enrollment_mode_id' => 1, 'stage_id' => 1, 'grade_id' => 1, 'class_id' => 1,
+                    'academic_year' => '2026/2027', 'enrollment_date' => '2026-09-01', 'enrolled_at' => '2026-09-01', 'status' => 'active', 'is_active' => true]);
+            }
+        }
+        foreach (range(1, 3) as $number) {
+            TransportRoute::create(['name' => "Unrelated route {$number}", 'pricing_zone' => null, 'is_active' => true]);
+        }
+        AuditLog::query()->delete();
+        app()->forgetScopedInstances();
     }
 
     private function seedExistingTransportPopulation(): void

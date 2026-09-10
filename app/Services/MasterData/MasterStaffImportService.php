@@ -34,31 +34,46 @@ class MasterStaffImportService
     {
         abort_unless($actor->isActive() && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
-        return DB::transaction(function () use ($actor, $path, $transportPaths) {
-            $plan = $this->plan($path ?? $this->defaultPath(), $transportPaths);
-            $created = 0;
-            foreach ($plan['staff'] as $item) {
-                $locator = StaffMasterImport::where('source_file', $item['source_file'])->where('source_sheet', $item['source_sheet'])->where('source_row', $item['source_row'])->lockForUpdate()->first();
-                if ($locator && $locator->source_key !== $item['source_key']) {
-                    throw ValidationException::withMessages(['source' => 'Staff master source row changed after import.']);
-                }
-                $meta = StaffMasterImport::where('source_key', $item['source_key'])->lockForUpdate()->first();
-                if ($meta) {
-                    $this->assertMetadata($meta, $item);
+        $plan = $this->preparePlan($path, $transportPaths);
 
-                    continue;
-                }
-                $member = $item['staff_member_id'] ? StaffMember::lockForUpdate()->findOrFail($item['staff_member_id']) : StaffMember::create(['display_name' => $item['raw_name'], 'phone' => null, 'user_id' => null, 'is_active' => true]);
-                if (! $item['staff_member_id']) {
-                    AuditLog::create(['user_id' => $actor->id, 'action' => 'master_staff_member_created', 'model' => StaffMember::class, 'model_id' => $member->id, 'old_values' => null, 'new_values' => $member->toArray()]);
-                    $created++;
-                }
-                StaffMasterImport::create(['source_key' => $item['source_key'], 'source_file' => $item['source_file'], 'source_sheet' => $item['source_sheet'], 'source_row' => $item['source_row'], 'raw_name' => $item['raw_name'],
-                    'position' => $item['position'], 'raw_contact' => $item['raw_contact'], 'raw_birth_date' => $item['raw_birth_date'], 'source_data' => $this->staffSourceData($item), 'staff_member_id' => $member->id]);
+        return DB::transaction(fn () => $this->persistPlan($actor, $plan));
+    }
+
+    public function preparePlan(?string $path = null, ?array $transportPaths = null): array
+    {
+        return $this->plan($path ?? $this->defaultPath(), $transportPaths);
+    }
+
+    /** Persist a previously validated plan. The caller owns the transaction. */
+    public function persistPlan(User $actor, array $plan): array
+    {
+        abort_unless($actor->isActive() && $actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
+
+        $created = 0;
+        $metadata = StaffMasterImport::query()->whereIn('source_key', $plan['staff']->pluck('source_key'))->lockForUpdate()->get()->keyBy('source_key');
+        $locators = StaffMasterImport::query()->whereIn('source_file', $plan['staff']->pluck('source_file')->unique())->lockForUpdate()->get()
+            ->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        foreach ($plan['staff'] as $item) {
+            $locator = $locators->get($item['source_file']."\0".$item['source_sheet']."\0".$item['source_row']);
+            if ($locator && $locator->source_key !== $item['source_key']) {
+                throw ValidationException::withMessages(['source' => 'Staff master source row changed after import.']);
             }
+            $meta = $metadata->get($item['source_key']);
+            if ($meta) {
+                $this->assertMetadata($meta, $item);
 
-            return $this->result('APPLY', $this->plan($path ?? $this->defaultPath(), $transportPaths)) + ['created_staff_members' => $created, 'created_transport_links' => 0];
-        });
+                continue;
+            }
+            $member = $item['staff_member_id'] ? StaffMember::lockForUpdate()->findOrFail($item['staff_member_id']) : StaffMember::create(['display_name' => $item['raw_name'], 'phone' => null, 'user_id' => null, 'is_active' => true]);
+            if (! $item['staff_member_id']) {
+                AuditLog::create(['user_id' => $actor->id, 'action' => 'master_staff_member_created', 'model' => StaffMember::class, 'model_id' => $member->id, 'old_values' => null, 'new_values' => $member->toArray()]);
+                $created++;
+            }
+            StaffMasterImport::create(['source_key' => $item['source_key'], 'source_file' => $item['source_file'], 'source_sheet' => $item['source_sheet'], 'source_row' => $item['source_row'], 'raw_name' => $item['raw_name'],
+                'position' => $item['position'], 'raw_contact' => $item['raw_contact'], 'raw_birth_date' => $item['raw_birth_date'], 'source_data' => $this->staffSourceData($item), 'staff_member_id' => $member->id]);
+        }
+
+        return $this->result('APPLY', $plan) + ['created_staff_members' => $created, 'created_transport_links' => 0];
     }
 
     private function plan(string $path, ?array $transportPaths = null): array

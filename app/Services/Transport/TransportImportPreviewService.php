@@ -7,10 +7,10 @@ use App\Models\Enrollment;
 use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
+use App\Services\MasterData\WorkbookLoader;
 use App\Support\RouteNameNormalizer;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 /**
  * Read-only matching preview for the school's transport workbooks.
@@ -20,6 +20,8 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
  */
 class TransportImportPreviewService
 {
+    public function __construct(private WorkbookLoader $loader) {}
+
     private const ROUTE_ZONE_HINTS = [
         'Каусер' => 'Зона 1',
         'Арабия' => 'Зона 2',
@@ -100,42 +102,41 @@ class TransportImportPreviewService
     /** @return Collection<int, array<string, mixed>> */
     public function parseWorkbook(string $path): Collection
     {
-        if (! is_file($path)) {
-            throw new \InvalidArgumentException("Source workbook not found: {$path}");
-        }
-
-        $workbook = IOFactory::load($path);
-        $route = $this->routeFromFilename($path);
-        $rows = collect();
-        foreach ($workbook->getWorksheetIterator() as $sheet) {
-            $values = $sheet->toArray(null, true, true, true);
-            $headerRow = collect($values)->search(fn ($value) => collect($value)->contains(fn ($cell) => in_array($this->key((string) $cell), ['фио', 'фио ученика', 'номер', '№'], true)));
-            $headerRow = $headerRow === false ? 1 : $headerRow;
-            $headers = $this->headers($values[$headerRow] ?? []);
-            foreach ($values as $rowNumber => $valuesByColumn) {
-                // Workbooks may have one or more title/metadata rows before
-                // the canonical column header. They are not source records.
-                // Preserve the spreadsheet row number for every real record
-                // after the header, while ignoring empty trailing rows.
-                if ($rowNumber <= $headerRow || collect($valuesByColumn)->filter(fn ($value) => filled($value))->isEmpty()) {
-                    continue;
+        $rows = $this->loader->remember('transport-rows', $path, function ($workbook) use ($path): array {
+            $route = $this->routeFromFilename($path);
+            $rows = collect();
+            foreach ($workbook->getWorksheetIterator() as $sheet) {
+                $values = $sheet->toArray(null, true, true, true);
+                $headerRow = collect($values)->search(fn ($value) => collect($value)->contains(fn ($cell) => in_array($this->key((string) $cell), ['фио', 'фио ученика', 'номер', '№'], true)));
+                $headerRow = $headerRow === false ? 1 : $headerRow;
+                $headers = $this->headers($values[$headerRow] ?? []);
+                foreach ($values as $rowNumber => $valuesByColumn) {
+                    // Workbooks may have one or more title/metadata rows before
+                    // the canonical column header. They are not source records.
+                    // Preserve the spreadsheet row number for every real record
+                    // after the header, while ignoring empty trailing rows.
+                    if ($rowNumber <= $headerRow || collect($valuesByColumn)->filter(fn ($value) => filled($value))->isEmpty()) {
+                        continue;
+                    }
+                    $get = fn (array $names) => collect($names)->map(fn ($name) => $headers[$this->key($name)] ?? null)->filter(fn ($column) => $column !== null)->map(fn ($column) => $valuesByColumn[$column] ?? null)->first(fn ($value) => filled($value));
+                    $rawName = (string) ($get(['ФИО', 'ФИО ученика', 'Имя']) ?? '');
+                    $rawClass = (string) ($get(['Класс', 'Класс ученика']) ?? '');
+                    $rawPickup = $get(['Остановка', 'Место посадки', 'Остановка посадки']);
+                    $rawPhone = $get(['Телефон', 'Телефон/контакт', 'Контакт']);
+                    $rawNotes = $get(['Примечание', 'Примечания', 'Комментарии', 'Notes']) ?? '';
+                    $rows->push([
+                        'source_file' => basename($path), 'source_sheet' => $sheet->getTitle(), 'source_row' => $rowNumber,
+                        'route' => $route, 'raw_full_name' => $rawName, 'raw_class' => $rawClass,
+                        'raw_pickup_point' => $rawPickup, 'raw_phone' => $rawPhone, 'raw_notes' => (string) $rawNotes,
+                        'pickup_point' => $rawPickup, 'phone' => $rawPhone,
+                    ]);
                 }
-                $get = fn (array $names) => collect($names)->map(fn ($name) => $headers[$this->key($name)] ?? null)->filter(fn ($column) => $column !== null)->map(fn ($column) => $valuesByColumn[$column] ?? null)->first(fn ($value) => filled($value));
-                $rawName = (string) ($get(['ФИО', 'ФИО ученика', 'Имя']) ?? '');
-                $rawClass = (string) ($get(['Класс', 'Класс ученика']) ?? '');
-                $rawPickup = $get(['Остановка', 'Место посадки', 'Остановка посадки']);
-                $rawPhone = $get(['Телефон', 'Телефон/контакт', 'Контакт']);
-                $rawNotes = $get(['Примечание', 'Примечания', 'Комментарии', 'Notes']) ?? '';
-                $rows->push([
-                    'source_file' => basename($path), 'source_sheet' => $sheet->getTitle(), 'source_row' => $rowNumber,
-                    'route' => $route, 'raw_full_name' => $rawName, 'raw_class' => $rawClass,
-                    'raw_pickup_point' => $rawPickup, 'raw_phone' => $rawPhone, 'raw_notes' => (string) $rawNotes,
-                    'pickup_point' => $rawPickup, 'phone' => $rawPhone,
-                ]);
             }
-        }
 
-        return $rows;
+            return $rows->all();
+        });
+
+        return collect($rows);
     }
 
     public function classify(array $row): string

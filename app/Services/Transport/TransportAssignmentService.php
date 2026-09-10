@@ -23,31 +23,7 @@ class TransportAssignmentService
         abort_unless($actor->can(TransportPermissions::MANAGE_ASSIGNMENTS), 403);
 
         try {
-            return DB::transaction(function () use ($enrollment, $route, $bus, $data, $actor) {
-                $enrollment = Enrollment::query()->lockForUpdate()->findOrFail($enrollment->id);
-                $bus = Bus::query()->lockForUpdate()->findOrFail($bus->id);
-                $route = TransportRoute::query()->lockForUpdate()->findOrFail($route->id);
-                [$from, $to, $capacityTo] = $this->validate($enrollment, $route, $bus, $data);
-                $this->assertEnrollmentAvailable($enrollment->id, $from, $to);
-                $this->capacity->assertStudentFits($bus, $from, $capacityTo);
-
-                $assignment = StudentTransportAssignment::create([
-                    'enrollment_id' => $enrollment->id,
-                    'transport_route_id' => $route->id,
-                    'bus_id' => $bus->id,
-                    'pricing_zone' => $data['pricing_zone'] ?? $route->pricing_zone,
-                    'pickup_point' => $data['pickup_point'] ?? null,
-                    'billing_period' => $data['billing_period'] ?? null,
-                    'effective_from' => $from,
-                    'effective_to' => $to,
-                    'status' => StudentTransportAssignment::STATUS_ACTIVE,
-                    'created_by' => $actor->id,
-                    'change_reason' => $data['change_reason'] ?? null,
-                ]);
-                $this->audit($actor, 'student_transport_assigned', $assignment, null, $assignment->toArray());
-
-                return $assignment->fresh();
-            });
+            return DB::transaction(fn () => $this->assignWithinTransaction($enrollment, $route, $bus, $data, $actor));
         } catch (TransportCapacityExceeded $e) {
             AuditLog::create([
                 'user_id' => $actor->id, 'action' => 'student_transport_capacity_rejected',
@@ -56,6 +32,35 @@ class TransportAssignmentService
             ]);
             throw $e;
         }
+    }
+
+    /** Assign without opening a savepoint. The caller must own the transaction. */
+    public function assignWithinTransaction(Enrollment $enrollment, TransportRoute $route, Bus $bus, array $data, User $actor): StudentTransportAssignment
+    {
+        abort_unless(DB::transactionLevel() > 0, 500, 'An active transaction is required.');
+        $enrollment = Enrollment::query()->lockForUpdate()->findOrFail($enrollment->id);
+        $bus = Bus::query()->lockForUpdate()->findOrFail($bus->id);
+        $route = TransportRoute::query()->lockForUpdate()->findOrFail($route->id);
+        [$from, $to, $capacityTo] = $this->validate($enrollment, $route, $bus, $data);
+        $this->assertEnrollmentAvailable($enrollment->id, $from, $to);
+        $this->capacity->assertStudentFits($bus, $from, $capacityTo);
+
+        $assignment = StudentTransportAssignment::create([
+            'enrollment_id' => $enrollment->id,
+            'transport_route_id' => $route->id,
+            'bus_id' => $bus->id,
+            'pricing_zone' => $data['pricing_zone'] ?? $route->pricing_zone,
+            'pickup_point' => $data['pickup_point'] ?? null,
+            'billing_period' => $data['billing_period'] ?? null,
+            'effective_from' => $from,
+            'effective_to' => $to,
+            'status' => StudentTransportAssignment::STATUS_ACTIVE,
+            'created_by' => $actor->id,
+            'change_reason' => $data['change_reason'] ?? null,
+        ]);
+        $this->audit($actor, 'student_transport_assigned', $assignment, null, $assignment->toArray());
+
+        return $assignment->fresh();
     }
 
     public function end(StudentTransportAssignment $assignment, string $effectiveTo, User $actor, ?string $reason = null): StudentTransportAssignment

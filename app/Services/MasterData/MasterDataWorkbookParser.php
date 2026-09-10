@@ -2,49 +2,53 @@
 
 namespace App\Services\MasterData;
 
-use PhpOffice\PhpSpreadsheet\IOFactory;
-
 class MasterDataWorkbookParser
 {
+    public function __construct(private WorkbookLoader $loader) {}
+
     public function students(string $path): array
     {
-        $rows = [];
-        foreach (IOFactory::load($path)->getWorksheetIterator() as $sheet) {
-            for ($row = 3; $row <= $sheet->getHighestDataRow(); $row++) {
-                $number = trim((string) $sheet->getCell("A{$row}")->getFormattedValue());
-                $name = trim((string) $sheet->getCell("B{$row}")->getFormattedValue());
-                if (! ctype_digit($number) || $name === '') {
-                    continue;
+        return $this->loader->remember('master-students', $path, function ($workbook) use ($path): array {
+            $rows = [];
+            foreach ($workbook->getWorksheetIterator() as $sheet) {
+                for ($row = 3; $row <= $sheet->getHighestDataRow(); $row++) {
+                    $number = trim((string) $sheet->getCell("A{$row}")->getFormattedValue());
+                    $name = trim((string) $sheet->getCell("B{$row}")->getFormattedValue());
+                    if (! ctype_digit($number) || $name === '') {
+                        continue;
+                    }
+                    $rawClass = trim((string) $sheet->getCell("C{$row}")->getFormattedValue());
+                    $rows[] = ['source_file' => basename($path), 'source_sheet' => $sheet->getTitle(), 'source_row' => $row, 'raw_name' => $name,
+                        'raw_class_group' => $rawClass, 'numeric_grade' => $this->grade($rawClass), 'attendance_marker' => $this->marker($rawClass),
+                        'parent' => trim((string) $sheet->getCell("D{$row}")->getFormattedValue()), 'egypt_phone' => trim((string) $sheet->getCell("E{$row}")->getFormattedValue()),
+                        'messenger_phone' => trim((string) $sheet->getCell("F{$row}")->getFormattedValue()), 'file_number' => trim((string) $sheet->getCell("G{$row}")->getFormattedValue()),
+                        'citizenship' => trim((string) $sheet->getCell("H{$row}")->getFormattedValue()), 'notes' => trim((string) $sheet->getCell("I{$row}")->getFormattedValue())];
                 }
-                $rawClass = trim((string) $sheet->getCell("C{$row}")->getFormattedValue());
-                $rows[] = ['source_file' => basename($path), 'source_sheet' => $sheet->getTitle(), 'source_row' => $row, 'raw_name' => $name,
-                    'raw_class_group' => $rawClass, 'numeric_grade' => $this->grade($rawClass), 'attendance_marker' => $this->marker($rawClass),
-                    'parent' => trim((string) $sheet->getCell("D{$row}")->getFormattedValue()), 'egypt_phone' => trim((string) $sheet->getCell("E{$row}")->getFormattedValue()),
-                    'messenger_phone' => trim((string) $sheet->getCell("F{$row}")->getFormattedValue()), 'file_number' => trim((string) $sheet->getCell("G{$row}")->getFormattedValue()),
-                    'citizenship' => trim((string) $sheet->getCell("H{$row}")->getFormattedValue()), 'notes' => trim((string) $sheet->getCell("I{$row}")->getFormattedValue())];
             }
-        }
 
-        return $rows;
+            return $rows;
+        });
     }
 
     public function staff(string $path): array
     {
-        $rows = [];
-        foreach (IOFactory::load($path)->getWorksheetIterator() as $sheet) {
-            for ($row = 4; $row <= $sheet->getHighestDataRow(); $row++) {
-                $number = trim((string) $sheet->getCell("A{$row}")->getFormattedValue());
-                $name = trim((string) $sheet->getCell("B{$row}")->getFormattedValue());
-                if (! ctype_digit($number) || $name === '') {
-                    continue;
+        return $this->loader->remember('master-staff', $path, function ($workbook) use ($path): array {
+            $rows = [];
+            foreach ($workbook->getWorksheetIterator() as $sheet) {
+                for ($row = 4; $row <= $sheet->getHighestDataRow(); $row++) {
+                    $number = trim((string) $sheet->getCell("A{$row}")->getFormattedValue());
+                    $name = trim((string) $sheet->getCell("B{$row}")->getFormattedValue());
+                    if (! ctype_digit($number) || $name === '') {
+                        continue;
+                    }
+                    $rows[] = ['source_file' => basename($path), 'source_sheet' => $sheet->getTitle(), 'source_row' => $row, 'raw_name' => $name,
+                        'raw_birth_date' => trim((string) $sheet->getCell("F{$row}")->getFormattedValue()), 'position' => trim((string) $sheet->getCell("G{$row}")->getFormattedValue()),
+                        'raw_contact' => trim((string) $sheet->getCell("J{$row}")->getFormattedValue())];
                 }
-                $rows[] = ['source_file' => basename($path), 'source_sheet' => $sheet->getTitle(), 'source_row' => $row, 'raw_name' => $name,
-                    'raw_birth_date' => trim((string) $sheet->getCell("F{$row}")->getFormattedValue()), 'position' => trim((string) $sheet->getCell("G{$row}")->getFormattedValue()),
-                    'raw_contact' => trim((string) $sheet->getCell("J{$row}")->getFormattedValue())];
             }
-        }
 
-        return $rows;
+            return $rows;
+        });
     }
 
     public function sourceKey(array $row, bool $includeClass = false): string

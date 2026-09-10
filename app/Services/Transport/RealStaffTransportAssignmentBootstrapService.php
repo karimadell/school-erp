@@ -10,12 +10,11 @@ use App\Models\TransportRoute;
 use App\Models\User;
 use App\Models\VehicleStaffAssignment;
 use App\Services\MasterData\MasterStaffImportService;
+use App\Support\RouteNameNormalizer;
 use App\Support\TransportPermissions;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use Normalizer;
 
 /** Plans authoritative staff-passenger assignments without bootstrap identity rows. */
 class RealStaffTransportAssignmentBootstrapService
@@ -91,14 +90,14 @@ class RealStaffTransportAssignmentBootstrapService
         }
         $rows = $all->zip($types)->filter(fn (Collection $pair) => $pair[1] === 'STAFF')->map(fn (Collection $pair) => $pair[0])->values();
         foreach (self::ROUTES as $name => $spec) {
-            if ($rows->filter(fn ($r) => $this->canonical($r['route']) === $name)->count() !== $spec['staff']) {
+            if ($rows->filter(fn ($r) => $this->key($r['route']) === $this->key($name))->count() !== $spec['staff']) {
                 throw ValidationException::withMessages(['sources' => "Route {$name} has an unexpected staff count."]);
             }
         }
         $masterLinks = $this->masterLinks($paths, $masterPath);
         $plan = $rows->map(function ($row) use ($masterLinks) {
             $sourceKey = $this->sourceKey($row);
-            $route = $this->canonical($row['route']);
+            $route = RouteNameNormalizer::canonicalName($row['route']);
             $spec = self::ROUTES[$route];
             $link = $masterLinks->get($sourceKey);
             if (! $link) {
@@ -197,8 +196,10 @@ class RealStaffTransportAssignmentBootstrapService
     private function assertCapacity(Collection $plan): void
     {
         foreach (self::ROUTES as $route => $spec) {
-            $students = $plan->firstWhere('route', $route)['bus_id'] ? StudentTransportAssignment::query()->where('bus_id', $plan->firstWhere('route', $route)['bus_id'])->where('status', 'active')->whereNull('effective_to')->count() : self::studentSourceCount($route);
-            $staff = $plan->where('route', $route)->count();
+            $routePlan = $this->forRoute($plan, $route);
+            $row = $routePlan->firstOrFail();
+            $students = $row['bus_id'] ? StudentTransportAssignment::query()->where('bus_id', $row['bus_id'])->where('status', 'active')->whereNull('effective_to')->count() : self::studentSourceCount($route);
+            $staff = $routePlan->count();
             if ($students > 14 || $students + $staff > 15) {
                 throw ValidationException::withMessages(['capacity' => "Physical occupancy exceeds 14/15 on {$route}."]);
             }
@@ -213,14 +214,18 @@ class RealStaffTransportAssignmentBootstrapService
     private function result(string $mode, Collection $plan): array
     {
         $capacity = collect(self::ROUTES)->map(function ($spec, $route) use ($plan) {
-            $row = $plan->firstWhere('route', $route);
+            $routePlan = $this->forRoute($plan, $route);
+            $row = $routePlan->firstOrFail();
             $students = $row['bus_id'] ? StudentTransportAssignment::where('bus_id', $row['bus_id'])->where('status', 'active')->whereNull('effective_to')->count() : self::studentSourceCount($route);
-            $staff = $plan->where('route', $route)->count();
+            $staff = $routePlan->count();
 
             return ['route' => $route, 'students' => $students, 'peak_staff' => $staff, 'peak_physical_occupancy' => $students + $staff, 'passenger_capacity' => 15];
         })->values()->all();
 
-        return ['mode' => $mode, 'expected_staff' => 11, 'proposed_staff_members' => $plan->where('identity_status', 'PROPOSED')->count(), 'identity_summary' => $plan->countBy('identity_status')->all(), 'new_assignments' => $plan->where('assignment_exists', false)->count(), 'existing_assignments' => $plan->where('assignment_exists', true)->count(), 'capacity_valid' => true, 'capacity' => $capacity, 'rows' => $plan->values()->all()];
+        return ['mode' => $mode, 'expected_staff' => 11, 'proposed_staff_members' => $plan->where('identity_status', 'PROPOSED')->count(), 'identity_summary' => $plan->countBy('identity_status')->all(), 'new_assignments' => $plan->where('assignment_exists', false)->count(), 'existing_assignments' => $plan->where('assignment_exists', true)->count(),
+            'by_route' => $plan->groupBy(fn ($row) => $this->key($row['route']))
+                ->mapWithKeys(fn ($rows) => [RouteNameNormalizer::canonicalName($rows->first()['route']) => $rows->count()])->all(),
+            'capacity_valid' => true, 'capacity' => $capacity, 'rows' => $plan->values()->all()];
     }
 
     private function sourceKey(array $row): string
@@ -245,11 +250,13 @@ class RealStaffTransportAssignmentBootstrapService
 
     private function key(string $value): string
     {
-        return Str::lower(trim(preg_replace('/\s+/u', ' ', $this->canonical($value))));
+        return RouteNameNormalizer::key($value);
     }
 
-    private function canonical(string $value): string
+    private function forRoute(Collection $plan, string $route): Collection
     {
-        return class_exists(Normalizer::class) ? Normalizer::normalize($value, Normalizer::FORM_C) : $value;
+        $key = $this->key($route);
+
+        return $plan->filter(fn ($row) => $this->key($row['route']) === $key)->values();
     }
 }

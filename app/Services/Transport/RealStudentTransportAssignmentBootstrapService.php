@@ -10,11 +10,11 @@ use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
 use App\Services\MasterData\MasterStudentImportService;
+use App\Support\RouteNameNormalizer;
 use App\Support\TransportPermissions;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Normalizer;
 
 /** Plans authoritative current transport assignments without bootstrap identity rows. */
 class RealStudentTransportAssignmentBootstrapService
@@ -87,7 +87,7 @@ class RealStudentTransportAssignmentBootstrapService
         }
         $rows = $all->zip($types)->filter(fn (Collection $pair) => $pair[1] === 'STUDENT')->map(fn (Collection $pair) => $pair[0])->values();
         foreach (self::ROUTES as $name => $mapping) {
-            if ($rows->filter(fn ($row) => $this->canonical($row['route']) === $name)->count() !== $mapping['students']) {
+            if ($rows->filter(fn ($row) => $this->key($row['route']) === $this->key($name))->count() !== $mapping['students']) {
                 throw ValidationException::withMessages(['sources' => "Route {$name} has an unexpected student count."]);
             }
         }
@@ -96,7 +96,7 @@ class RealStudentTransportAssignmentBootstrapService
         $current = collect();
         $history = collect();
         foreach ($rows as $row) {
-            $routeName = $this->canonical($row['route']);
+            $routeName = RouteNameNormalizer::canonicalName($row['route']);
             $sourceKey = $this->sourceKey($row);
             $identity = $this->resolveIdentity($identities, $row['raw_full_name']);
             if ($row['raw_full_name'] === 'Денисенко Александра' && $routeName === 'Бритиш') {
@@ -133,7 +133,7 @@ class RealStudentTransportAssignmentBootstrapService
             throw ValidationException::withMessages(['identity' => 'Expected 63 unique current identities and one approved historical Денисенко row.']);
         }
         foreach (self::ROUTES as $name => $mapping) {
-            if ($current->where('route', $name)->count() > 14) {
+            if ($current->filter(fn ($row) => $this->key($row['route']) === $this->key($name))->count() > 14) {
                 throw ValidationException::withMessages(['capacity' => "Approved plan exceeds 14 student seats on {$name}."]);
             }
         }
@@ -243,7 +243,9 @@ class RealStudentTransportAssignmentBootstrapService
         $current = $plan['current'];
 
         return ['mode' => $mode, 'expected_assignments' => 63, 'new_assignments' => $current->where('assignment_exists', false)->count(),
-            'existing_assignments' => $current->where('assignment_exists', true)->count(), 'by_route' => $current->countBy('route')->all(),
+            'existing_assignments' => $current->where('assignment_exists', true)->count(),
+            'by_route' => $current->groupBy(fn ($row) => $this->key($row['route']))
+                ->mapWithKeys(fn ($rows) => [RouteNameNormalizer::canonicalName($rows->first()['route']) => $rows->count()])->all(),
             'historical_evidence' => $plan['history']->values()->all(), 'rows' => $current->values()->all()];
     }
 
@@ -254,11 +256,6 @@ class RealStudentTransportAssignmentBootstrapService
 
     private function key(string $value): string
     {
-        return mb_strtolower(str_replace('ё', 'е', trim(preg_replace('/\s+/u', ' ', $this->canonical($value)))));
-    }
-
-    private function canonical(string $value): string
-    {
-        return class_exists(Normalizer::class) ? Normalizer::normalize($value, Normalizer::FORM_C) : $value;
+        return str_replace('ё', 'е', RouteNameNormalizer::key($value));
     }
 }

@@ -7,6 +7,7 @@ use App\Models\TransportRoute;
 use App\Services\Transport\RealTransportCatalogBootstrapService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Normalizer;
 use Tests\TestCase;
 
 class RealTransportCatalogBootstrapTest extends TestCase
@@ -72,5 +73,20 @@ class RealTransportCatalogBootstrapTest extends TestCase
             'invoice_items' => DB::table('invoice_items')->count(),
             'invoice_payments' => DB::table('invoice_payments')->count(),
         ];
+    }
+
+    public function test_nfd_existing_route_is_reused_without_duplicate_catalog_entry(): void
+    {
+        app(RealTransportCatalogBootstrapService::class)->apply();
+        TransportRoute::where('name', 'Бествэй')->sole()->forceFill([
+            'name' => Normalizer::normalize('Бествэй', Normalizer::FORM_D),
+        ])->saveQuietly();
+
+        $preview = app(RealTransportCatalogBootstrapService::class)->preview();
+        $apply = app(RealTransportCatalogBootstrapService::class)->apply();
+
+        $this->assertSame(0, $preview['new_routes']);
+        $this->assertSame(0, $apply['created_routes']);
+        $this->assertSame(5, TransportRoute::count());
     }
 }

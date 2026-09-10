@@ -4,6 +4,7 @@ namespace App\Services\Transport;
 
 use App\Models\Bus;
 use App\Models\TransportRoute;
+use App\Support\RouteNameNormalizer;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -65,7 +66,9 @@ class RealTransportCatalogBootstrapService
     private function plan(): Collection
     {
         return collect(self::CATALOG)->map(function (array $item): array {
-            $routes = TransportRoute::query()->where('name', $item['route'])->get();
+            $routes = TransportRoute::query()->get()
+                ->filter(fn ($route) => RouteNameNormalizer::key($route->name) === RouteNameNormalizer::key($item['route']))
+                ->values();
             $vehicles = Bus::query()->where('vehicle_code', $item['vehicle_number'])->get();
 
             if ($routes->count() > 1) {
@@ -104,7 +107,8 @@ class RealTransportCatalogBootstrapService
 
     private function resolveRoute(array $item): TransportRoute
     {
-        $route = TransportRoute::query()->where('name', $item['route'])->lockForUpdate()->first();
+        $route = TransportRoute::query()->lockForUpdate()->get()
+            ->first(fn ($route) => RouteNameNormalizer::key($route->name) === RouteNameNormalizer::key($item['route']));
 
         return $route ?: TransportRoute::create([
             'name' => $item['route'],

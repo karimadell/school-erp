@@ -29,6 +29,14 @@ return new class extends Migration
 
     public function down(): void
     {
+        // Two separate Schema::table() calls: on SQLite, dropping a unique
+        // index and its column in the same table-rebuild pass fails with
+        // "error in index ... after drop column" (reproduced identically
+        // against the pre-existing invoice_payment_id column, so this is
+        // not new — MySQL/production is unaffected either way).
+        Schema::table('cash_transactions', function (Blueprint $table) {
+            $table->dropUnique(['expense_id']);
+        });
         Schema::table('cash_transactions', function (Blueprint $table) {
             $table->dropConstrainedForeignId('expense_id');
         });

@@ -79,14 +79,18 @@ class MasterStaffImportService
     private function plan(string $path, ?array $transportPaths = null): array
     {
         $existingStaff = StaffMember::query()->get()->groupBy(fn ($member) => $this->key($member->display_name));
-        $staff = collect($this->parser->staff($path))->map(function ($r) use ($existingStaff) {
+        $sourceRows = collect($this->parser->staff($path));
+        $imports = StaffMasterImport::query()->whereIn('source_file', $sourceRows->pluck('source_file')->unique())->get();
+        $importsByLocator = $imports->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        $importsByKey = $imports->keyBy('source_key');
+        $staff = $sourceRows->map(function ($r) use ($existingStaff, $importsByLocator, $importsByKey) {
             $sourceKey = $this->parser->sourceKey($r);
-            $locator = StaffMasterImport::where('source_file', $r['source_file'])->where('source_sheet', $r['source_sheet'])->where('source_row', $r['source_row'])->first();
+            $locator = $importsByLocator->get($r['source_file']."\0".$r['source_sheet']."\0".$r['source_row']);
             if ($locator && $locator->source_key !== $sourceKey) {
                 throw ValidationException::withMessages(['source' => "Staff master source row {$r['source_sheet']}:{$r['source_row']} changed after import."]);
             }
             $matches = $existingStaff->get($this->key($r['raw_name']), collect());
-            $item = $r + ['source_key' => $sourceKey, 'already_imported' => (bool) ($existing = StaffMasterImport::where('source_key', $sourceKey)->first()),
+            $item = $r + ['source_key' => $sourceKey, 'already_imported' => (bool) ($existing = $importsByKey->get($sourceKey)),
                 'staff_member_id' => $matches->count() === 1 ? $matches->first()->id : null,
                 'action' => $matches->isEmpty() ? 'CREATE_STAFF_MEMBER' : ($matches->count() === 1 ? 'LINK_STAFF_MEMBER' : 'REVIEW_REQUIRED'),
                 'resolution_status' => $matches->isEmpty() ? 'NEW' : ($matches->count() === 1 ? 'DETERMINISTIC_MATCH' : 'AMBIGUOUS'),
@@ -116,11 +120,10 @@ class MasterStaffImportService
                         throw ValidationException::withMessages(['identity' => "Staff initials are not unique for {$display}."]);
                     }
                     $master = $candidates->first();
-                    $masterImport = StaffMasterImport::where('source_key', $master['source_key'])->first();
                     $confirmedStalePhone = in_array($display, ['Лебедева Г.Г.', 'Чумакова В.В.', 'Щербакова О.В.'], true);
                     $sourceKey = hash('sha256', json_encode([$row['source_file'], $row['source_sheet'], $row['source_row'], $row['raw_full_name']], JSON_UNESCAPED_UNICODE));
                     $catalogItem = collect($catalog)->first(fn ($item) => RouteNameNormalizer::key($item['canonical_name']) === RouteNameNormalizer::key($row['route']));
-                    $links->push($row + ['display_name' => $display, 'source_key' => $sourceKey, 'master_source_key' => $master['source_key'], 'staff_member_id' => $masterImport?->staff_member_id, 'master_name' => $master['raw_name'], 'master_row' => $master['source_row'], 'position' => $master['position'],
+                    $links->push($row + ['display_name' => $display, 'source_key' => $sourceKey, 'master_source_key' => $master['source_key'], 'master_name' => $master['raw_name'], 'master_row' => $master['source_row'], 'position' => $master['position'],
                         'master_phone' => $master['raw_contact'], 'phone_evidence' => $confirmedStalePhone ? 'CONFIRMED_IDENTITY_STALE_PHONE_PRESERVED' : 'MATCH/NOT_REQUIRED', 'status' => 'CONFIRMED', 'weekdays' => $this->weekdays($row['raw_full_name'].' '.$row['raw_notes']),
                         'staff_member_id' => $master['staff_member_id'], 'route_id' => $catalogItem['route_id'], 'bus_id' => $catalogItem['bus_id'],
                         'assignment_status' => $catalogItem['assignment_ready'] ? 'READY' : 'PENDING_CATALOG_APPLY', 'proposed_role' => VehicleStaffAssignment::ROLE_STAFF_PASSENGER]);

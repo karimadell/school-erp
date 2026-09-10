@@ -75,11 +75,14 @@ class RealTransportCatalogBootstrapService
 
     private function plan(): Collection
     {
-        return collect(self::CATALOG)->map(function (array $item): array {
-            $routes = TransportRoute::query()->get()
+        $allRoutes = TransportRoute::query()->get();
+        $allVehicles = Bus::query()->whereIn('vehicle_code', collect(self::CATALOG)->pluck('vehicle_number'))->get();
+
+        return collect(self::CATALOG)->map(function (array $item) use ($allRoutes, $allVehicles): array {
+            $routes = $allRoutes
                 ->filter(fn ($route) => RouteNameNormalizer::key($route->name) === RouteNameNormalizer::key($item['route']))
                 ->values();
-            $vehicles = Bus::query()->where('vehicle_code', $item['vehicle_number'])->get();
+            $vehicles = $allVehicles->filter(fn ($vehicle) => (string) $vehicle->vehicle_code === $item['vehicle_number'])->values();
 
             if ($routes->count() > 1) {
                 throw ValidationException::withMessages(['route' => "Найдено несколько маршрутов «{$item['route']}». Bootstrap остановлен."]);

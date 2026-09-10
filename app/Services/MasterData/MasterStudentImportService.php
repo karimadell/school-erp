@@ -181,9 +181,15 @@ class MasterStudentImportService
             'listenerPlacements' => fn ($query) => $query->where('academic_year_id', self::YEAR_ID)->where('status', 'active'),
         ])->get();
         $byName = $students->groupBy(fn ($student) => $this->key($student->russianFullName() ?: $student->name));
+        $placements = $rows->pluck('numeric_grade')->unique()->mapWithKeys(
+            fn ($level) => [(int) $level => $this->placement((int) $level)]
+        );
+        $imports = MasterStudentImport::query()->whereIn('source_file', $rows->pluck('source_file')->unique())->get();
+        $importsByLocator = $imports->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        $importsByKey = $imports->keyBy('source_key');
 
-        $plan = $rows->map(function ($row) use ($byName) {
-            [$stage,$grade,$class] = $this->placement($row['numeric_grade']);
+        $plan = $rows->map(function ($row) use ($byName, $placements, $importsByLocator, $importsByKey) {
+            [$stage,$grade,$class] = $placements->get((int) $row['numeric_grade']);
             $matches = $byName->get($this->key($row['raw_name']), collect());
             if ($row['raw_name'] === 'Эльшейх Сухайб') {
                 $matches = $matches->concat($byName->get($this->key('Эльшейх Адам'), collect()))->unique('id')->values();
@@ -237,11 +243,11 @@ class MasterStudentImportService
                 }
             }
             $sourceKey = $this->parser->sourceKey($row, true);
-            $locator = MasterStudentImport::where('source_file', $row['source_file'])->where('source_sheet', $row['source_sheet'])->where('source_row', $row['source_row'])->first();
+            $locator = $importsByLocator->get($row['source_file']."\0".$row['source_sheet']."\0".$row['source_row']);
             if ($locator && $locator->source_key !== $sourceKey) {
                 throw ValidationException::withMessages(['source' => "Master student source row {$row['source_sheet']}:{$row['source_row']} changed after import."]);
             }
-            $existing = MasterStudentImport::where('source_key', $sourceKey)->first();
+            $existing = $importsByKey->get($sourceKey);
             $finance = $matches->mapWithKeys(fn ($student) => [$student->id => $this->financeEvidence($student)])->all();
             $nameChange = $studentId ? trim((string) $matches->firstWhere('id', $studentId)?->name) !== $row['raw_name'] : false;
 

@@ -9,6 +9,8 @@ use RuntimeException;
 /** Invocation-scoped workbook cache and physical-load instrumentation. */
 final class WorkbookLoader
 {
+    public function __construct(private ?ReconciliationPerformance $performance = null) {}
+
     /** @var array<string, Spreadsheet> */
     private array $workbooks = [];
 
@@ -32,7 +34,9 @@ final class WorkbookLoader
 
         $this->physicalLoads[$key] = ($this->physicalLoads[$key] ?? 0) + 1;
 
-        return $this->workbooks[$key] = IOFactory::load($path);
+        return $this->workbooks[$key] = $this->performance
+            ? $this->performance->measure('workbook:'.basename($path), fn () => IOFactory::load($path))
+            : IOFactory::load($path);
     }
 
     public function remember(string $namespace, string $path, callable $callback): mixed

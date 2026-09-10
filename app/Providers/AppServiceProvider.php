@@ -35,6 +35,7 @@ use App\Observers\StudentSubjectEnrollmentValidationObserver;
 use App\Observers\TeacherAssignmentCurriculumObserver;
 use App\Services\CurriculumAwareTimetableConflictChecker;
 use App\Services\DatabaseHolidayCalendar;
+use App\Services\MasterData\ReconciliationPerformance;
 use App\Services\MasterData\WorkbookLoader;
 use App\Support\ClassConflictRule;
 use App\Support\CurriculumSubjectRule;
@@ -53,7 +54,8 @@ class AppServiceProvider extends ServiceProvider
     {
         // One cache per request/command: source files are parsed once and never
         // carried across long-lived worker lifecycles.
-        $this->app->scoped(WorkbookLoader::class, fn () => new WorkbookLoader);
+        $this->app->scoped(ReconciliationPerformance::class, fn () => new ReconciliationPerformance);
+        $this->app->scoped(WorkbookLoader::class, fn ($app) => new WorkbookLoader($app->make(ReconciliationPerformance::class)));
         // D1 Phase 2: holiday infrastructure only — no call site consults
         // this yet. See App\Contracts\HolidayCalendar's doc comment.
         $this->app->bind(HolidayCalendar::class, DatabaseHolidayCalendar::class);

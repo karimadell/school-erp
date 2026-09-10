@@ -7,6 +7,7 @@ use App\Services\MasterData\MasterDataReconciliationApplyService;
 use App\Services\MasterData\MasterDataReconciliationPlanner;
 use App\Services\MasterData\MasterStaffImportService;
 use App\Services\MasterData\MasterStudentImportService;
+use App\Services\MasterData\ReconciliationPerformance;
 use App\Services\MasterData\WorkbookLoader;
 use App\Services\Transport\RealStudentTransportAssignmentBootstrapService;
 use Illuminate\Console\Command;
@@ -32,6 +33,7 @@ final class MasterDataReconcile extends Command
         MasterStaffImportService $staff,
         RealStudentTransportAssignmentBootstrapService $transport,
         WorkbookLoader $loader,
+        ReconciliationPerformance $performance,
     ): int {
         // PhpSpreadsheet currently emits known PHP 8.5 deprecations. Consume
         // only deprecations originating in that dependency; every other
@@ -41,18 +43,21 @@ final class MasterDataReconcile extends Command
                 && str_contains(str_replace('\\', '/', $file), '/vendor/phpoffice/phpspreadsheet/'),
             E_DEPRECATED | E_USER_DEPRECATED,
         );
-        $selects = $writes = 0;
-        DB::listen(function (QueryExecuted $query) use (&$selects, &$writes): void {
+        $queries = ['SELECT' => 0, 'INSERT' => 0, 'UPDATE' => 0, 'DELETE' => 0];
+        DB::listen(function (QueryExecuted $query) use (&$queries): void {
             $verb = strtoupper(strtok(ltrim($query->sql), " \t\n\r"));
-            $selects += $verb === 'SELECT' ? 1 : 0;
-            $writes += in_array($verb, ['INSERT', 'UPDATE', 'DELETE'], true) ? 1 : 0;
+            if (array_key_exists($verb, $queries)) {
+                $queries[$verb]++;
+            }
         });
 
+        $started = hrtime(true);
+        $plan = null;
+        $persistenceTransactionOpened = false;
         try {
             $studentPath = $this->option('student-path') ?: $students->defaultPath();
             $staffPath = $this->option('staff-path') ?: $staff->defaultPath();
             $transportPaths = $this->option('transport-path') ?: $transport->defaultPaths();
-            $started = hrtime(true);
             $plan = $planner->plan($studentPath, $staffPath, $transportPaths);
             $planned = hrtime(true);
             $result = ['mode' => $this->option('apply') ? 'APPLY' : 'PREVIEW', 'preview' => $plan->summary()];
@@ -62,6 +67,7 @@ final class MasterDataReconcile extends Command
                     throw new \InvalidArgumentException('--actor-id is required with --apply.');
                 }
                 $actor = User::query()->where('is_active', true)->findOrFail((int) $this->option('actor-id'));
+                $persistenceTransactionOpened = true;
                 $result['apply'] = $apply->apply($actor, $plan);
             }
 
@@ -72,9 +78,12 @@ final class MasterDataReconcile extends Command
                 'workbook_physical_load_count' => $loader->physicalLoadCount(),
                 'workbook_physical_loads' => $loader->physicalLoads(),
                 'workbook_loads_inside_transaction' => 0,
-                'select_count' => $selects,
-                'write_count' => $writes,
-            ];
+                'select_count' => $queries['SELECT'],
+                'insert_count' => $queries['INSERT'],
+                'update_count' => $queries['UPDATE'],
+                'delete_count' => $queries['DELETE'],
+                'write_count' => $queries['INSERT'] + $queries['UPDATE'] + $queries['DELETE'],
+            ] + $performance->report();
 
             $this->line(json_encode($this->option('json') ? $result : collect($result)->except('preview.baseline')->all(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
             if (! $this->option('apply')) {
@@ -83,6 +92,20 @@ final class MasterDataReconcile extends Command
 
             return self::SUCCESS;
         } catch (\Throwable $exception) {
+            $this->line(json_encode([
+                'mode' => $this->option('apply') ? 'APPLY' : 'READ_ONLY',
+                'status' => 'FAILED',
+                'stage_reached' => $performance->stage(),
+                'elapsed_total_seconds' => round((hrtime(true) - $started) / 1e9, 6),
+                'workbook_physical_load_count' => $loader->physicalLoadCount(),
+                'workbook_physical_loads' => $loader->physicalLoads(),
+                'persistence_transaction_opened' => $persistenceTransactionOpened,
+                'plan_hash' => $plan?->planHash,
+                'completed_stage_timings' => $performance->timings(),
+                'query_counts' => array_change_key_case($queries, CASE_LOWER),
+                'exception_class' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
             $this->error($exception->getMessage());
 
             return self::FAILURE;

@@ -57,9 +57,9 @@ class RealStaffTransportAssignmentBootstrapService
         return DB::transaction(fn (): array => $this->persistPlan($actor, $plan));
     }
 
-    public function preparePlan(array $paths = [], ?string $masterPath = null): Collection
+    public function preparePlan(array $paths = [], ?string $masterPath = null, ?array $masterPlan = null): Collection
     {
-        return $this->plan($paths ?: $this->defaultPaths(), $masterPath);
+        return $this->plan($paths ?: $this->defaultPaths(), $masterPath, $masterPlan);
     }
 
     /** Persist a previously validated plan. The caller owns the transaction. */
@@ -93,7 +93,7 @@ class RealStaffTransportAssignmentBootstrapService
         return $this->result('APPLY', $plan) + ['created_staff_members' => $createdMembers, 'created_assignments' => $created];
     }
 
-    private function plan(array $paths, ?string $masterPath): Collection
+    private function plan(array $paths, ?string $masterPath, ?array $masterPlan = null): Collection
     {
         if (count($paths) !== 5) {
             throw ValidationException::withMessages(['sources' => 'Expected exactly five approved XLSX source files.']);
@@ -110,8 +110,11 @@ class RealStaffTransportAssignmentBootstrapService
                 throw ValidationException::withMessages(['sources' => "Route {$name} has an unexpected staff count."]);
             }
         }
-        $masterLinks = $this->masterLinks($paths, $masterPath);
-        $plan = $rows->map(function ($row) use ($masterLinks) {
+        $masterLinks = $this->masterLinks($paths, $masterPath, $masterPlan);
+        $routes = TransportRoute::query()->get();
+        $buses = Bus::query()->whereIn('vehicle_code', collect(self::ROUTES)->pluck('vehicle_code'))->get();
+        $assignments = VehicleStaffAssignment::query()->whereIn('change_reason', $rows->map(fn ($row) => $this->sourceTrace($row, $this->sourceKey($row))))->get()->groupBy('change_reason');
+        $plan = $rows->map(function ($row) use ($masterLinks, $routes, $buses, $assignments) {
             $sourceKey = $this->sourceKey($row);
             $route = RouteNameNormalizer::canonicalName($row['route']);
             $spec = self::ROUTES[$route];
@@ -119,9 +122,9 @@ class RealStaffTransportAssignmentBootstrapService
             if (! $link) {
                 throw ValidationException::withMessages(['identity' => "No canonical StaffMember identity for {$row['raw_full_name']}."]);
             }
-            $catalog = $this->catalogReference($route, $spec['vehicle_code']);
+            $catalog = $this->catalogReference($route, $spec['vehicle_code'], $routes, $buses);
             $trace = $this->sourceTrace($row, $sourceKey);
-            $existing = VehicleStaffAssignment::query()->where('change_reason', $trace)->get();
+            $existing = $assignments->get($trace, collect());
             if ($existing->count() > 1) {
                 throw ValidationException::withMessages(['assignment' => "Duplicate source-traced staff assignment {$sourceKey}."]);
             }
@@ -144,8 +147,15 @@ class RealStaffTransportAssignmentBootstrapService
         return $plan;
     }
 
-    private function masterLinks(array $paths, ?string $masterPath): Collection
+    private function masterLinks(array $paths, ?string $masterPath, ?array $masterPlan = null): Collection
     {
+        if ($masterPlan !== null) {
+            return collect($masterPlan['links'])->mapWithKeys(fn ($link) => [$link['source_key'] => [
+                'identity_status' => $link['staff_member_id'] ? 'MATCHED' : 'PLANNED_MASTER',
+                'staff_planning_key' => 'master-staff:'.$link['master_source_key'], 'master_source_key' => $link['master_source_key'],
+                'staff_member_id' => $link['staff_member_id'], 'display_name' => $link['master_name'],
+            ]]);
+        }
         if ($masterPath !== null && is_file($masterPath)) {
             $preview = $this->masterStaff->preview($masterPath, $paths);
 
@@ -170,10 +180,11 @@ class RealStaffTransportAssignmentBootstrapService
             });
     }
 
-    private function catalogReference(string $routeName, string $vehicleCode): array
+    private function catalogReference(string $routeName, string $vehicleCode, ?Collection $allRoutes = null, ?Collection $allBuses = null): array
     {
-        $routes = TransportRoute::query()->get()->filter(fn ($route) => $this->key($route->name) === $this->key($routeName))->values();
-        $buses = Bus::query()->where('vehicle_code', $vehicleCode)->get();
+        $routes = ($allRoutes ?? TransportRoute::query()->get())->filter(fn ($route) => $this->key($route->name) === $this->key($routeName))->values();
+        $buses = ($allBuses ?? Bus::query()->where('vehicle_code', $vehicleCode)->get())
+            ->filter(fn ($bus) => (string) $bus->vehicle_code === $vehicleCode)->values();
         if ($routes->count() > 1 || $buses->count() > 1) {
             throw ValidationException::withMessages(['mapping' => "Ambiguous catalog {$routeName}."]);
         }

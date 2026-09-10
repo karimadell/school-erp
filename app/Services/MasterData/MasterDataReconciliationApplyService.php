@@ -21,6 +21,7 @@ final class MasterDataReconciliationApplyService
         'transport_routes', 'buses', 'student_transport_assignments',
         'vehicle_staff_assignments', 'master_student_imports', 'staff_master_imports',
         'invoices', 'invoice_items', 'invoice_payments', 'student_service_subscriptions',
+        'audit_logs',
     ];
 
     public function __construct(

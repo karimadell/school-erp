@@ -27,14 +27,17 @@ use App\Services\MasterData\MasterDataReconciliationPreviewService;
 use App\Services\MasterData\MasterDataWorkbookParser;
 use App\Services\MasterData\MasterStaffImportService;
 use App\Services\MasterData\MasterStudentImportService;
+use App\Services\MasterData\ReconciliationBaseline;
 use App\Services\MasterData\WorkbookLoader;
 use App\Services\Transport\RealStaffTransportAssignmentBootstrapService;
 use App\Services\Transport\RealStudentTransportAssignmentBootstrapService;
 use App\Support\RouteNameNormalizer;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Schema;
 use Normalizer;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -389,6 +392,89 @@ class MasterDataImportTest extends TestCase
         $this->assertSame(134, $first->summary()['master_students']);
         $this->assertSame(63, $first->summary()['new_student_assignments']);
         $this->assertSame(11, $first->summary()['new_staff_assignments']);
+    }
+
+    public function test_subscription_finance_guard_uses_real_enrollment_linkage_and_complete_row_state(): void
+    {
+        $student = Student::query()->firstOrFail();
+        $enrollment = $student->enrollments()->firstOrFail();
+        $feeId = DB::table('fees')->insertGetId([
+            'name_ru' => 'Тестовая услуга', 'type' => 'service', 'amount' => 100,
+            'is_active' => true, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $subscriptionId = DB::table('student_service_subscriptions')->insertGetId([
+            'enrollment_id' => $enrollment->id, 'fee_id' => $feeId, 'start_date' => '2026-09-01',
+            'quantity' => 1, 'status' => 'active', 'metadata' => json_encode(['source' => 'guard-test']),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->assertFalse(Schema::hasColumn('student_service_subscriptions', 'student_id'));
+        $baseline = app(ReconciliationBaseline::class);
+        $baseline->assertSchema();
+        $before = $baseline->capture();
+        $this->assertContains($student->id, $before['protected_student_ids']);
+
+        DB::table('student_service_subscriptions')->where('id', $subscriptionId)->update(['quantity' => 2]);
+        $after = $baseline->capture();
+        $this->assertNotSame(
+            $before['tables']['student_service_subscriptions']['fingerprint'],
+            $after['tables']['student_service_subscriptions']['fingerprint'],
+        );
+    }
+
+    public function test_guarded_schema_audit_covers_every_fingerprinted_table(): void
+    {
+        app(ReconciliationBaseline::class)->assertSchema();
+        $this->assertContains('audit_logs', ReconciliationBaseline::TABLES);
+        foreach (ReconciliationBaseline::TABLES as $table) {
+            $this->assertTrue(Schema::hasTable($table), $table);
+            $this->assertTrue(Schema::hasColumn($table, 'id'), $table.'.id');
+        }
+    }
+
+    public function test_read_only_command_failure_reports_progress_without_opening_persistence_transaction(): void
+    {
+        $missing = sys_get_temp_dir().'/missing-reconciliation-source.xlsx';
+        $status = Artisan::call('master-data:reconcile', [
+            '--student-path' => $missing,
+            '--staff-path' => $this->staffPath,
+            '--transport-path' => $this->transportPaths,
+        ]);
+        $output = Artisan::output();
+        $this->assertSame(1, $status);
+        $this->assertStringContainsString('"mode": "READ_ONLY"', $output);
+        $this->assertStringContainsString('"status": "FAILED"', $output);
+        $this->assertStringContainsString('"persistence_transaction_opened": false', $output);
+        $this->assertStringContainsString('"workbook_physical_load_count"', $output);
+        $this->assertStringContainsString('"exception_class"', $output);
+    }
+
+    public function test_read_only_command_reports_bounded_stage_performance_and_remains_zero_write(): void
+    {
+        $this->resetToUatBaseline();
+        $before = $this->counts();
+        app()->forgetScopedInstances();
+        $status = Artisan::call('master-data:reconcile', [
+            '--student-path' => $this->studentPath,
+            '--staff-path' => $this->staffPath,
+            '--transport-path' => $this->transportPaths,
+            '--json' => true,
+        ]);
+        $json = strstr(Artisan::output(), "\nPREVIEW ONLY:", true) ?: Artisan::output();
+        $result = json_decode($json, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(0, $status);
+        $this->assertSame($before, $this->counts());
+        $this->assertSame(7, $result['performance']['workbook_physical_load_count']);
+        $this->assertSame(0, $result['performance']['workbook_loads_inside_transaction']);
+        $this->assertSame(0, $result['performance']['write_count']);
+        $this->assertSame(0, $result['performance']['insert_count']);
+        $this->assertSame(0, $result['performance']['update_count']);
+        $this->assertSame(0, $result['performance']['delete_count']);
+        $this->assertLessThan(500, $result['performance']['select_count']);
+        $this->assertArrayHasKey('schema_audit', $result['performance']['stage_seconds']);
+        $this->assertArrayHasKey('student_planning', $result['performance']['stage_seconds']);
+        $this->assertArrayHasKey('staff_planning', $result['performance']['stage_seconds']);
+        $this->assertArrayHasKey('baseline_fingerprinting', $result['performance']['stage_seconds']);
     }
 
     public function test_fast_apply_rejects_a_stale_baseline_before_first_business_write(): void

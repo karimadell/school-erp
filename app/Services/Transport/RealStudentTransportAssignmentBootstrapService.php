@@ -59,9 +59,9 @@ class RealStudentTransportAssignmentBootstrapService
         return DB::transaction(fn (): array => $this->persistPlan($actor, $plan));
     }
 
-    public function preparePlan(array $paths = [], ?string $masterPath = null): array
+    public function preparePlan(array $paths = [], ?string $masterPath = null, ?Collection $masterPlan = null): array
     {
-        return $this->plan($paths ?: $this->defaultPaths(), $masterPath);
+        return $this->plan($paths ?: $this->defaultPaths(), $masterPath, $masterPlan);
     }
 
     /** Persist a previously validated plan. The caller owns the transaction. */
@@ -91,7 +91,7 @@ class RealStudentTransportAssignmentBootstrapService
         return $this->result('APPLY', $plan) + ['created_assignments' => $created];
     }
 
-    private function plan(array $paths, ?string $masterPath): array
+    private function plan(array $paths, ?string $masterPath, ?Collection $masterPlan = null): array
     {
         if (count($paths) !== 5) {
             throw ValidationException::withMessages(['sources' => 'Expected exactly five approved XLSX source files.']);
@@ -109,7 +109,9 @@ class RealStudentTransportAssignmentBootstrapService
             }
         }
 
-        $identities = $this->studentIdentityPlan($masterPath);
+        $identities = $this->studentIdentityPlan($masterPath, $masterPlan);
+        $routes = TransportRoute::query()->get();
+        $buses = Bus::query()->whereIn('vehicle_code', collect(self::ROUTES)->pluck('vehicle_code'))->get();
         $current = collect();
         $history = collect();
         foreach ($rows as $row) {
@@ -126,7 +128,7 @@ class RealStudentTransportAssignmentBootstrapService
 
                 continue;
             }
-            $catalog = $this->catalogReference($routeName);
+            $catalog = $this->catalogReference($routeName, $routes, $buses);
             $enrollmentId = $identity['enrollment_id'];
             $overlaps = $enrollmentId ? StudentTransportAssignment::query()->where('enrollment_id', $enrollmentId)
                 ->whereDate('effective_from', '<=', '9999-12-31')
@@ -158,8 +160,19 @@ class RealStudentTransportAssignmentBootstrapService
         return ['current' => $current, 'history' => $history];
     }
 
-    private function studentIdentityPlan(?string $masterPath): Collection
+    private function studentIdentityPlan(?string $masterPath, ?Collection $masterPlan = null): Collection
     {
+        if ($masterPlan !== null) {
+            if ($masterPlan->where('action', 'REVIEW_REQUIRED')->isNotEmpty()) {
+                throw ValidationException::withMessages(['identity' => 'Master Student plan contains REVIEW_REQUIRED identities.']);
+            }
+
+            return $masterPlan->map(fn ($row) => [
+                'planning_key' => $row['planning_key'], 'master_source_key' => $row['source_key'],
+                'canonical_name' => $row['canonical_name'], 'aliases' => $row['source_aliases'],
+                'student_id' => $row['student_id'], 'enrollment_id' => $row['enrollment_id'],
+            ]);
+        }
         if ($masterPath !== null && is_file($masterPath)) {
             $preview = $this->masterStudents->preview($masterPath);
             if ($preview['review_required'] !== []) {
@@ -202,11 +215,12 @@ class RealStudentTransportAssignmentBootstrapService
         return $matches->first();
     }
 
-    private function catalogReference(string $name): array
+    private function catalogReference(string $name, ?Collection $allRoutes = null, ?Collection $allBuses = null): array
     {
         $mapping = self::ROUTES[$name] ?? throw ValidationException::withMessages(['route' => "Unknown route {$name}."]);
-        $routes = TransportRoute::query()->get()->filter(fn ($route) => $this->key($route->name) === $this->key($name))->values();
-        $buses = Bus::query()->where('vehicle_code', $mapping['vehicle_code'])->get();
+        $routes = ($allRoutes ?? TransportRoute::query()->get())->filter(fn ($route) => $this->key($route->name) === $this->key($name))->values();
+        $buses = ($allBuses ?? Bus::query()->where('vehicle_code', $mapping['vehicle_code'])->get())
+            ->filter(fn ($bus) => (string) $bus->vehicle_code === $mapping['vehicle_code'])->values();
         if ($routes->count() > 1 || $buses->count() > 1) {
             throw ValidationException::withMessages(['mapping' => "Canonical catalog reference {$name} is ambiguous."]);
         }

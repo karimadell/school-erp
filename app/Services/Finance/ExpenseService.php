@@ -46,9 +46,21 @@ class ExpenseService
 {
     public function __construct(private CashSessionService $sessions) {}
 
-    public function create(array $data, ?User $actor = null): Expense
+    public function create(array $data, User $actor): Expense
     {
-        if ($actor && empty($data['created_by'])) {
+        // Unconditional — this is the canonical creation entry point and
+        // must not rely on the caller (Filament's Policy-gated page) having
+        // already checked. 'manage expenses' is the existing, sole
+        // creation permission for this workflow (see ExpensePolicy::
+        // create()) — it covers both a draft and a default/immediate-paid
+        // creation; there is no separate 'pay expenses'-style permission
+        // for creating directly as paid, matching the pre-existing
+        // permission model exactly (only the explicit pay() transition on
+        // an already-approved expense requires the narrower
+        // 'post expenses').
+        abort_unless($actor->can('manage expenses'), 403);
+
+        if (empty($data['created_by'])) {
             $data['created_by'] = $actor->id;
         }
 

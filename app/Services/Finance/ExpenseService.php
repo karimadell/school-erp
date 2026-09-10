@@ -25,10 +25,35 @@ use Illuminate\Validation\ValidationException;
  * cash_transactions.expense_id before inserting, and that column's own
  * unique constraint as the database-level backstop against a concurrent
  * duplicate insert.
+ *
+ * create() is the canonical, atomic entry point for making a new Expense.
+ * A plain Eloquent Expense::create() is not itself wrapped in a database
+ * transaction, and this project's Filament panel does not enable
+ * page-level databaseTransactions() either — so for a default/immediately
+ * "paid" Expense, an unexpected failure inside the model's own
+ * created-hook-triggered postToLedger() call could otherwise leave a
+ * committed, paid Expense with no CashTransaction. create() closes that
+ * gap by opening its own DB::transaction() around Expense::create(): the
+ * insert still fires the existing Expense::booted() hooks exactly as
+ * before (no new hook, no second posting call, no recursion) — but now a
+ * failure anywhere in that chain rolls the insert back too, instead of
+ * leaving an orphaned paid row. See the class docblock's second paragraph
+ * for why the hook itself remains (backward compatibility for raw,
+ * non-service Expense::create() calls, which stay non-atomic by design —
+ * see docs on Expense::booted()).
  */
 class ExpenseService
 {
     public function __construct(private CashSessionService $sessions) {}
+
+    public function create(array $data, ?User $actor = null): Expense
+    {
+        if ($actor && empty($data['created_by'])) {
+            $data['created_by'] = $actor->id;
+        }
+
+        return DB::transaction(fn () => Expense::create($data));
+    }
 
     public function approve(Expense $expense, User $actor): Expense
     {

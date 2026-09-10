@@ -25,6 +25,21 @@ use LogicException;
  * hooks only decide *when* to call it — on creation for the legacy
  * immediate-paid path, and on any transition into 'paid' for the explicit
  * approve/pay workflow.
+ *
+ * ATOMICITY: this created-hook trigger is not, by itself, atomic with the
+ * Expense insert — a plain Model::create()/save() opens no transaction of
+ * its own. ExpenseService::create() is the canonical, atomic entry point:
+ * it wraps Expense::create() in DB::transaction(), so a failure inside
+ * postToLedger() (fired by the same hook, from within that transaction)
+ * rolls the insert back too. Every supported application entry point
+ * (the Filament CreateExpense page) goes through ExpenseService::create().
+ * A *raw* Expense::create() call made outside the service (as every
+ * pre-existing regression test does, and as any future direct/legacy
+ * caller might) keeps working identically for backward compatibility, but
+ * is not wrapped in an outer transaction by this model alone — that
+ * narrow window is a documented, deterministically-recoverable legacy
+ * compatibility path (re-calling ExpenseService::postToLedger() for the
+ * affected row completes the posting), not a defect in the hook itself.
  */
 class Expense extends Model
 {

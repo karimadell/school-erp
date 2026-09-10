@@ -33,10 +33,14 @@ final class MasterDataReconcile extends Command
         RealStudentTransportAssignmentBootstrapService $transport,
         WorkbookLoader $loader,
     ): int {
-        $oldReporting = error_reporting();
-        // PhpSpreadsheet currently emits known PHP 8.5 deprecations. Suppress
-        // only E_DEPRECATED during this command; warnings/errors/exceptions stay visible.
-        error_reporting($oldReporting & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+        // PhpSpreadsheet currently emits known PHP 8.5 deprecations. Consume
+        // only deprecations originating in that dependency; every other
+        // deprecation, warning, error, and exception follows the prior handler.
+        set_error_handler(
+            fn (int $severity, string $message, string $file): bool => in_array($severity, [E_DEPRECATED, E_USER_DEPRECATED], true)
+                && str_contains(str_replace('\\', '/', $file), '/vendor/phpoffice/phpspreadsheet/'),
+            E_DEPRECATED | E_USER_DEPRECATED,
+        );
         $selects = $writes = 0;
         DB::listen(function (QueryExecuted $query) use (&$selects, &$writes): void {
             $verb = strtoupper(strtok(ltrim($query->sql), " \t\n\r"));
@@ -83,7 +87,7 @@ final class MasterDataReconcile extends Command
 
             return self::FAILURE;
         } finally {
-            error_reporting($oldReporting);
+            restore_error_handler();
         }
     }
 }

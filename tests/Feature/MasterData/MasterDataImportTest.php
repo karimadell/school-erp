@@ -26,10 +26,12 @@ use App\Services\MasterData\MasterStaffImportService;
 use App\Services\MasterData\MasterStudentImportService;
 use App\Services\Transport\RealStaffTransportAssignmentBootstrapService;
 use App\Services\Transport\RealStudentTransportAssignmentBootstrapService;
+use App\Support\RouteNameNormalizer;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Normalizer;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
@@ -178,9 +180,20 @@ class MasterDataImportTest extends TestCase
         $before = $this->counts();
         $preview = app(MasterStudentImportService::class)->preview($this->studentPath);
         $studentTransport = app(RealStudentTransportAssignmentBootstrapService::class)->preview($this->transportPaths, $this->studentPath);
-        $staffTransport = app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->transportPaths, $this->staffPath);
         $studentTransportAgain = app(RealStudentTransportAssignmentBootstrapService::class)->preview($this->transportPaths, $this->studentPath);
-        $complete = app(MasterDataReconciliationPreviewService::class)->preview($this->studentPath, $this->staffPath, $this->transportPaths);
+        $warnings = [];
+        set_error_handler(function (int $severity, string $message) use (&$warnings): bool {
+            $warnings[] = [$severity, $message];
+
+            return true;
+        }, E_WARNING);
+        try {
+            $staffTransport = app(RealStaffTransportAssignmentBootstrapService::class)->preview($this->transportPaths, $this->staffPath);
+            $complete = app(MasterDataReconciliationPreviewService::class)->preview($this->studentPath, $this->staffPath, $this->transportPaths);
+            $completeAgain = app(MasterDataReconciliationPreviewService::class)->preview($this->studentPath, $this->staffPath, $this->transportPaths);
+        } finally {
+            restore_error_handler();
+        }
         $this->assertSame(134, $preview['source_rows']);
         $this->assertSame([], $preview['review_required']);
         $this->assertSame(63, $studentTransport['expected_assignments']);
@@ -190,10 +203,21 @@ class MasterDataImportTest extends TestCase
         $this->assertSame('Эль Ахья', collect($studentTransport['rows'])->firstWhere('canonical_name', 'Денисенко Александра')['route']);
         $this->assertSame(11, $staffTransport['expected_staff']);
         $this->assertSame(['PLANNED_MASTER' => 11], $staffTransport['identity_summary']);
+        $this->assertSame(['Арабия' => 2, 'Бествэй' => 3, 'Бритиш' => 2, 'Каусер' => 1, 'Эль Ахья' => 3], $staffTransport['by_route']);
+        $this->assertSame(['Арабия' => 13, 'Бествэй' => 12, 'Бритиш' => 12, 'Каусер' => 14, 'Эль Ахья' => 12], $studentTransport['by_route']);
+        $this->assertSame(RouteNameNormalizer::key('Бествэй'), RouteNameNormalizer::key(Normalizer::normalize('Бествэй', Normalizer::FORM_D)));
+        $this->assertSame([
+            'Арабия' => [13, 2, 15], 'Бествэй' => [12, 3, 15], 'Бритиш' => [12, 2, 14],
+            'Каусер' => [14, 1, 15], 'Эль Ахья' => [12, 3, 15],
+        ], collect($staffTransport['capacity'])->mapWithKeys(fn ($row) => [$row['route'] => [$row['students'], $row['peak_staff'], $row['peak_physical_occupancy']]])->all());
         $this->assertSame($studentTransport, $studentTransportAgain);
+        $this->assertSame($complete, $completeAgain);
+        $this->assertSame([], $warnings);
         $this->assertSame(63, $complete['student_transport']['expected_assignments']);
         $this->assertSame(11, $complete['staff_transport']['expected_staff']);
         $this->assertTrue($complete['capacity_valid']);
+        $this->assertSame(0, collect($complete['student_transport']['rows'])->where('canonical_name', 'Денисенко Александра')->where('route', 'Бритиш')->count());
+        $this->assertSame(1, collect($complete['student_transport']['historical_evidence'])->where('canonical_name', 'Денисенко Александра')->where('route', 'Бритиш')->count());
         $this->assertSame(['master_students', 'master_staff', 'transport_catalog', 'student_transport_assignments', 'vehicle_staff_assignments'], $complete['apply_order']);
         $this->assertSame($before, $this->counts());
     }
@@ -421,7 +445,8 @@ class MasterDataImportTest extends TestCase
             'Эль Ахья' => [...$ordinary->slice(50, 10)->values()->all(), 'Блинов Добрыня', 'Денисенко Александра'],
         ];
         foreach ($staffByRoute as $route => $names) {
-            $path = $dir.'/Трансфер_'.$route.'.xlsx';
+            $sourceRoute = Normalizer::normalize($route, Normalizer::FORM_D);
+            $path = $dir.'/Трансфер_'.$sourceRoute.'.xlsx';
             $studentRowsForRoute = collect($studentsByRoute[$route])->map(fn ($name) => [$name, '1', 'Точка ученика', '', ''])->all();
             $staffRowsForRoute = collect($names)->map(fn ($name) => [$name, 'сотр', 'Точка', '', ''])->all();
             $this->writeWorkbook($path, [['ФИО', 'Класс', 'Остановка', 'Телефон', 'Примечание']], [...$studentRowsForRoute, ...$staffRowsForRoute], 1);

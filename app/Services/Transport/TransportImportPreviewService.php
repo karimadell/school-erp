@@ -7,6 +7,7 @@ use App\Models\Enrollment;
 use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
+use App\Support\RouteNameNormalizer;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -42,13 +43,13 @@ class TransportImportPreviewService
             ->when($year, fn ($q) => $q->where('academic_year_id', $year->id))
             ->get();
         $users = User::query()->with('teacher')->where('is_active', true)->get();
-        $routes = TransportRoute::query()->get()->groupBy(fn ($route) => $this->key($route->name));
+        $routes = TransportRoute::query()->get()->groupBy(fn ($route) => RouteNameNormalizer::key($route->name));
         $assignments = StudentTransportAssignment::query()->with('enrollment.student')->where('status', StudentTransportAssignment::STATUS_ACTIVE)->get();
         $staffAssignments = \App\Models\VehicleStaffAssignment::query()->with('user')->whereNull('effective_to')->get();
 
         $previewRows = $rows->map(function (array $row) use ($enrollments, $users, $routes, $assignments, $staffAssignments) {
             $type = $this->classify($row);
-            $routeCandidates = $routes->get($this->key($row['route']), collect());
+            $routeCandidates = $routes->get(RouteNameNormalizer::key($row['route']), collect());
             $route = $routeCandidates->count() === 1 ? $routeCandidates->first() : null;
             $match = $type === 'STUDENT'
                 ? $this->matchStudent($row, $enrollments)
@@ -75,7 +76,7 @@ class TransportImportPreviewService
                 'route_id' => $route?->id,
                 'route_active' => $route?->is_active,
                 'route_candidates' => $routeCandidates->map(fn ($candidate) => ['route_id' => $candidate->id, 'name' => $candidate->name, 'is_active' => (bool) $candidate->is_active])->values()->all(),
-                'route_pricing_zone_hint' => self::ROUTE_ZONE_HINTS[$row['route']] ?? 'UNCONFIRMED',
+                'route_pricing_zone_hint' => self::ROUTE_ZONE_HINTS[RouteNameNormalizer::canonicalName($row['route'])] ?? 'UNCONFIRMED',
                 'vehicle_status' => 'VEHICLE_UNRESOLVED',
                 'conflicts' => array_values(array_merge($studentConflicts, $staffConflicts)),
                 'notes' => $type === 'UNKNOWN' ? 'Не найдено явное указание ученика или сотрудника (сотр).' : ($match['notes'] ?? null),
@@ -203,7 +204,7 @@ class TransportImportPreviewService
     {
         $base = pathinfo($path, PATHINFO_FILENAME);
 
-        return trim(preg_replace('/^Трансфер[_ -]*/u', '', $base));
+        return RouteNameNormalizer::canonicalName(preg_replace('/^Трансфер[_ -]*/u', '', $base));
     }
 
     private function key(?string $value): string
@@ -260,6 +261,7 @@ class TransportImportPreviewService
 
     private function capacity(Collection $rows): array
     {
-        return $rows->groupBy('route')->map(fn ($g, $route) => ['route' => $route, 'source_rows' => $g->count(), 'students' => $g->where('type', 'STUDENT')->count(), 'staff' => $g->where('type', 'STAFF')->count(), 'unknown' => $g->where('type', 'UNKNOWN')->count(), 'matched_students' => $g->where('type', 'STUDENT')->whereIn('match_status', ['EXACT', 'PROBABLE'])->count(), 'unmatched_students' => $g->where('type', 'STUDENT')->where('match_status', 'NOT_FOUND')->count(), 'ambiguous_students' => $g->where('type', 'STUDENT')->where('match_status', 'AMBIGUOUS')->count(), 'matched_staff' => $g->where('type', 'STAFF')->whereIn('match_status', ['EXACT', 'PROBABLE'])->count(), 'unmatched_staff' => $g->where('type', 'STAFF')->whereIn('match_status', ['NOT_FOUND', 'AMBIGUOUS'])->count(), 'student_capacity' => 14, 'status' => $g->where('type', 'STUDENT')->count() > 14 ? 'OVER_CAPACITY' : ($g->where('type', 'STUDENT')->count() === 14 ? 'FULL' : 'OK')])->values()->all();
+        return $rows->groupBy(fn ($row) => RouteNameNormalizer::key($row['route']))
+            ->map(fn ($g) => ['route' => RouteNameNormalizer::canonicalName($g->first()['route']), 'source_rows' => $g->count(), 'students' => $g->where('type', 'STUDENT')->count(), 'staff' => $g->where('type', 'STAFF')->count(), 'unknown' => $g->where('type', 'UNKNOWN')->count(), 'matched_students' => $g->where('type', 'STUDENT')->whereIn('match_status', ['EXACT', 'PROBABLE'])->count(), 'unmatched_students' => $g->where('type', 'STUDENT')->where('match_status', 'NOT_FOUND')->count(), 'ambiguous_students' => $g->where('type', 'STUDENT')->where('match_status', 'AMBIGUOUS')->count(), 'matched_staff' => $g->where('type', 'STAFF')->whereIn('match_status', ['EXACT', 'PROBABLE'])->count(), 'unmatched_staff' => $g->where('type', 'STAFF')->whereIn('match_status', ['NOT_FOUND', 'AMBIGUOUS'])->count(), 'student_capacity' => 14, 'status' => $g->where('type', 'STUDENT')->count() > 14 ? 'OVER_CAPACITY' : ($g->where('type', 'STUDENT')->count() === 14 ? 'FULL' : 'OK')])->values()->all();
     }
 }

@@ -9,6 +9,7 @@ use App\Models\TransportRoute;
 use App\Models\User;
 use App\Models\VehicleStaffAssignment;
 use App\Services\Transport\TransportImportPreviewService;
+use App\Support\RouteNameNormalizer;
 use App\Support\TransportPermissions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -103,7 +104,7 @@ class MasterStaffImportService
                     $masterImport = StaffMasterImport::where('source_key', $master['source_key'])->first();
                     $confirmedStalePhone = in_array($display, ['Лебедева Г.Г.', 'Чумакова В.В.', 'Щербакова О.В.'], true);
                     $sourceKey = hash('sha256', json_encode([$row['source_file'], $row['source_sheet'], $row['source_row'], $row['raw_full_name']], JSON_UNESCAPED_UNICODE));
-                    $catalogItem = collect($catalog)->firstWhere('canonical_name', $row['route']);
+                    $catalogItem = collect($catalog)->first(fn ($item) => RouteNameNormalizer::key($item['canonical_name']) === RouteNameNormalizer::key($row['route']));
                     $links->push($row + ['display_name' => $display, 'source_key' => $sourceKey, 'master_source_key' => $master['source_key'], 'staff_member_id' => $masterImport?->staff_member_id, 'master_name' => $master['raw_name'], 'master_row' => $master['source_row'], 'position' => $master['position'],
                         'master_phone' => $master['raw_contact'], 'phone_evidence' => $confirmedStalePhone ? 'CONFIRMED_IDENTITY_STALE_PHONE_PRESERVED' : 'MATCH/NOT_REQUIRED', 'status' => 'CONFIRMED', 'weekdays' => $this->weekdays($row['raw_full_name'].' '.$row['raw_notes']),
                         'staff_member_id' => $master['staff_member_id'], 'route_id' => $catalogItem['route_id'], 'bus_id' => $catalogItem['bus_id'],
@@ -125,11 +126,13 @@ class MasterStaffImportService
 
     private function catalogPlan(array $paths): array
     {
-        $source = collect($paths)->flatMap(fn ($path) => $this->transport->parseWorkbook($path))->groupBy('route');
+        $source = collect($paths)->flatMap(fn ($path) => $this->transport->parseWorkbook($path))
+            ->groupBy(fn ($row) => RouteNameNormalizer::key($row['route']));
         $routes = TransportRoute::query()->with('buses')->get();
 
-        return $source->map(function ($rows, $name) use ($routes) {
-            $matches = $routes->filter(fn ($route) => $this->canonical($this->key($route->name)) === $this->canonical($this->key($name)))->values();
+        return $source->map(function ($rows) use ($routes) {
+            $name = RouteNameNormalizer::canonicalName($rows->first()['route']);
+            $matches = $routes->filter(fn ($route) => RouteNameNormalizer::key($route->name) === RouteNameNormalizer::key($name))->values();
             if ($matches->count() > 1) {
                 throw ValidationException::withMessages(['transport_catalog' => "Multiple existing routes match {$name}."]);
             }
@@ -173,11 +176,6 @@ class MasterStaffImportService
     private function key(string $v): string
     {
         return mb_strtolower(str_replace('ё', 'е', trim($v)));
-    }
-
-    private function canonical(string $v): string
-    {
-        return class_exists(\Normalizer::class) ? \Normalizer::normalize($v, \Normalizer::FORM_C) : $v;
     }
 
     private function weekdays(string $v): ?array

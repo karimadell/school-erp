@@ -77,7 +77,50 @@ class FinanceOperationsController extends Controller
                 'overdue' => $this->money(Invoice::overdue()->sum('remaining_amount')),
                 'today' => $this->money(InvoicePayment::whereDate('paid_at', today())->sum('amount')),
             ],
+            'operationalSummary' => $this->operationalSummary(),
         ]);
+    }
+
+    /**
+     * Finance Workspace UX corrective — the four top-of-page operational
+     * cards (Приход/Расход/Чистый поток сегодня, Общий остаток). Read
+     * directly from the canonical ledger (CashTransaction) and the
+     * canonical, already-maintained CashAccount.balance column — this is
+     * the same single source of truth every posting service (ExpenseService,
+     * InvoicePaymentService, EmployeePayrollService, CashTransferService)
+     * already writes to, so this never duplicates or re-derives ledger math
+     * of its own. Internal transfers are excluded from the in/out figures
+     * (a transfer is not real income or expense) the same way
+     * CashOperationsController's own per-account today figures do.
+     *
+     * @return array{income_today:string, expense_today:string, net_today:string, total_balance:string}
+     */
+    private function operationalSummary(): array
+    {
+        $today = today();
+
+        $incomeToday = $this->money(
+            \App\Models\CashTransaction::query()
+                ->where('type', \App\Models\CashTransaction::TYPE_IN)
+                ->where('category', '!=', \App\Models\CashTransaction::CATEGORY_TRANSFER)
+                ->whereDate('created_at', $today)
+                ->sum('amount')
+        );
+
+        $expenseToday = $this->money(
+            \App\Models\CashTransaction::query()
+                ->where('type', \App\Models\CashTransaction::TYPE_OUT)
+                ->where('category', '!=', \App\Models\CashTransaction::CATEGORY_TRANSFER)
+                ->whereDate('created_at', $today)
+                ->sum('amount')
+        );
+
+        return [
+            'income_today' => $incomeToday,
+            'expense_today' => $expenseToday,
+            'net_today' => bcsub($incomeToday, $expenseToday, 2),
+            'total_balance' => $this->money(CashAccount::query()->where('is_active', true)->sum('balance')),
+        ];
     }
 
     public function student(Student $student, ServiceCoverageService $coverageService): View

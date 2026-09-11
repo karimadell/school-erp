@@ -85,32 +85,27 @@
         ],
         [
             'label' => 'Финансы',
+            // Finance Workspace UX corrective — the operational sidebar no
+            // longer exposes the backend's internal modules (invoices,
+            // collections, mass billing, service catalog/pricing, cash
+            // sub-pages, expense categories, payees...) as separate nav
+            // entries. An operational user now sees only five entries,
+            // matching how they actually think about money: the workspace
+            // home, Приход (money in), Расход (money out), Касса
+            // (accounts/balances/operations) and Отчёты (reports). Every
+            // route removed from here still exists and still works — it is
+            // reachable from inside the five simplified pages (e.g. "Выставить
+            // счёт" from Финансы, "Услуги и тарифы" as a technical settings
+            // link) or directly by URL as a technical/admin fallback; nothing
+            // was deleted. See docs on IncomeEntryController and
+            // FinanceOperationsController::operationalSummary() for the
+            // Приход/summary-card side of this corrective.
             'items' => [
                 ['label' => __('finance_uat.student_finance'), 'icon' => 'landmark', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.workspace' : null, 'active' => 'dashboard.finance.workspace'],
-                // Phase 2A — read-only Collections/«Поступления» over confirmed InvoicePayment/PaymentRefund records.
-                ['label' => 'Поступления', 'icon' => 'payments', 'route' => auth()->user()?->can('view collections') ? 'dashboard.finance.collections.index' : null, 'active' => 'dashboard.finance.collections.*'],
-                ['label' => __('finance_uat.invoices'), 'icon' => 'receipt', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.invoices.index' : null, 'active' => 'dashboard.invoices.*'],
-                ['label' => 'Массовое начисление', 'icon' => 'banknote', 'route' => auth()->user()?->can('view mass billing') ? 'dashboard.finance.mass-billing.index' : null, 'active' => 'dashboard.finance.mass-billing.*'],
-                ['label' => __('finance_uat.services_and_fees'), 'icon' => 'credit_card', 'route' => auth()->user()?->can('manage fees') ? 'dashboard.finance.services.index' : null, 'active' => 'dashboard.finance.services.*'],
-                ['label' => __('finance_uat.service_prices'), 'icon' => 'payments', 'route' => auth()->user()?->can('manage fee prices') ? 'dashboard.finance.tariffs.index' : null, 'active' => 'dashboard.finance.tariffs.*'],
-                // Платежи: no standalone page — payments happen as an action from within Счета.
-                ['label' => 'Касса', 'icon' => 'landmark', 'route' => 'dashboard.cash.ledger', 'active' => 'dashboard.cash.ledger'],
-                // Cash Operations Phase 1 — daily handover / owner-return.
-                ['label' => 'Операции с кассой', 'icon' => 'briefcase', 'route' => auth()->user()?->hasAnyPermission(['manage cash', 'transfer cash', 'view cash reports']) ? 'dashboard.cash.operations.index' : null, 'active' => 'dashboard.cash.operations.*'],
-                ['label' => 'Кассовые смены', 'icon' => 'briefcase', 'route' => auth()->user()?->can('view cash sessions') ? 'dashboard.cash.sessions.index' : null, 'active' => 'dashboard.cash.sessions.*'],
-                ['label' => 'Кассовые счета', 'icon' => 'briefcase', 'route' => 'dashboard.cash.accounts', 'active' => 'dashboard.cash.accounts'],
-                // Corrective pass: these three used to link straight into
-                // Filament (/admin/...), taking an operational user out of
-                // the unified dashboard shell entirely. They now open the
-                // dashboard-native Expenses V1 pages (ExpenseController /
-                // ExpenseCategoryController / PayeeController) instead —
-                // Filament's resources are untouched and still reachable
-                // directly as a technical fallback, just no longer linked
-                // from here.
-                ['label' => __('finance_uat.expenses'), 'icon' => 'trending_down', 'route' => auth()->user()?->can('manage expenses') ? 'dashboard.finance.expenses.index' : null, 'active' => 'dashboard.finance.expenses.*'],
-                ['label' => __('expenses.nav_categories'), 'icon' => 'tag', 'route' => auth()->user()?->can('manage expenses') ? 'dashboard.finance.expense-categories.index' : null, 'active' => 'dashboard.finance.expense-categories.*'],
-                ['label' => __('expenses.nav_payees'), 'icon' => 'contacts', 'route' => auth()->user()?->can('manage expenses') ? 'dashboard.finance.payees.index' : null, 'active' => 'dashboard.finance.payees.*'],
-                ['label' => __('finance_uat.financial_reports'), 'icon' => 'pie_chart', 'route' => auth()->user()?->can('view cash reports') ? 'dashboard.cash.reports' : null, 'active' => 'dashboard.cash.reports'],
+                ['label' => __('finance_workspace.add_income'), 'icon' => 'payments', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.income.index' : null, 'active' => 'dashboard.finance.income.*'],
+                ['label' => __('finance_workspace.add_expense'), 'icon' => 'trending_down', 'route' => auth()->user()?->can('manage expenses') ? 'dashboard.finance.expenses.index' : null, 'active' => ['dashboard.finance.expenses.*', 'dashboard.finance.expense-categories.*', 'dashboard.finance.payees.*']],
+                ['label' => __('finance_workspace.cash'), 'icon' => 'briefcase', 'route' => auth()->user()?->hasAnyPermission(['manage cash', 'transfer cash', 'view cash reports']) ? 'dashboard.cash.operations.index' : null, 'active' => ['dashboard.cash.operations.*', 'dashboard.cash.accounts', 'dashboard.cash.accounts.*', 'dashboard.cash.sessions.*', 'dashboard.cash.ledger', 'dashboard.cash.transactions', 'dashboard.cash.transfers', 'dashboard.cash.transfer.*', 'dashboard.cash.income', 'dashboard.cash.expenses*']],
+                ['label' => __('finance_workspace.reports'), 'icon' => 'pie_chart', 'route' => auth()->user()?->can('view cash reports') ? 'dashboard.cash.reports' : null, 'active' => 'dashboard.cash.reports'],
             ],
         ],
         [

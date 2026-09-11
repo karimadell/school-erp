@@ -9,11 +9,12 @@
             <small class="text-muted">{{ __('cash_operations.subtitle') }}</small>
         </div>
         <div class="d-flex gap-2 flex-wrap">
+            <a href="{{ route('dashboard.cash.accounts') }}" class="btn btn-outline-secondary">{{ __('cash_operations.all_accounts_action') }}</a>
+            @can('view cash sessions')
+                <a href="{{ route('dashboard.cash.sessions.index') }}" class="btn btn-outline-secondary">{{ __('cash_operations.sessions_action') }}</a>
+            @endcan
             @can('open cash sessions')
                 <a href="{{ route('dashboard.cash.sessions.create') }}" class="btn btn-outline-secondary">{{ __('cash_operations.open_shift_action') }}</a>
-            @endcan
-            @can('close cash sessions')
-                <a href="{{ route('dashboard.cash.sessions.index') }}" class="btn btn-outline-secondary">{{ __('cash_operations.close_shift_action') }}</a>
             @endcan
             @canany(['manage cash', 'transfer cash'])
                 <a href="{{ route('dashboard.cash.transfer.form') }}" class="btn btn-outline-primary">{{ __('cash_operations.generic_transfer_action') }}</a>

@@ -54,22 +54,44 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             ->assertForbidden();
     }
 
-    public function test_employee_finance_navigation_uses_dashboard_routes(): void
+    /**
+     * Finance Workspace UX corrective: the operational Финансы sidebar
+     * group is now exactly 5 entries (Финансы/Приход/Расход/Касса/Отчёты)
+     * — every backend module it used to expose directly (service catalog,
+     * pricing, the raw invoice list, mass billing, collections, expense
+     * categories/payees, cash sub-pages) stays fully functional but is no
+     * longer a separate sidebar link. See ExpenseNavigationTest for the
+     * dedicated Расход-family regression coverage of this same corrective.
+     */
+    public function test_employee_finance_navigation_is_simplified_to_five_entries(): void
     {
         $response = $this->actingAs($this->user('admin'))->get(route('dashboard.finance.workspace'));
 
         $response->assertOk()
-            ->assertSee(route('dashboard.finance.services.index'), false)
-            ->assertSee(route('dashboard.finance.tariffs.index'), false)
-            ->assertSee(route('dashboard.invoices.index'), false)
-            // Corrective pass: Expenses now links to the dashboard-native
-            // page, not straight into Filament — see ExpenseNavigationTest
-            // for the dedicated regression coverage of this.
+            // The 5 operational entries that must remain.
+            ->assertSee(route('dashboard.finance.workspace'), false)
+            ->assertSee(route('dashboard.finance.income.index'), false)
             ->assertSee(route('dashboard.finance.expenses.index'), false)
-            ->assertDontSee(route('filament.admin.resources.expenses.index'), false)
-            ->assertDontSee(route('dashboard.cash.expenses'), false)
+            ->assertSee(route('dashboard.cash.operations.index'), false)
             ->assertSee(route('dashboard.cash.reports'), false)
-            ->assertSee(route('dashboard.finance.workspace'), false);
+            // Internal backend modules no longer get their own sidebar link.
+            // dashboard.invoices.index is checked as a quoted href, not a
+            // bare substring — the page legitimately still shows a
+            // "Выставить счёт" link to the (distinct) dashboard.invoices.create
+            // URL, which shares the removed index route as a URL prefix.
+            ->assertDontSee(route('dashboard.finance.services.index'), false)
+            ->assertDontSee(route('dashboard.finance.tariffs.index'), false)
+            ->assertDontSee('href="'.route('dashboard.invoices.index').'"', false)
+            ->assertDontSee(route('dashboard.finance.mass-billing.index'), false)
+            ->assertDontSee(route('dashboard.finance.collections.index'), false)
+            ->assertDontSee(route('dashboard.finance.expense-categories.index'), false)
+            ->assertDontSee(route('dashboard.finance.payees.index'), false)
+            ->assertDontSee(route('dashboard.cash.sessions.index'), false)
+            ->assertDontSee(route('dashboard.cash.accounts'), false)
+            ->assertDontSee(route('dashboard.cash.ledger'), false)
+            // Never Filament, never the legacy raw-CashTransaction expense page.
+            ->assertDontSee(route('filament.admin.resources.expenses.index'), false)
+            ->assertDontSee(route('dashboard.cash.expenses'), false);
     }
 
     public function test_whatsapp_uses_primary_representative_without_exposing_private_pdf_url(): void

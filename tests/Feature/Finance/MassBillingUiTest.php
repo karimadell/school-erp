@@ -30,12 +30,20 @@ class MassBillingUiTest extends MassBillingTestCase
 
     // ----- Navigation -----------------------------------------------------
 
-    public function test_authorized_user_sees_mass_billing_navigation_label(): void
+    /**
+     * Finance Workspace UX corrective: Mass Billing is a technical/internal
+     * module and no longer gets its own operational sidebar entry (the
+     * Финансы group is now just Финансы/Приход/Расход/Касса/Отчёты) — the
+     * route itself is untouched and stays reachable directly, see the
+     * route-authorization tests below.
+     */
+    public function test_mass_billing_is_not_a_standalone_sidebar_entry(): void
     {
         $this->actingAs($this->accountant)
             ->get(route('dashboard.index'))
             ->assertOk()
-            ->assertSee('Массовое начисление');
+            ->assertDontSee('Массовое начисление')
+            ->assertDontSee(route('dashboard.finance.mass-billing.index'), false);
     }
 
     public function test_navigation_is_hidden_for_user_without_view_permission(): void

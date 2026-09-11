@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use App\Models\Payee;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -62,6 +63,26 @@ class PayeeController extends Controller
         return redirect()
             ->route('dashboard.finance.payees.index')
             ->with('success', __('expenses.payee_updated_notification'));
+    }
+
+    /**
+     * Finance Workspace UX corrective — inline "+ Новый контрагент"
+     * creation from within the Expense form, mirroring
+     * ExpenseCategoryController::quickStore(). Always active for the same
+     * reason (immediate selectability); phone/notes stay optional exactly
+     * as the full form allows.
+     */
+    public function quickStore(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'phone' => ['nullable', 'string', 'max:50'],
+            'notes' => ['nullable', 'string'],
+        ]);
+
+        $payee = Payee::create([...$data, 'is_active' => true]);
+
+        return response()->json(['id' => $payee->id, 'name' => $payee->name]);
     }
 
     private function validatePayee(Request $request): array

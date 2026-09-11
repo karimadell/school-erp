@@ -11,6 +11,7 @@ use App\Models\VehicleStaffAssignment;
 use App\Services\Transport\TransportImportPreviewService;
 use App\Support\RouteNameNormalizer;
 use App\Support\TransportPermissions;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -51,10 +52,9 @@ class MasterStaffImportService
 
         $created = 0;
         $metadata = StaffMasterImport::query()->whereIn('source_key', $plan['staff']->pluck('source_key'))->lockForUpdate()->get()->keyBy('source_key');
-        $locators = StaffMasterImport::query()->whereIn('source_file', $plan['staff']->pluck('source_file')->unique())->lockForUpdate()->get()
-            ->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        $locators = $this->importsByLocator(StaffMasterImport::query()->whereIn('source_file', $plan['staff']->pluck('source_file')->unique())->lockForUpdate()->get());
         foreach ($plan['staff'] as $item) {
-            $locator = $locators->get($item['source_file']."\0".$item['source_sheet']."\0".$item['source_row']);
+            $locator = $locators->get($this->locatorKey($item['source_file'], $item['source_sheet'], $item['source_row']));
             if ($locator && $locator->source_key !== $item['source_key']) {
                 throw ValidationException::withMessages(['source' => 'Staff master source row changed after import.']);
             }
@@ -81,11 +81,11 @@ class MasterStaffImportService
         $existingStaff = StaffMember::query()->get()->groupBy(fn ($member) => $this->key($member->display_name));
         $sourceRows = collect($this->parser->staff($path));
         $imports = StaffMasterImport::query()->whereIn('source_file', $sourceRows->pluck('source_file')->unique())->get();
-        $importsByLocator = $imports->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        $importsByLocator = $this->importsByLocator($imports);
         $importsByKey = $imports->keyBy('source_key');
         $staff = $sourceRows->map(function ($r) use ($existingStaff, $importsByLocator, $importsByKey) {
             $sourceKey = $this->parser->sourceKey($r);
-            $locator = $importsByLocator->get($r['source_file']."\0".$r['source_sheet']."\0".$r['source_row']);
+            $locator = $importsByLocator->get($this->locatorKey($r['source_file'], $r['source_sheet'], $r['source_row']));
             if ($locator && $locator->source_key !== $sourceKey) {
                 throw ValidationException::withMessages(['source' => "Staff master source row {$r['source_sheet']}:{$r['source_row']} changed after import."]);
             }
@@ -135,6 +135,24 @@ class MasterStaffImportService
         }
 
         return ['staff' => $staff, 'links' => $links, 'catalog' => collect($catalog)];
+    }
+
+    private function importsByLocator(Collection $imports): Collection
+    {
+        return $imports->groupBy(fn (StaffMasterImport $row) => $this->locatorKey($row->source_file, $row->source_sheet, $row->source_row))
+            ->map(function (Collection $rows, string $locator): StaffMasterImport {
+                if ($rows->count() !== 1) {
+                    [$file, $sheet, $row] = explode("\0", $locator);
+                    throw ValidationException::withMessages(['source' => "Duplicate staff master import locator: {$file} / {$sheet} / {$row}."]);
+                }
+
+                return $rows->first();
+            });
+    }
+
+    private function locatorKey(string $file, string $sheet, int|string $row): string
+    {
+        return $file."\0".$sheet."\0".(int) $row;
     }
 
     private function result(string $mode, array $p): array

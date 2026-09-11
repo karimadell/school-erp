@@ -33,6 +33,7 @@ use App\Services\Transport\RealStaffTransportAssignmentBootstrapService;
 use App\Services\Transport\RealStudentTransportAssignmentBootstrapService;
 use App\Support\RouteNameNormalizer;
 use Database\Seeders\RolesAndPermissionsSeeder;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -394,6 +395,146 @@ class MasterDataImportTest extends TestCase
         $this->assertSame(11, $first->summary()['new_staff_assignments']);
     }
 
+    public function test_guarded_change_during_planning_fails_closed_before_a_plan_or_transaction(): void
+    {
+        $this->resetToUatBaseline();
+        $before = $this->counts();
+        $mutated = false;
+        DB::listen(function ($query) use (&$mutated): void {
+            if (! $mutated && str_contains($query->sql, 'from "academic_years"') && str_contains($query->sql, 'where "academic_years"."id"')) {
+                $mutated = true;
+                DB::table('stages')->where('id', 1)->update(['description' => 'concurrent planning drift']);
+            }
+        });
+
+        try {
+            app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+            $this->fail('Expected planning drift to fail closed.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('changed during reconciliation planning', $exception->getMessage());
+        }
+
+        $this->assertTrue($mutated);
+        $after = $this->counts();
+        $this->assertSame($before, $after);
+        $this->assertSame('concurrent planning drift', Stage::findOrFail(1)->description);
+        $this->assertSame(0, MasterStudentImport::count());
+        $this->assertSame(0, StaffMasterImport::count());
+    }
+
+    #[DataProvider('academicReferenceMutations')]
+    public function test_academic_reference_change_invalidates_a_validated_plan_baseline(string $table, string $column, mixed $value): void
+    {
+        $this->resetToUatBaseline();
+        $plan = app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+        DB::table($table)->where('id', 1)->update([$column => $value]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('stale');
+        app(ReconciliationBaseline::class)->assertSame($plan->baseline, app(ReconciliationBaseline::class)->capture());
+    }
+
+    public static function academicReferenceMutations(): array
+    {
+        return [
+            'academic year' => ['academic_years', 'name', 'changed year'],
+            'enrollment mode' => ['enrollment_modes', 'name_ru', 'changed mode'],
+            'stage' => ['stages', 'name', 'changed stage'],
+            'grade' => ['grades', 'name', 'changed grade'],
+            'class' => ['classes', 'code', 'changed-class'],
+        ];
+    }
+
+    public function test_expanded_schema_audit_fails_before_any_workbook_load(): void
+    {
+        Schema::table('transport_routes', fn (Blueprint $table) => $table->renameColumn('pricing_zone', 'pricing_zone_missing'));
+        app()->forgetScopedInstances();
+        try {
+            app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths);
+            $this->fail('Expected missing planned column to fail schema audit.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString('transport_routes', $exception->getMessage());
+            $this->assertStringContainsString('pricing_zone', $exception->getMessage());
+            $this->assertSame(0, app(WorkbookLoader::class)->physicalLoadCount());
+        } finally {
+            Schema::table('transport_routes', fn (Blueprint $table) => $table->renameColumn('pricing_zone_missing', 'pricing_zone'));
+            app()->forgetScopedInstances();
+        }
+    }
+
+    #[DataProvider('duplicateImportLocators')]
+    public function test_duplicate_import_locator_fails_closed_independent_of_insertion_order(string $domain, bool $reverse): void
+    {
+        $rows = $domain === 'student'
+            ? app(MasterDataWorkbookParser::class)->students($this->studentPath)
+            : app(MasterDataWorkbookParser::class)->staff($this->staffPath);
+        $row = $rows[0];
+        $keys = $reverse ? ['duplicate-b', 'duplicate-a'] : ['duplicate-a', 'duplicate-b'];
+
+        foreach ($keys as $key) {
+            if ($domain === 'student') {
+                MasterStudentImport::forceCreate([
+                    'source_key' => hash('sha256', $key), 'source_file' => $row['source_file'], 'source_sheet' => $row['source_sheet'], 'source_row' => $row['source_row'],
+                    'raw_name' => $row['raw_name'], 'raw_class_group' => $row['raw_class_group'], 'attendance_marker' => $row['attendance_marker'],
+                    'resolution_status' => 'NEW', 'source_data' => $row,
+                ]);
+            } else {
+                StaffMasterImport::forceCreate([
+                    'source_key' => hash('sha256', $key), 'source_file' => $row['source_file'], 'source_sheet' => $row['source_sheet'], 'source_row' => $row['source_row'],
+                    'raw_name' => $row['raw_name'], 'position' => $row['position'], 'raw_contact' => $row['raw_contact'], 'raw_birth_date' => $row['raw_birth_date'], 'source_data' => $row,
+                ]);
+            }
+        }
+
+        try {
+            $domain === 'student'
+                ? app(MasterStudentImportService::class)->preparePlan($this->studentPath)
+                : app(MasterStaffImportService::class)->preparePlan($this->staffPath, $this->transportPaths);
+            $this->fail('Expected duplicate locator failure.');
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+            $this->assertStringContainsString($domain === 'student' ? 'Duplicate master student' : 'Duplicate staff master', $exception->getMessage());
+            $this->assertStringContainsString((string) $row['source_row'], $exception->getMessage());
+        }
+    }
+
+    #[DataProvider('importDomains')]
+    public function test_one_unique_import_locator_preserves_normal_planning(string $domain): void
+    {
+        $rows = $domain === 'student'
+            ? app(MasterDataWorkbookParser::class)->students($this->studentPath)
+            : app(MasterDataWorkbookParser::class)->staff($this->staffPath);
+        $row = $rows[0];
+        $attributes = [
+            'source_key' => hash('sha256', "unique-{$domain}"), 'source_file' => $row['source_file'],
+            'source_sheet' => $row['source_sheet'], 'source_row' => 999999, 'raw_name' => 'Unused locator',
+            'source_data' => ['unused' => true],
+        ];
+        if ($domain === 'student') {
+            MasterStudentImport::forceCreate($attributes + ['raw_class_group' => '1', 'resolution_status' => 'NEW']);
+            $plan = app(MasterStudentImportService::class)->preparePlan($this->studentPath);
+            $this->assertCount(134, $plan);
+        } else {
+            StaffMasterImport::forceCreate($attributes);
+            $plan = app(MasterStaffImportService::class)->preparePlan($this->staffPath, $this->transportPaths);
+            $this->assertCount(26, $plan['staff']);
+        }
+    }
+
+    public static function duplicateImportLocators(): array
+    {
+        return [
+            'student forward' => ['student', false],
+            'student reverse' => ['student', true],
+            'staff forward' => ['staff', false],
+            'staff reverse' => ['staff', true],
+        ];
+    }
+
+    public static function importDomains(): array
+    {
+        return ['student' => ['student'], 'staff' => ['staff']];
+    }
+
     public function test_subscription_finance_guard_uses_real_enrollment_linkage_and_complete_row_state(): void
     {
         $student = Student::query()->firstOrFail();
@@ -474,7 +615,8 @@ class MasterDataImportTest extends TestCase
         $this->assertArrayHasKey('schema_audit', $result['performance']['stage_seconds']);
         $this->assertArrayHasKey('student_planning', $result['performance']['stage_seconds']);
         $this->assertArrayHasKey('staff_planning', $result['performance']['stage_seconds']);
-        $this->assertArrayHasKey('baseline_fingerprinting', $result['performance']['stage_seconds']);
+        $this->assertArrayHasKey('baseline_before_planning', $result['performance']['stage_seconds']);
+        $this->assertArrayHasKey('baseline_after_planning', $result['performance']['stage_seconds']);
     }
 
     public function test_fast_apply_rejects_a_stale_baseline_before_first_business_write(): void

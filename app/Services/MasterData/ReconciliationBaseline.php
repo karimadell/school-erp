@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Schema;
 final class ReconciliationBaseline
 {
     public const TABLES = [
+        'academic_years', 'enrollment_modes', 'stages', 'grades', 'classes',
         'students', 'enrollments', 'student_listener_placements', 'staff_members',
         'transport_routes', 'buses', 'student_transport_assignments',
         'vehicle_staff_assignments', 'master_student_imports', 'staff_master_imports',
@@ -20,16 +21,21 @@ final class ReconciliationBaseline
     ];
 
     private const REQUIRED_COLUMNS = [
-        'students' => ['id'],
-        'enrollments' => ['id', 'student_id'],
-        'student_listener_placements' => ['id', 'student_id'],
-        'staff_members' => ['id'],
-        'transport_routes' => ['id'],
-        'buses' => ['id', 'transport_route_id'],
-        'student_transport_assignments' => ['id', 'enrollment_id', 'transport_route_id', 'bus_id'],
-        'vehicle_staff_assignments' => ['id', 'staff_member_id', 'bus_id'],
-        'master_student_imports' => ['id', 'student_id'],
-        'staff_master_imports' => ['id', 'staff_member_id'],
+        'academic_years' => ['id', 'name', 'start_date', 'end_date', 'is_active'],
+        'enrollment_modes' => ['id', 'code', 'name_ru', 'is_active'],
+        'stages' => ['id', 'name', 'order', 'is_active'],
+        'grades' => ['id', 'stage_id', 'name', 'level'],
+        'classes' => ['id', 'grade_id', 'code', 'name_ar', 'name_ru', 'capacity', 'is_active'],
+        'students' => ['id', 'name', 'preferred_name', 'merged_into_student_id', 'status', 'first_name_ru', 'last_name_ru', 'patronymic_ru', 'address', 'residential_address', 'registration_status', 'created_at', 'updated_at', 'deleted_at'],
+        'enrollments' => ['id', 'student_id', 'academic_year_id', 'enrollment_mode_id', 'study_attendance_mode', 'stage_id', 'grade_id', 'class_id', 'academic_year', 'enrollment_date', 'enrolled_at', 'status', 'is_active', 'created_at', 'updated_at'],
+        'student_listener_placements' => ['id', 'student_id', 'academic_year_id', 'stage_id', 'grade_id', 'class_id', 'source_marker', 'status', 'effective_from', 'effective_to', 'created_at', 'updated_at'],
+        'staff_members' => ['id', 'display_name', 'phone', 'user_id', 'is_active', 'created_at', 'updated_at'],
+        'transport_routes' => ['id', 'name', 'pricing_zone', 'is_active', 'created_at', 'updated_at'],
+        'buses' => ['id', 'vehicle_code', 'name', 'plate_number', 'driver_name', 'capacity', 'student_capacity', 'passenger_capacity', 'transport_route_id', 'is_active', 'created_at', 'updated_at'],
+        'student_transport_assignments' => ['id', 'enrollment_id', 'transport_route_id', 'bus_id', 'pricing_zone', 'pickup_point', 'billing_period', 'effective_from', 'effective_to', 'status', 'created_by', 'ended_by', 'change_reason', 'created_at', 'updated_at'],
+        'vehicle_staff_assignments' => ['id', 'bus_id', 'user_id', 'staff_member_id', 'role', 'effective_from', 'effective_to', 'weekdays', 'created_by', 'ended_by', 'change_reason', 'created_at', 'updated_at'],
+        'master_student_imports' => ['id', 'source_key', 'source_file', 'source_sheet', 'source_row', 'raw_name', 'raw_class_group', 'attendance_marker', 'resolution_status', 'resolution_evidence', 'source_data', 'student_id', 'enrollment_id', 'listener_placement_id', 'created_at', 'updated_at'],
+        'staff_master_imports' => ['id', 'source_key', 'source_file', 'source_sheet', 'source_row', 'raw_name', 'position', 'raw_contact', 'raw_birth_date', 'source_data', 'staff_member_id', 'created_at', 'updated_at'],
         'invoices' => ['id', 'student_id'],
         'invoice_items' => ['id', 'invoice_id', 'subscription_id'],
         'invoice_payments' => ['id', 'invoice_id'],
@@ -38,7 +44,7 @@ final class ReconciliationBaseline
             'status', 'negotiated_price', 'negotiated_reason', 'negotiated_by',
             'metadata', 'created_at', 'updated_at',
         ],
-        'audit_logs' => ['id'],
+        'audit_logs' => ['id', 'user_id', 'action', 'model', 'model_id', 'old_values', 'new_values', 'ip', 'user_agent', 'created_at', 'updated_at'],
     ];
 
     private bool $schemaAudited = false;

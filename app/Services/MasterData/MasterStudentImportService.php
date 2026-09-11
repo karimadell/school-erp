@@ -60,10 +60,9 @@ class MasterStudentImportService
         }
         $created = $enrolled = $listeners = $corrected = $renamed = $merged = $transportEnded = 0;
         $metadata = MasterStudentImport::query()->whereIn('source_key', $plan->pluck('source_key'))->lockForUpdate()->get()->keyBy('source_key');
-        $locators = MasterStudentImport::query()->whereIn('source_file', $plan->pluck('source_file')->unique())->lockForUpdate()->get()
-            ->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        $locators = $this->importsByLocator(MasterStudentImport::query()->whereIn('source_file', $plan->pluck('source_file')->unique())->lockForUpdate()->get());
         foreach ($plan as $item) {
-            $locator = $locators->get($item['source_file']."\0".$item['source_sheet']."\0".$item['source_row']);
+            $locator = $locators->get($this->locatorKey($item['source_file'], $item['source_sheet'], $item['source_row']));
             if ($locator && $locator->source_key !== $item['source_key']) {
                 throw ValidationException::withMessages(['source' => 'Master student source row changed after import.']);
             }
@@ -185,7 +184,7 @@ class MasterStudentImportService
             fn ($level) => [(int) $level => $this->placement((int) $level)]
         );
         $imports = MasterStudentImport::query()->whereIn('source_file', $rows->pluck('source_file')->unique())->get();
-        $importsByLocator = $imports->keyBy(fn ($row) => $row->source_file."\0".$row->source_sheet."\0".$row->source_row);
+        $importsByLocator = $this->importsByLocator($imports);
         $importsByKey = $imports->keyBy('source_key');
 
         $plan = $rows->map(function ($row) use ($byName, $placements, $importsByLocator, $importsByKey) {
@@ -243,7 +242,7 @@ class MasterStudentImportService
                 }
             }
             $sourceKey = $this->parser->sourceKey($row, true);
-            $locator = $importsByLocator->get($row['source_file']."\0".$row['source_sheet']."\0".$row['source_row']);
+            $locator = $importsByLocator->get($this->locatorKey($row['source_file'], $row['source_sheet'], $row['source_row']));
             if ($locator && $locator->source_key !== $sourceKey) {
                 throw ValidationException::withMessages(['source' => "Master student source row {$row['source_sheet']}:{$row['source_row']} changed after import."]);
             }
@@ -274,6 +273,24 @@ class MasterStudentImportService
         }
 
         return $plan;
+    }
+
+    private function importsByLocator(Collection $imports): Collection
+    {
+        return $imports->groupBy(fn (MasterStudentImport $row) => $this->locatorKey($row->source_file, $row->source_sheet, $row->source_row))
+            ->map(function (Collection $rows, string $locator): MasterStudentImport {
+                if ($rows->count() !== 1) {
+                    [$file, $sheet, $row] = explode("\0", $locator);
+                    throw ValidationException::withMessages(['source' => "Duplicate master student import locator: {$file} / {$sheet} / {$row}."]);
+                }
+
+                return $rows->first();
+            });
+    }
+
+    private function locatorKey(string $file, string $sheet, int|string $row): string
+    {
+        return $file."\0".$sheet."\0".(int) $row;
     }
 
     private function placement(int $level): array

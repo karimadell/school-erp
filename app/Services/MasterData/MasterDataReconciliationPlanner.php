@@ -23,6 +23,7 @@ final class MasterDataReconciliationPlanner
     public function plan(string $studentPath, string $staffPath, array $transportPaths): MasterDataReconciliationPlan
     {
         $this->performance->measure('schema_audit', fn () => $this->baseline->assertSchema());
+        $baselineBefore = $this->performance->measure('baseline_before_planning', fn () => $this->baseline->capture());
         $paths = [$studentPath, $staffPath, ...$transportPaths];
         if (count($paths) !== 7 || count(array_unique(array_map(fn ($path) => realpath($path), $paths))) !== 7) {
             throw ValidationException::withMessages(['sources' => 'Exactly seven distinct authoritative workbooks are required.']);
@@ -64,9 +65,14 @@ final class MasterDataReconciliationPlanner
             throw ValidationException::withMessages(['plan' => 'The complete reconciliation plan failed its approved cardinality/capacity gate.']);
         }
 
-        $baseline = $this->performance->measure('baseline_fingerprinting', fn () => $this->baseline->capture());
+        $baselineAfter = $this->performance->measure('baseline_after_planning', fn () => $this->baseline->capture());
+        try {
+            $this->baseline->assertSame($baselineBefore, $baselineAfter);
+        } catch (\RuntimeException $exception) {
+            throw new \RuntimeException('Guarded database baseline changed during reconciliation planning; no APPLY-capable plan was produced.', 0, $exception);
+        }
 
-        return $this->performance->measure('plan_serialization_hash', fn () => new MasterDataReconciliationPlan($hashes, $students, $staff, $catalog, $studentTransport, $staffTransport, $capacity, $baseline));
+        return $this->performance->measure('plan_serialization_hash', fn () => new MasterDataReconciliationPlan($hashes, $students, $staff, $catalog, $studentTransport, $staffTransport, $capacity, $baselineBefore));
     }
 
     private function arrays(mixed $value): mixed

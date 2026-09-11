@@ -21,6 +21,7 @@ class DatabaseSeeder extends Seeder
             DaySeeder::class,
             EnrollmentModeSeeder::class,
             DocumentTypeSeeder::class,
+            RevenueCategorySeeder::class,
 
         ]);
     }

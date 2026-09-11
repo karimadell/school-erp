@@ -57,6 +57,7 @@ use App\Http\Controllers\Dashboard\ExpenseController;
 use App\Http\Controllers\Dashboard\ExpenseCategoryController;
 use App\Http\Controllers\Dashboard\PayeeController;
 use App\Http\Controllers\Dashboard\IncomeEntryController;
+use App\Http\Controllers\Dashboard\RevenueEntryController;
 
 use App\Http\Controllers\Cash\CashTransactionController;
 use App\Http\Controllers\Cash\CashTransferController;
@@ -459,6 +460,21 @@ Route::middleware(['auth', 'administrative'])
                 // FinanceOperationsController query logic as before, just
                 // reached from Приход now (see FinanceOperationsController::students()).
                 Route::get('students', [FinanceOperationsController::class, 'students'])->name('students');
+
+                // Non-Tuition Revenues V1 integration — dashboard-native
+                // only (no Filament, no standalone sidebar entry). Reached
+                // exclusively from donation()/other() above, which
+                // redirect here with the appropriate category context.
+                Route::prefix('revenue')->name('revenue.')->controller(RevenueEntryController::class)->group(function () {
+                    Route::get('/', 'index')->name('index');
+                    Route::get('create', 'create')->name('create');
+                    Route::post('/', 'store')->name('store');
+                    Route::get('{revenueEntry}', 'show')->name('show');
+                    Route::get('{revenueEntry}/attachment', 'attachment')->name('attachment');
+                    Route::post('{revenueEntry}/post', 'post')->name('post');
+                    Route::post('{revenueEntry}/reverse', 'reverse')->name('reverse');
+                    Route::delete('{revenueEntry}', 'destroy')->name('destroy');
+                });
             });
         });
 

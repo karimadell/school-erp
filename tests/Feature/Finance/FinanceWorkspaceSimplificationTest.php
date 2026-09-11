@@ -146,16 +146,50 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
             ->assertSee(__('finance_workspace.income_type_title'));
     }
 
-    public function test_income_placeholder_pages_require_view_invoices_permission(): void
+    // 2/3. Donation/Other income route into the canonical Revenue flow —
+    // Non-Tuition Revenues V1 integration replaced the placeholder with a
+    // redirect into RevenueEntryController::create().
+    public function test_income_donation_and_other_require_view_invoices_permission(): void
     {
         $authorized = $this->user('reception');
-        $authorized->givePermissionTo('view invoices');
+        $authorized->givePermissionTo(['view invoices', 'manage revenues']);
 
-        $this->actingAs($authorized)->get(route('dashboard.finance.income.donation'))->assertOk();
-        $this->actingAs($authorized)->get(route('dashboard.finance.income.other'))->assertOk();
+        $this->actingAs($authorized)->get(route('dashboard.finance.income.donation'))
+            ->assertRedirect(route('dashboard.finance.income.revenue.create', ['type' => 'donation']));
+        $this->actingAs($authorized)->get(route('dashboard.finance.income.other'))
+            ->assertRedirect(route('dashboard.finance.income.revenue.create'));
 
         $noPermission = $this->user('teacher');
         $this->actingAs($noPermission)->get(route('dashboard.finance.income.donation'))->assertRedirect('/login');
+    }
+
+    public function test_income_donation_locks_category_and_other_lets_user_choose(): void
+    {
+        $authorized = $this->user('reception');
+        $authorized->givePermissionTo(['view invoices', 'manage revenues']);
+
+        $donation = \App\Models\RevenueCategory::firstOrCreate(
+            ['code' => \App\Models\RevenueCategory::CODE_DONATION],
+            ['name_ru' => 'Пожертвования', 'is_active' => true]
+        );
+        \App\Models\RevenueCategory::firstOrCreate(
+            ['code' => \App\Models\RevenueCategory::CODE_OTHER],
+            ['name_ru' => 'Прочие доходы', 'is_active' => true]
+        );
+
+        $donationForm = $this->actingAs($authorized)
+            ->get(route('dashboard.finance.income.revenue.create', ['type' => 'donation']))
+            ->assertOk();
+        $donationForm->assertSee($donation->name_ru);
+
+        $otherForm = $this->actingAs($authorized)
+            ->get(route('dashboard.finance.income.revenue.create'))
+            ->assertOk();
+        // The "other" entry point offers a real category choice — every
+        // active category appears as a selectable option, not a locked one.
+        foreach (\App\Models\RevenueCategory::query()->where('is_active', true)->get() as $category) {
+            $otherForm->assertSee($category->name_ru);
+        }
     }
 
     // 15. Student-related Приход paths reuse existing invoice/payment/registration routes — never a parallel implementation.
@@ -174,36 +208,48 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
             ->assertSee(route('dashboard.finance.income.students'), false);
     }
 
-    // 16. No duplicate revenue implementation — the placeholder never writes any record of its own.
-    public function test_donation_and_other_income_placeholders_do_not_write_any_records(): void
+    // 16. No duplicate revenue implementation — merely landing on/redirecting
+    // through the Приход type screen never writes any record of its own;
+    // only an explicit RevenueEntryController::store() call does, and it
+    // goes exclusively through RevenueService (see RevenueAtomicCreationTest::
+    // test_no_application_code_bypasses_the_revenue_service_for_creation).
+    public function test_donation_and_other_income_redirects_do_not_write_any_records(): void
     {
         $authorized = $this->user('reception');
-        $authorized->givePermissionTo('view invoices');
+        $authorized->givePermissionTo(['view invoices', 'manage revenues']);
 
         $countsBefore = [
             'expenses' => \App\Models\Expense::query()->count(),
             'invoices' => \App\Models\Invoice::query()->count(),
+            'revenue_entries' => \App\Models\RevenueEntry::query()->count(),
             'cash_transactions' => \App\Models\CashTransaction::query()->count(),
         ];
 
-        $this->actingAs($authorized)->get(route('dashboard.finance.income.donation'))->assertOk();
-        $this->actingAs($authorized)->get(route('dashboard.finance.income.other'))->assertOk();
+        $this->actingAs($authorized)->get(route('dashboard.finance.income.donation'));
+        $this->actingAs($authorized)->get(route('dashboard.finance.income.other'));
+        $this->actingAs($authorized)->get(route('dashboard.finance.income.revenue.create', ['type' => 'donation']))->assertOk();
+        $this->actingAs($authorized)->get(route('dashboard.finance.income.revenue.create'))->assertOk();
 
         $this->assertSame($countsBefore, [
             'expenses' => \App\Models\Expense::query()->count(),
             'invoices' => \App\Models\Invoice::query()->count(),
+            'revenue_entries' => \App\Models\RevenueEntry::query()->count(),
             'cash_transactions' => \App\Models\CashTransaction::query()->count(),
         ]);
     }
 
-    // No RevenueEntry/RevenueCategory models exist on this branch — the
-    // Non-Tuition Revenue engine lives only on its own separate, unmerged
-    // worktree (feature/finance-nontuition-revenues-v1) and this pass must
-    // not reimplement any part of it here.
-    public function test_no_revenue_models_were_duplicated_into_this_branch(): void
+    // Non-Tuition Revenues V1 is now integrated: RevenueEntry/RevenueCategory
+    // are the canonical backend for genuinely non-student income, reached
+    // dashboard-natively from Приход — but Filament's equivalent resources
+    // were deliberately NOT ported in this integration pass (dashboard-native
+    // only, matching Expenses V1's own precedent), so there is nothing for
+    // the operational sidebar to (mis)link to.
+    public function test_revenue_backend_is_integrated_without_a_filament_ui(): void
     {
-        $this->assertFalse(class_exists(\App\Models\RevenueEntry::class), 'RevenueEntry must not be duplicated here — it belongs to the unmerged Non-Tuition Revenue worktree.');
-        $this->assertFalse(class_exists(\App\Models\RevenueCategory::class), 'RevenueCategory must not be duplicated here — it belongs to the unmerged Non-Tuition Revenue worktree.');
+        $this->assertTrue(class_exists(\App\Models\RevenueEntry::class));
+        $this->assertTrue(class_exists(\App\Models\RevenueCategory::class));
+        $this->assertTrue(class_exists(\App\Services\Finance\RevenueService::class));
+        $this->assertFalse(class_exists(\App\Filament\Resources\RevenueEntries\RevenueEntryResource::class), 'Filament UI for Revenue is deliberately not part of this dashboard-native integration pass.');
     }
 
     // 17. Cash entry (Касса) remains permission-gated.

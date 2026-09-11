@@ -26,7 +26,7 @@ final class ReconciliationBaseline
         'stages' => ['id', 'name', 'order', 'is_active'],
         'grades' => ['id', 'stage_id', 'name', 'level'],
         'classes' => ['id', 'grade_id', 'code', 'name_ar', 'name_ru', 'capacity', 'is_active'],
-        'students' => ['id', 'name', 'preferred_name', 'merged_into_student_id', 'status', 'first_name_ru', 'last_name_ru', 'patronymic_ru', 'address', 'residential_address', 'registration_status', 'created_at', 'updated_at', 'deleted_at'],
+        'students' => ['id', 'name', 'preferred_name', 'merged_into_student_id', 'status', 'first_name', 'last_name', 'patronymic', 'first_name_ru', 'last_name_ru', 'patronymic_ru', 'address', 'residential_address', 'registration_status', 'created_at', 'updated_at', 'deleted_at'],
         'enrollments' => ['id', 'student_id', 'academic_year_id', 'enrollment_mode_id', 'study_attendance_mode', 'stage_id', 'grade_id', 'class_id', 'academic_year', 'enrollment_date', 'enrolled_at', 'status', 'is_active', 'created_at', 'updated_at'],
         'student_listener_placements' => ['id', 'student_id', 'academic_year_id', 'stage_id', 'grade_id', 'class_id', 'source_marker', 'status', 'effective_from', 'effective_to', 'created_at', 'updated_at'],
         'staff_members' => ['id', 'display_name', 'phone', 'user_id', 'is_active', 'created_at', 'updated_at'],

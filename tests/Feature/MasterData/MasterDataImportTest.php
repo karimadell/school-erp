@@ -447,17 +447,31 @@ class MasterDataImportTest extends TestCase
 
     public function test_expanded_schema_audit_fails_before_any_workbook_load(): void
     {
-        Schema::table('transport_routes', fn (Blueprint $table) => $table->renameColumn('pricing_zone', 'pricing_zone_missing'));
+        Schema::table('students', fn (Blueprint $table) => $table->renameColumn('first_name', 'first_name_missing'));
         app()->forgetScopedInstances();
+        $writes = 0;
+        $transactionOpened = false;
+        DB::listen(function ($query) use (&$writes): void {
+            $verb = strtoupper(strtok(ltrim($query->sql), " \t\n\r"));
+            if (in_array($verb, ['INSERT', 'UPDATE', 'DELETE'], true)) {
+                $writes++;
+            }
+        });
+        Event::listen(\Illuminate\Database\Events\TransactionBeginning::class, function () use (&$transactionOpened): void {
+            $transactionOpened = true;
+        });
         try {
             app(MasterDataReconciliationPlanner::class)->plan($this->studentPath, $this->staffPath, $this->transportPaths);
             $this->fail('Expected missing planned column to fail schema audit.');
         } catch (\RuntimeException $exception) {
-            $this->assertStringContainsString('transport_routes', $exception->getMessage());
-            $this->assertStringContainsString('pricing_zone', $exception->getMessage());
+            $this->assertStringContainsString('students', $exception->getMessage());
+            $this->assertStringContainsString('first_name', $exception->getMessage());
             $this->assertSame(0, app(WorkbookLoader::class)->physicalLoadCount());
+            $this->assertSame(0, $writes);
+            $this->assertFalse($transactionOpened);
         } finally {
-            Schema::table('transport_routes', fn (Blueprint $table) => $table->renameColumn('pricing_zone_missing', 'pricing_zone'));
+            Event::forget(\Illuminate\Database\Events\TransactionBeginning::class);
+            Schema::table('students', fn (Blueprint $table) => $table->renameColumn('first_name_missing', 'first_name'));
             app()->forgetScopedInstances();
         }
     }

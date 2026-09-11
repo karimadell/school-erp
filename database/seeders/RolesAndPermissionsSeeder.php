@@ -79,6 +79,14 @@ class RolesAndPermissionsSeeder extends Seeder
             'approve expenses',
             'post expenses',
             'void expenses',
+            // Non-Tuition Revenues V1: 'manage revenues' covers create/edit
+            // draft/view (and revenue-category administration, the same
+            // operational surface). 'post revenues' and 'reverse revenues'
+            // are separately gated, mirroring the approve/post/void expenses
+            // separation-of-duties pattern already used above.
+            'manage revenues',
+            'post revenues',
+            'reverse revenues',
             'manage student service subscriptions',
             'override service prices',
             'view student balances',
@@ -183,6 +191,9 @@ class RolesAndPermissionsSeeder extends Seeder
             'approve expenses',
             'post expenses',
             'void expenses',
+            'manage revenues',
+            'post revenues',
+            'reverse revenues',
             'manage student service subscriptions',
             'void invoices',
             'refund payments',

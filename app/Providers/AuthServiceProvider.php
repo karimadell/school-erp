@@ -13,6 +13,8 @@ use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\LessonJournalEntry;
+use App\Models\RevenueCategory;
+use App\Models\RevenueEntry;
 use App\Models\StudentFile;
 use App\Models\StudentServiceSubscription;
 use App\Models\StudentSubjectEnrollment;
@@ -33,6 +35,8 @@ use App\Policies\FeePolicy;
 use App\Policies\FeePricePolicy;
 use App\Policies\InvoicePolicy;
 use App\Policies\LessonJournalEntryPolicy;
+use App\Policies\RevenueCategoryPolicy;
+use App\Policies\RevenueEntryPolicy;
 use App\Policies\PermissionPolicy;
 use App\Policies\RolePolicy;
 use App\Policies\StudentFilePolicy;
@@ -77,6 +81,8 @@ class AuthServiceProvider extends ServiceProvider
         Expense::class => ExpensePolicy::class,
         ExpenseCategory::class => ExpenseCategoryPolicy::class,
         Payee::class => PayeePolicy::class,
+        RevenueEntry::class => RevenueEntryPolicy::class,
+        RevenueCategory::class => RevenueCategoryPolicy::class,
         LessonJournalEntry::class => LessonJournalEntryPolicy::class,
         StudentServiceSubscription::class => StudentServiceSubscriptionPolicy::class,
         TeacherAssignment::class => TeacherAssignmentPolicy::class,

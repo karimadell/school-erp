@@ -66,8 +66,11 @@
         </div>
     </div>
 
-    <div class="mt-4">
+    <div class="mt-4 d-flex gap-2">
         <a href="{{ route('dashboard.finance.workspace') }}" class="btn btn-outline-secondary">← {{ __('expenses.back') }}</a>
+        @can('manage revenues')
+            <a href="{{ route('dashboard.finance.income.revenue.index') }}" class="btn btn-outline-secondary">{{ __('revenues.page_title') }}</a>
+        @endcan
     </div>
 </div>
 

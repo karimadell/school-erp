@@ -53,6 +53,8 @@ class CashTransaction extends Model
         'invoice_payment_id',
         'teacher_salary_id',
         'expense_id',
+        'revenue_entry_id',
+        'reversed_revenue_entry_id',
         'amount',
         'type',
         'category', // 🔥 جديد
@@ -112,6 +114,16 @@ class CashTransaction extends Model
     public function expense()
     {
         return $this->belongsTo(Expense::class, 'expense_id');
+    }
+
+    public function revenueEntry()
+    {
+        return $this->belongsTo(RevenueEntry::class, 'revenue_entry_id');
+    }
+
+    public function reversedRevenueEntry()
+    {
+        return $this->belongsTo(RevenueEntry::class, 'reversed_revenue_entry_id');
     }
 
     /*

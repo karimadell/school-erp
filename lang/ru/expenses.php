@@ -34,6 +34,8 @@ return [
     'status_void' => 'Отменён',
     'status_help' => 'Черновик не влияет на кассу. При выборе «Оплачен» расход сразу списывается с кассы/счёта.',
 
+    'view' => 'Просмотр',
+    'edit' => 'Изменить',
     'created_by' => 'Создал',
     'total' => 'Итого',
     'date_from' => 'С даты',
@@ -50,4 +52,44 @@ return [
 
     'nav_categories' => 'Категории расходов',
     'nav_payees' => 'Контрагенты',
+
+    // Dashboard-native pages (corrective pass — replaces the raw Filament
+    // sidebar links, see shell-sidebar.blade.php).
+    'page_title' => 'Расходы',
+    'list_hint' => 'Операционные расходы школы — черновик, утверждение, оплата',
+    'create' => 'Новый расход',
+    'edit_title' => 'Редактирование расхода',
+    'show_title' => 'Расход',
+    'back' => 'Назад',
+    'save' => 'Сохранить',
+    'cancel' => 'Отмена',
+    'actions' => 'Действия',
+    'filters' => 'Фильтры',
+    'apply' => 'Применить',
+    'reset' => 'Сбросить',
+    'all' => 'Все',
+    'search' => 'Поиск',
+    'search_placeholder' => 'Номер или наименование',
+    'no_data' => 'Расходы не найдены.',
+    'validation_error' => 'Проверьте правильность заполнения формы.',
+    'attachment_download' => 'Скачать вложение',
+    'attachment_none' => 'Без вложения',
+    'ledger_transaction' => 'Кассовая операция',
+    'ledger_none' => 'Расход ещё не отражён в кассе.',
+    'created_notification' => 'Расход создан.',
+    'updated_notification' => 'Расход обновлён.',
+
+    'category_title' => 'Категории расходов',
+    'category_list_hint' => 'Справочник категорий для классификации расходов',
+    'category_create' => 'Новая категория',
+    'category_edit_title' => 'Редактирование категории',
+    'category_created_notification' => 'Категория создана.',
+    'category_updated_notification' => 'Категория обновлена.',
+
+    'payee_title' => 'Контрагенты',
+    'payee_list_hint' => 'Справочник получателей платежей по расходам',
+    'payee_create' => 'Новый контрагент',
+    'payee_edit_title' => 'Редактирование контрагента',
+    'payee_created_notification' => 'Контрагент создан.',
+    'payee_updated_notification' => 'Контрагент обновлён.',
 ];

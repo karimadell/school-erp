@@ -53,6 +53,9 @@ use App\Http\Controllers\Dashboard\AcademicCalendarController;
 use App\Http\Controllers\Dashboard\CalendarEventController;
 use App\Http\Controllers\Dashboard\ClassroomController;
 use App\Http\Controllers\Dashboard\AdministrationController;
+use App\Http\Controllers\Dashboard\ExpenseController;
+use App\Http\Controllers\Dashboard\ExpenseCategoryController;
+use App\Http\Controllers\Dashboard\PayeeController;
 
 use App\Http\Controllers\Cash\CashTransactionController;
 use App\Http\Controllers\Cash\CashTransferController;
@@ -402,6 +405,40 @@ Route::middleware(['auth', 'administrative'])
             Route::put('mass-billing/{batch}', [MassBillingController::class, 'update'])->name('mass-billing.update');
             Route::post('mass-billing/{batch}/preview', [MassBillingController::class, 'preview'])->name('mass-billing.preview');
             Route::post('mass-billing/{batch}/execute', [MassBillingController::class, 'execute'])->name('mass-billing.execute');
+
+            // Expenses V1 corrective pass — dashboard-native operational
+            // pages replacing the raw Filament sidebar links. Filament's
+            // Expense/ExpenseCategory/Payee resources are untouched and
+            // remain reachable directly as a technical fallback; they are
+            // simply no longer linked from the unified sidebar.
+            Route::prefix('expenses')->name('expenses.')->controller(ExpenseController::class)->group(function () {
+                Route::get('/', 'index')->name('index');
+                Route::get('create', 'create')->name('create');
+                Route::post('/', 'store')->name('store');
+                Route::get('{expense}', 'show')->name('show');
+                Route::get('{expense}/edit', 'edit')->name('edit');
+                Route::put('{expense}', 'update')->name('update');
+                Route::post('{expense}/approve', 'approve')->name('approve');
+                Route::post('{expense}/pay', 'pay')->name('pay');
+                Route::post('{expense}/void', 'void')->name('void');
+                Route::get('{expense}/attachment', 'attachment')->name('attachment');
+            });
+
+            Route::prefix('expense-categories')->name('expense-categories.')->controller(ExpenseCategoryController::class)->group(function () {
+                Route::get('/', 'index')->name('index');
+                Route::get('create', 'create')->name('create');
+                Route::post('/', 'store')->name('store');
+                Route::get('{expenseCategory}/edit', 'edit')->name('edit');
+                Route::put('{expenseCategory}', 'update')->name('update');
+            });
+
+            Route::prefix('payees')->name('payees.')->controller(PayeeController::class)->group(function () {
+                Route::get('/', 'index')->name('index');
+                Route::get('create', 'create')->name('create');
+                Route::post('/', 'store')->name('store');
+                Route::get('{payee}/edit', 'edit')->name('edit');
+                Route::put('{payee}', 'update')->name('update');
+            });
         });
 
         /*

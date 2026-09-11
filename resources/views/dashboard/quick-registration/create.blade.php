@@ -97,7 +97,7 @@
         <div class="card-header fw-bold">Найти существующего ученика</div>
         <div class="card-body">
             <p class="text-muted">Откройте карточку ученика — учебный год, ступень, класс, форма обучения, активные подписки и неоплаченные счета загрузятся автоматически. Оттуда можно принять оплату по существующему счёту, продлить транспорт/питание или начислить новую услугу без повторного ввода данных.</p>
-            <form method="GET" action="{{ route('dashboard.finance.workspace') }}" class="row g-2">
+            <form method="GET" action="{{ route('dashboard.finance.income.students') }}" class="row g-2">
                 <div class="col-md-8"><input type="text" name="q" class="form-control" placeholder="Имя, телефон или ID ученика"></div>
                 <div class="col-md-4"><button class="btn btn-primary w-100">Найти ученика</button></div>
             </form>

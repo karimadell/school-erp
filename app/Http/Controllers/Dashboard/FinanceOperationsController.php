@@ -34,13 +34,38 @@ class FinanceOperationsController extends Controller
 {
     public function __construct(private StudentFinanceSummaryService $summaries)
     {
-        $this->middleware('permission:view invoices')->only(['workspace', 'student', 'statement', 'statementPdf', 'receipt', 'receiptPdf', 'refundReceipt']);
+        $this->middleware('permission:view invoices')->only(['workspace', 'students', 'student', 'statement', 'statementPdf', 'receipt', 'receiptPdf', 'refundReceipt']);
         $this->middleware('permission:manage invoices')->only(['createPayment', 'storePayment', 'chargeCreate', 'chargeStore']);
         $this->middleware('permission:void invoices')->only(['voidInvoice']);
         $this->middleware('permission:refund payments')->only(['createRefund', 'storeRefund']);
     }
 
-    public function workspace(Request $request): View
+    /**
+     * Finance landing page corrective — Финансы is now a compact,
+     * purely-presentational home page: the operational summary cards,
+     * the four primary actions (Приход/Расход/Касса/Отчёты), and a
+     * read-only "Последние операции" list. Student search/billing (the
+     * page's previous content) lives at students() under Приход now —
+     * see that method for the unchanged, merely-relocated query logic.
+     */
+    public function workspace(): View
+    {
+        return view('dashboard.finance.workspace', [
+            'operationalSummary' => $this->operationalSummary(),
+            'recentOperations' => $this->recentOperations(),
+        ]);
+    }
+
+    /**
+     * Finance landing page corrective — this is the exact student
+     * search/list/summary logic that used to live directly on the Финансы
+     * landing page (workspace()), relocated (not rewritten) under the
+     * Приход flow per the "student billing work lives under Приход, not
+     * on the Finance landing page" requirement. No query or business
+     * logic changed — same StudentFinanceSummaryService, same Invoice/
+     * InvoicePayment totals.
+     */
+    public function students(Request $request): View
     {
         $invoices = Invoice::query();
         $payments = InvoicePayment::query();
@@ -67,7 +92,7 @@ class FinanceOperationsController extends Controller
         ]);
         $students->setCollection($rows);
 
-        return view('dashboard.finance.workspace', [
+        return view('dashboard.finance.income.students', [
             'students' => $students,
             'years' => AcademicYear::orderByDesc('start_date')->get(),
             'totals' => [
@@ -77,7 +102,6 @@ class FinanceOperationsController extends Controller
                 'overdue' => $this->money(Invoice::overdue()->sum('remaining_amount')),
                 'today' => $this->money(InvoicePayment::whereDate('paid_at', today())->sum('amount')),
             ],
-            'operationalSummary' => $this->operationalSummary(),
         ]);
     }
 
@@ -121,6 +145,23 @@ class FinanceOperationsController extends Controller
             'net_today' => bcsub($incomeToday, $expenseToday, 2),
             'total_balance' => $this->money(CashAccount::query()->where('is_active', true)->sum('balance')),
         ];
+    }
+
+    /**
+     * Finance landing page corrective — "Последние операции": a read-only
+     * tail of the same canonical CashTransaction ledger operationalSummary()
+     * reads from, so it never introduces a second view of the truth. Purely
+     * presentational; no new business/accounting logic.
+     *
+     * @return \Illuminate\Support\Collection<int, \App\Models\CashTransaction>
+     */
+    private function recentOperations(): \Illuminate\Support\Collection
+    {
+        return \App\Models\CashTransaction::query()
+            ->with('account')
+            ->latest('created_at')
+            ->limit(8)
+            ->get();
     }
 
     public function student(Student $student, ServiceCoverageService $coverageService): View

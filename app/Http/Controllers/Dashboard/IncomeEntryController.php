@@ -24,7 +24,7 @@ class IncomeEntryController extends Controller
 {
     public function __construct()
     {
-        // Same gate as Финансовый центр (FinanceOperationsController::
+        // Same gate as the Финансы landing page (FinanceOperationsController::
         // workspace) — Приход is the entry point into that same
         // money-collection domain, not a separately-permissioned surface.
         $this->middleware('permission:view invoices');

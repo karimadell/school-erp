@@ -10,13 +10,17 @@ namespace Tests\Feature\Finance;
  */
 class QuickRegistrationExistingStudentAndPostSaveUxTest extends FinanceOperationsTestCase
 {
+    // Finance landing page corrective: the existing-student search now
+    // submits into income.students (student billing lives under Приход,
+    // not on the simplified Финансы landing page) — same destination
+    // behavior, just relocated.
     public function test_quick_registration_screen_offers_an_existing_student_search_into_the_finance_workspace(): void
     {
         $this->actingAs($this->accountant)
             ->get(route('dashboard.quick-registration.create'))
             ->assertOk()
             ->assertSee('Существующий ученик')
-            ->assertSee(route('dashboard.finance.workspace', absolute: false), false);
+            ->assertSee(route('dashboard.finance.income.students', absolute: false), false);
     }
 
     public function test_payment_receipt_exposes_view_profile_and_next_payment_links(): void

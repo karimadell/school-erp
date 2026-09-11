@@ -109,11 +109,15 @@ class FinanceWorkspaceBatchSummaryTest extends FinanceOperationsTestCase
         $this->assertSame('-700.00', $batch[$students[2]->id]['net_student_balance']);
     }
 
+    // Finance landing page corrective — this student search/summary batch
+    // now lives at income.students (moved out of the simplified Финансы
+    // landing page), so the N+1 query-count guard follows it there. Same
+    // FinanceOperationsController query logic, unchanged.
     public function test_phase_two_query_count_is_constant_as_student_count_grows(): void
     {
         $this->student('Петров');
         $smallCount = $this->phaseTwoQueryCount(fn () => $this->actingAs($this->accountant)
-            ->get(route('dashboard.finance.workspace'))
+            ->get(route('dashboard.finance.income.students'))
             ->assertOk());
 
         collect([
@@ -122,7 +126,7 @@ class FinanceWorkspaceBatchSummaryTest extends FinanceOperationsTestCase
             $this->student('Кузнецов'),
         ]);
         $largeCount = $this->phaseTwoQueryCount(fn () => $this->actingAs($this->accountant)
-            ->get(route('dashboard.finance.workspace'))
+            ->get(route('dashboard.finance.income.students'))
             ->assertOk());
 
         $this->assertSame(4, $smallCount);

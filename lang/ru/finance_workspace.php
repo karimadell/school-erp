@@ -1,6 +1,16 @@
 <?php
 
 return [
+    // Finance landing page corrective — Финансы is now a compact, purely
+    // presentational home page (summary + 4 actions + recent activity);
+    // student search/billing moved under Приход (income.students).
+    'page_title' => 'Финансы',
+    'page_subtitle' => 'Доходы, расходы и касса школы',
+    'recent_operations' => 'Последние операции',
+    'no_recent_operations' => 'Операций пока нет.',
+    'income_students_title' => 'Оплата ученика / Услуги',
+    'income_students_hint' => 'Найдите ученика, чтобы принять оплату или выставить счёт за услугу.',
+
     // Top operational summary cards (Finance Workspace UX corrective).
     'income_today' => 'Приход сегодня',
     'expense_today' => 'Расход сегодня',

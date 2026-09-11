@@ -10,7 +10,13 @@ test('office user can discover the canonical read-only finance surfaces', async 
 
     const workspace = await navigateReadOnly(page, '/dashboard/finance/workspace');
     expect(workspace?.status()).toBe(200);
-    await expect(page.getByRole('heading', { name: 'Финансовый центр' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Финансы' })).toBeVisible();
+    await expectNoLaravelFailure(page);
+
+    // "Выставить счёт" moved off the simplified Финансы landing page onto
+    // the student billing page under Приход (income.students).
+    const incomeStudents = await navigateReadOnly(page, '/dashboard/finance/income/students');
+    expect(incomeStudents?.status()).toBe(200);
     await expect(page.getByRole('link', { name: 'Выставить счёт' })).toBeVisible();
     await expectNoLaravelFailure(page);
 

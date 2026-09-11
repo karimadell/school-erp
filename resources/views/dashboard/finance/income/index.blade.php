@@ -21,7 +21,7 @@
 
         @can('manage invoices')
             <div class="col-md-6 col-xl-4">
-                <a href="{{ route('dashboard.finance.workspace') }}" class="text-decoration-none">
+                <a href="{{ route('dashboard.finance.income.students') }}" class="text-decoration-none">
                     <div class="card border-0 shadow-sm h-100 income-type-card">
                         <div class="card-body">
                             <div class="fw-semibold fs-5 mb-1">{{ __('finance_workspace.income_type_payment') }}</div>
@@ -32,7 +32,7 @@
             </div>
 
             <div class="col-md-6 col-xl-4">
-                <a href="{{ route('dashboard.finance.workspace') }}" class="text-decoration-none">
+                <a href="{{ route('dashboard.finance.income.students') }}" class="text-decoration-none">
                     <div class="card border-0 shadow-sm h-100 income-type-card">
                         <div class="card-body">
                             <div class="fw-semibold fs-5 mb-1">{{ __('finance_workspace.income_type_service') }}</div>

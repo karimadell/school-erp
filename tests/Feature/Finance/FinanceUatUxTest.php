@@ -33,19 +33,23 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             ->assertSee(route('dashboard.invoices.pdf', $invoice), false);
     }
 
+    // Finance landing page corrective: "Выставить счёт" moved off the
+    // Финансы landing page (now compact: summary + 4 actions + recent
+    // activity) onto the student billing page under Приход
+    // (dashboard.finance.income.students) — same permission gate as before.
     public function test_invoice_create_action_is_prominent_and_permission_protected(): void
     {
         $viewer = $this->user('reception');
         $viewer->givePermissionTo('view invoices');
 
         $this->actingAs($this->accountant)
-            ->get(route('dashboard.finance.workspace'))
+            ->get(route('dashboard.finance.income.students'))
             ->assertOk()
             ->assertSee('Выставить счёт')
             ->assertSee(route('dashboard.invoices.create'), false);
 
         $this->actingAs($viewer)
-            ->get(route('dashboard.finance.workspace'))
+            ->get(route('dashboard.finance.income.students'))
             ->assertOk()
             ->assertDontSee('Выставить счёт');
 

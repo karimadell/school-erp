@@ -168,7 +168,10 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
 
         $response->assertOk()
             ->assertSee(route('dashboard.quick-registration.create'), false)
-            ->assertSee(route('dashboard.finance.workspace'), false);
+            // Finance landing page corrective: "Оплата ученика"/"Услуга"
+            // route into income.students (student billing lives under
+            // Приход now), not the simplified Финансы landing page.
+            ->assertSee(route('dashboard.finance.income.students'), false);
     }
 
     // 16. No duplicate revenue implementation — the placeholder never writes any record of its own.

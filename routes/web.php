@@ -454,6 +454,11 @@ Route::middleware(['auth', 'administrative'])
                 Route::get('/', 'index')->name('index');
                 Route::get('donation', 'donation')->name('donation');
                 Route::get('other', 'other')->name('other');
+                // Finance landing page corrective — student search/billing
+                // relocated here from the Финансы landing page; same
+                // FinanceOperationsController query logic as before, just
+                // reached from Приход now (see FinanceOperationsController::students()).
+                Route::get('students', [FinanceOperationsController::class, 'students'])->name('students');
             });
         });
 

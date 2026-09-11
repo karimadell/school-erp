@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use App\Models\ExpenseCategory;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -63,6 +64,29 @@ class ExpenseCategoryController extends Controller
         return redirect()
             ->route('dashboard.finance.expense-categories.index')
             ->with('success', __('expenses.category_updated_notification'));
+    }
+
+    /**
+     * Finance Workspace UX corrective — inline "+ Новая категория" creation
+     * from within the Expense form itself, so a user filling out Расход
+     * never has to leave the page to manage this reference table. Same
+     * 'manage expenses' gate and validation as the full create() flow
+     * above; just a JSON response shaped for the form's own JS to append
+     * and immediately select the new option, instead of a redirect.
+     */
+    public function quickStore(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:255', Rule::unique('expense_categories', 'name')],
+        ]);
+
+        // Always active — a category created inline mid-Expense-form must
+        // be immediately selectable, and the quick-create form has no
+        // active/inactive toggle of its own (that's the full management
+        // form's job, still reachable directly as a technical fallback).
+        $category = ExpenseCategory::create(['name' => $data['name'], 'is_active' => true]);
+
+        return response()->json(['id' => $category->id, 'name' => $category->name]);
     }
 
     private function validateCategory(Request $request, ?ExpenseCategory $category = null): array

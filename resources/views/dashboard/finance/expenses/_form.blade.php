@@ -24,24 +24,50 @@
 
     <div class="col-md-4">
         <label class="form-label fw-semibold">{{ __('expenses.category') }}</label>
-        <select name="expense_category_id" class="form-select @error('expense_category_id') is-invalid @enderror">
-            <option value="">—</option>
-            @foreach($categories as $category)
-                <option value="{{ $category->id }}" @selected((int) old('expense_category_id', $expense?->expense_category_id) === $category->id)>{{ $category->name }}</option>
-            @endforeach
-        </select>
-        @error('expense_category_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+        <div class="input-group">
+            <select name="expense_category_id" id="expense_category_id" class="form-select @error('expense_category_id') is-invalid @enderror">
+                <option value="">—</option>
+                @foreach($categories as $category)
+                    <option value="{{ $category->id }}" @selected((int) old('expense_category_id', $expense?->expense_category_id) === $category->id)>{{ $category->name }}</option>
+                @endforeach
+            </select>
+            <button type="button" class="btn btn-outline-secondary" data-quick-create-toggle="quick-create-category">+ {{ __('expenses.category_create') }}</button>
+        </div>
+        @error('expense_category_id')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+
+        <div id="quick-create-category" class="border rounded-3 p-3 mt-2 bg-light d-none">
+            <label class="form-label small">{{ __('expenses.category_name') }}</label>
+            <div class="input-group input-group-sm">
+                <input type="text" id="quick-create-category-name" class="form-control" maxlength="255">
+                <button type="button" class="btn btn-primary" data-quick-create-submit="category">{{ __('expenses.save') }}</button>
+            </div>
+            <div class="small text-danger mt-1 d-none" data-quick-create-error="category"></div>
+        </div>
     </div>
 
     <div class="col-md-4">
         <label class="form-label fw-semibold">{{ __('expenses.payee') }}</label>
-        <select name="payee_id" class="form-select @error('payee_id') is-invalid @enderror">
-            <option value="">—</option>
-            @foreach($payees as $payee)
-                <option value="{{ $payee->id }}" @selected((int) old('payee_id', $expense?->payee_id) === $payee->id)>{{ $payee->name }}</option>
-            @endforeach
-        </select>
-        @error('payee_id')<div class="invalid-feedback">{{ $message }}</div>@enderror
+        <div class="input-group">
+            <select name="payee_id" id="payee_id" class="form-select @error('payee_id') is-invalid @enderror">
+                <option value="">—</option>
+                @foreach($payees as $payee)
+                    <option value="{{ $payee->id }}" @selected((int) old('payee_id', $expense?->payee_id) === $payee->id)>{{ $payee->name }}</option>
+                @endforeach
+            </select>
+            <button type="button" class="btn btn-outline-secondary" data-quick-create-toggle="quick-create-payee">+ {{ __('expenses.payee_create') }}</button>
+        </div>
+        @error('payee_id')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
+
+        <div id="quick-create-payee" class="border rounded-3 p-3 mt-2 bg-light d-none">
+            <label class="form-label small">{{ __('expenses.payee_name') }}</label>
+            <input type="text" id="quick-create-payee-name" class="form-control form-control-sm mb-2" maxlength="255">
+            <label class="form-label small">{{ __('expenses.payee_phone') }}</label>
+            <input type="text" id="quick-create-payee-phone" class="form-control form-control-sm mb-2" maxlength="50">
+            <label class="form-label small">{{ __('expenses.notes') }}</label>
+            <textarea id="quick-create-payee-notes" class="form-control form-control-sm mb-2" rows="1"></textarea>
+            <button type="button" class="btn btn-sm btn-primary" data-quick-create-submit="payee">{{ __('expenses.save') }}</button>
+            <div class="small text-danger mt-1 d-none" data-quick-create-error="payee"></div>
+        </div>
     </div>
 
     <div class="col-md-4">
@@ -114,3 +140,69 @@
         @endif
     </div>
 </div>
+
+@can('manage expenses')
+    <input type="hidden" id="quick-create-csrf" value="{{ csrf_token() }}">
+    <script>
+        (function () {
+            var csrf = document.getElementById('quick-create-csrf').value;
+
+            function wireQuickCreate(kind, endpoint, selectId, collectPayload) {
+                var panel = document.getElementById('quick-create-' + kind);
+                var toggle = document.querySelector('[data-quick-create-toggle="quick-create-' + kind + '"]');
+                var submit = document.querySelector('[data-quick-create-submit="' + kind + '"]');
+                var errorEl = document.querySelector('[data-quick-create-error="' + kind + '"]');
+                var select = document.getElementById(selectId);
+                if (!panel || !toggle || !submit || !select) return;
+
+                toggle.addEventListener('click', function () {
+                    panel.classList.toggle('d-none');
+                });
+
+                submit.addEventListener('click', function () {
+                    errorEl.classList.add('d-none');
+                    errorEl.textContent = '';
+
+                    fetch(endpoint, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': csrf,
+                            'Accept': 'application/json',
+                        },
+                        body: JSON.stringify(collectPayload()),
+                    }).then(function (response) {
+                        if (!response.ok) {
+                            return response.json().then(function (body) {
+                                throw new Error(Object.values(body.errors || {}).flat().join(' ') || 'Ошибка сохранения.');
+                            });
+                        }
+                        return response.json();
+                    }).then(function (data) {
+                        var option = document.createElement('option');
+                        option.value = data.id;
+                        option.textContent = data.name;
+                        option.selected = true;
+                        select.appendChild(option);
+                        panel.classList.add('d-none');
+                    }).catch(function (err) {
+                        errorEl.textContent = err.message;
+                        errorEl.classList.remove('d-none');
+                    });
+                });
+            }
+
+            wireQuickCreate('category', '{{ route('dashboard.finance.expense-categories.quick-store') }}', 'expense_category_id', function () {
+                return { name: document.getElementById('quick-create-category-name').value };
+            });
+
+            wireQuickCreate('payee', '{{ route('dashboard.finance.payees.quick-store') }}', 'payee_id', function () {
+                return {
+                    name: document.getElementById('quick-create-payee-name').value,
+                    phone: document.getElementById('quick-create-payee-phone').value,
+                    notes: document.getElementById('quick-create-payee-notes').value,
+                };
+            });
+        })();
+    </script>
+@endcan

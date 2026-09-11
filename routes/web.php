@@ -56,6 +56,7 @@ use App\Http\Controllers\Dashboard\AdministrationController;
 use App\Http\Controllers\Dashboard\ExpenseController;
 use App\Http\Controllers\Dashboard\ExpenseCategoryController;
 use App\Http\Controllers\Dashboard\PayeeController;
+use App\Http\Controllers\Dashboard\IncomeEntryController;
 
 use App\Http\Controllers\Cash\CashTransactionController;
 use App\Http\Controllers\Cash\CashTransferController;
@@ -428,6 +429,9 @@ Route::middleware(['auth', 'administrative'])
                 Route::get('/', 'index')->name('index');
                 Route::get('create', 'create')->name('create');
                 Route::post('/', 'store')->name('store');
+                // Finance Workspace UX corrective — inline creation from
+                // the Expense form (see ExpenseCategoryController::quickStore).
+                Route::post('quick-store', 'quickStore')->name('quick-store');
                 Route::get('{expenseCategory}/edit', 'edit')->name('edit');
                 Route::put('{expenseCategory}', 'update')->name('update');
             });
@@ -436,8 +440,20 @@ Route::middleware(['auth', 'administrative'])
                 Route::get('/', 'index')->name('index');
                 Route::get('create', 'create')->name('create');
                 Route::post('/', 'store')->name('store');
+                Route::post('quick-store', 'quickStore')->name('quick-store');
                 Route::get('{payee}/edit', 'edit')->name('edit');
                 Route::put('{payee}', 'update')->name('update');
+            });
+
+            // Finance Workspace UX corrective — unified "Приход" entry
+            // point. Every option routes into an already-canonical flow;
+            // donation/other-income render a non-destructive placeholder
+            // until the separate, unmerged Non-Tuition Revenue module is
+            // integrated (see IncomeEntryController's class docblock).
+            Route::prefix('income')->name('income.')->controller(IncomeEntryController::class)->group(function () {
+                Route::get('/', 'index')->name('index');
+                Route::get('donation', 'donation')->name('donation');
+                Route::get('other', 'other')->name('other');
             });
         });
 

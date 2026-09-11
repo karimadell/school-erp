@@ -15,6 +15,12 @@ return [
     'generic_transfer_action' => 'Перевод между счетами',
     'open_shift_action' => 'Открыть смену',
     'close_shift_action' => 'Закрыть смену',
+    // Finance Workspace UX corrective — this page is now the single
+    // "Касса" landing reached from the sidebar; these two quick links
+    // reuse the existing accounts list and sessions list pages instead of
+    // giving them their own sidebar entries.
+    'all_accounts_action' => 'Все кассовые счета',
+    'sessions_action' => 'Кассовые смены',
 
     'handover_title' => 'Передача выручки владельцу',
     'handover_hint' => 'Часть операционной кассы физически передаётся владельцу школы. Это не расход и не новая выручка — только перемещение денег школы.',

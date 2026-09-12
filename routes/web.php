@@ -8,6 +8,7 @@ use App\Http\Controllers\Dashboard\FinanceTariffController;
 use App\Http\Controllers\Dashboard\FinanceTariffRolloverController;
 use App\Http\Controllers\Dashboard\FinancePriceListPdfController;
 use App\Http\Controllers\Dashboard\FinanceOperationsController;
+use App\Http\Controllers\Dashboard\FinanceReportsController;
 use App\Http\Controllers\Dashboard\CashOperationsController;
 use App\Http\Controllers\Dashboard\CashSessionController;
 use App\Http\Controllers\Dashboard\PaymentPlanController;
@@ -385,6 +386,20 @@ Route::middleware(['auth', 'administrative'])
             // canonical confirmed student payments (permission-gated inside
             // FinanceCollectionsController).
             Route::get('collections', [\App\Http\Controllers\Dashboard\FinanceCollectionsController::class, 'index'])->name('collections.index');
+            // Combined Finance Reporting V1 — read-only surface aggregating
+            // CashTransaction (cash movement) and InvoicePayment/
+            // PaymentRefund (student collections), never conflating the
+            // two (see FinanceReportingService's class docblock).
+            // Permission-gated inside FinanceReportsController. This is now
+            // the sidebar "Отчёты" target — the older dashboard.cash.reports
+            // (CashTransactionController::reports()) stays reachable
+            // directly as a technical fallback, just no longer linked.
+            Route::prefix('reports')->name('reports.')->group(function () {
+                Route::get('/', [FinanceReportsController::class, 'index'])->name('index');
+                Route::get('cash-movement', [FinanceReportsController::class, 'cashMovement'])->name('cash-movement');
+                Route::get('student-collections', [FinanceReportsController::class, 'studentCollections'])->name('student-collections');
+                Route::get('account-balances', [FinanceReportsController::class, 'accountBalances'])->name('account-balances');
+            });
             Route::get('installments', [PaymentPlanController::class, 'reports'])->name('installments.index');
             Route::get('subscriptions', [StudentSubscriptionController::class, 'control'])->name('subscriptions.index');
             Route::resource('payment-plans', PaymentPlanController::class)->except(['show', 'destroy']);

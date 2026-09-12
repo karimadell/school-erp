@@ -264,16 +264,24 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
         $this->actingAs($authorized)->get(route('dashboard.cash.operations.index'))->assertOk();
     }
 
-    // 18. Reports entry (Отчёты) remains permission-gated.
+    // 18. Reports entry (Отчёты) remains permission-gated. Combined
+    // Finance Reporting V1 integration: the sidebar's actual Отчёты
+    // destination is now dashboard.finance.reports.index; the old
+    // dashboard.cash.reports route is checked too since it remains a
+    // fully functional technical fallback with its own unchanged gate.
     public function test_reports_entry_remains_permission_gated(): void
     {
         $this->actingAs($this->user('reception'))
             ->get(route('dashboard.cash.reports'))
             ->assertForbidden();
+        $this->actingAs($this->user('reception'))
+            ->get(route('dashboard.finance.reports.index'))
+            ->assertForbidden();
 
         $authorized = $this->user('reception');
         $authorized->givePermissionTo('view cash reports');
         $this->actingAs($authorized)->get(route('dashboard.cash.reports'))->assertOk();
+        $this->actingAs($authorized)->get(route('dashboard.finance.reports.index'))->assertOk();
     }
 
     // Operational summary cards read the canonical ledger only — never a

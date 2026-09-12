@@ -113,19 +113,42 @@
 @if($invoice->installments->isNotEmpty())<div class="col-12"><label class="form-label">Этап рассрочки</label><select name="invoice_installment_id" id="installment" class="form-select" required>@foreach($invoice->installments as $installment)<option value="{{ $installment->id }}" data-remaining="{{ $installment->remaining_amount }}" @selected(old('invoice_installment_id')==$installment->id)>{{ $installment->name_ru }} · до {{ $installment->due_date->format('d.m.Y') }} · остаток {{ $installment->remaining_amount }} EGP</option>@endforeach</select></div>@endif
 <div class="col-md-4"><label class="form-label">Сумма, EGP</label><input id="payment-amount" type="number" step="0.01" min="0.01" max="{{ $invoice->installments->first()?->remaining_amount ?? $invoice->remaining_amount }}" name="amount" value="{{ old('amount',$invoice->installments->first()?->remaining_amount ?? $invoice->remaining_amount) }}" class="form-control" required></div>
 <div class="col-md-4"><label class="form-label">Способ оплаты</label><select name="payment_method" id="payment-method" class="form-select" required><option value="cash">Наличные</option><option value="card">Банковская карта</option><option value="bank">Банковский перевод</option><option value="instapay">InstaPay</option></select></div>
-<div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" id="cash-account" class="form-select" required><option value="">Выберите кассу</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}">{{ $account->name }}</option>@endforeach</select><div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div></div>
+<div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" id="cash-account" class="form-select" required><option value="">Выберите кассу</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" data-cash-drawer="{{ $account->type === \App\Models\CashAccount::TYPE_CASH ? '1' : '0' }}">{{ $account->name }}</option>@endforeach</select><div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div><div class="form-text" id="cash-account-manual-hint">Выберите кассу, в которую фактически поступили наличные.</div></div>
 <div class="col-12"><label class="form-label">Примечание</label><textarea name="notes" class="form-control">{{ old('notes') }}</textarea></div><div class="col-12"><div class="small text-muted mb-3">Дата и время платежа фиксируются системой при проведении.</div><button class="btn btn-success">Принять оплату</button></div></div></form></div>
 @if($invoice->installments->isNotEmpty())<script>document.getElementById('installment').addEventListener('change',event=>{const amount=document.getElementById('payment-amount'),remaining=event.target.selectedOptions[0].dataset.remaining;amount.max=remaining;amount.value=remaining;});</script>@endif
 <script>
 (function () {
+    // Student Payment Final Corrective — cash now requires the operator to
+    // explicitly pick which physical drawer received the money (server-side
+    // enforced in StoreModernInvoicePaymentRequest); bank/instapay keep the
+    // existing auto-routed, disabled-field behavior untouched. The account
+    // list itself is unchanged (same $cashAccounts the controller has
+    // always passed) — for cash, non-drawer accounts (bank/instapay/other)
+    // are hidden client-side via each option's own data-cash-drawer marker;
+    // the server independently re-validates eligibility regardless of what
+    // the browser shows.
     const method = document.getElementById('payment-method');
     const account = document.getElementById('cash-account');
-    const hint = document.getElementById('cash-account-auto-hint');
+    const autoHint = document.getElementById('cash-account-auto-hint');
+    const manualHint = document.getElementById('cash-account-manual-hint');
+    const options = Array.from(account.options);
+
     function sync() {
-        const canonical = ['cash', 'bank', 'instapay'].includes(method.value);
-        account.disabled = canonical;
-        account.required = !canonical;
-        hint.classList.toggle('d-none', !canonical);
+        const isCash = method.value === 'cash';
+        const isAutoRouted = ['bank', 'instapay'].includes(method.value);
+
+        account.disabled = isAutoRouted;
+        account.required = !isAutoRouted;
+        autoHint.classList.toggle('d-none', !isAutoRouted);
+        manualHint.classList.toggle('d-none', !isCash);
+
+        options.forEach(option => {
+            if (option.value === '') return;
+            const isDrawer = option.dataset.cashDrawer === '1';
+            const hide = isCash && !isDrawer;
+            option.hidden = hide;
+            if (hide && option.selected) account.value = '';
+        });
     }
     method.addEventListener('change', sync);
     sync();

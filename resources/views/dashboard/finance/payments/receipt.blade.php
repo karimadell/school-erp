@@ -156,7 +156,10 @@
         <div class="notes-block"><span class="k">Распределение по услугам отсутствует.</span></div>
     @endif
 
-    @if($invoice->items->contains('is_non_refundable', true))
+    {{-- Student Payment Final Corrective — reflects THIS payment's own
+         PaymentAllocation rows only (computed once in receiptData()), never
+         the invoice's contents as a whole. See $hasNonRefundableAllocation. --}}
+    @if($hasNonRefundableAllocation)
         <div class="notice">Регистрационный взнос возврату не подлежит.</div>
     @endif
 

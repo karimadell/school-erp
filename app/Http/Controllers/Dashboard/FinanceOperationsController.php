@@ -260,11 +260,23 @@ class FinanceOperationsController extends Controller
                 ->all();
         }
 
+        // Student Payment Final Corrective — cash no longer goes through
+        // CashAccount::resolvePaymentAccountId()'s canonical override: the
+        // operator's explicitly selected, already-validated (required,
+        // active, CashAccount::TYPE_CASH — see StoreModernInvoicePaymentRequest)
+        // drawer is used exactly as submitted. bank/instapay keep the exact
+        // same canonical-routing call as before, untouched; card was never
+        // routed through it either way.
+        $paymentMethod = (string) $request->input('payment_method');
+        $cashAccountId = $paymentMethod === \App\Models\CashTransaction::METHOD_CASH
+            ? $request->integer('cash_account_id')
+            : CashAccount::resolvePaymentAccountId($paymentMethod, $request->integer('cash_account_id'));
+
         $payment = $service->record(
             invoiceId: $invoice->id,
-            cashAccountId: CashAccount::resolvePaymentAccountId((string) $request->input('payment_method'), $request->integer('cash_account_id')),
+            cashAccountId: $cashAccountId,
             amount: (string) $request->input('amount'),
-            paymentMethod: (string) $request->input('payment_method'),
+            paymentMethod: $paymentMethod,
             idempotencyKey: (string) $request->input('idempotency_key'),
             actor: $request->user(),
             reference: 'Оплата по счёту '.$invoice->display_number,
@@ -441,12 +453,25 @@ class FinanceOperationsController extends Controller
         $paidThrough = $this->money($through->sum('amount'));
         $previouslyPaid = bcsub($paidThrough, (string) $payment->amount, 2);
 
+        // Student Payment Final Corrective — the non-refundable warning must
+        // reflect THIS payment's own persisted PaymentAllocation rows, never
+        // the invoice's contents as a whole: an invoice containing a
+        // Registration (or any other non-refundable) item does not mean
+        // every payment against it paid that item. A legacy/ambiguous
+        // payment with zero allocation rows fails safe here (never true) —
+        // it is never inferred from the invoice. Computed once so the HTML
+        // and PDF receipts can never disagree.
+        $hasNonRefundableAllocation = $payment->allocations->contains(
+            fn ($allocation) => (bool) $allocation->item?->is_non_refundable
+        );
+
         return [
             'payment' => $payment, 'invoice' => $payment->invoice, 'settings' => SchoolSetting::current(),
             'previouslyPaid' => $previouslyPaid,
             'remainingAfter' => bcsub((string) $payment->invoice->total_amount, $paidThrough, 2),
             'methodLabels' => ['cash' => 'Наличные', 'card' => 'Банковская карта', 'bank' => 'Банковский перевод'],
             'shareRecipient' => FinanceShareRecipient::forStudent($payment->invoice->student),
+            'hasNonRefundableAllocation' => $hasNonRefundableAllocation,
         ];
     }
 

@@ -15,6 +15,7 @@ use Illuminate\View\View;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use App\Services\AcademicStructureService;
+use App\Services\Admissions\EnrollmentService;
 
 class EnrollmentController extends Controller
 {
@@ -66,7 +67,7 @@ class EnrollmentController extends Controller
         ]);
     }
 
-    public function store(Request $request, Student $student, AcademicStructureService $structure): RedirectResponse
+    public function store(Request $request, Student $student, EnrollmentService $enrollments): RedirectResponse
     {
         $data = $request->validate([
             'academic_year_id' => [
@@ -92,48 +93,15 @@ class EnrollmentController extends Controller
             'academic_year_id.unique' => __('enrollments.duplicate_year'),
         ]);
 
-        // The human-readable academic_year label is derived server-side from the
-        // selected year — never a hand-typed value — so academic_year_id and its
-        // label can never disagree.
-        $year = AcademicYear::findOrFail($data['academic_year_id']);
-        $structure->validatePlacement(
-            (int) $data['stage_id'],
-            (int) $data['grade_id'],
-            (int) $data['class_id'],
-            requireActive: true,
-        );
-
-        DB::transaction(function () use ($data, $student, $year) {
-            // A new enrollment never deactivates another academic year's
-            // enrollment. is_active describes only this record's own year —
-            // it is not a global "current enrollment" flag across years.
-            // The student's current placement is derived separately, from
-            // whichever enrollment is linked to the currently active
-            // AcademicYear (see Student::currentEnrollment()).
-            Enrollment::create([
-                'student_id' => $student->id,
-                'academic_year_id' => $data['academic_year_id'],
-                'academic_year' => $year->name,
-                'enrollment_mode_id' => $data['enrollment_mode_id'] ?? null,
-
-                'stage_id' => $data['stage_id'],
-                'grade_id' => $data['grade_id'],
-                'class_id' => $data['class_id'],
-
-                'enrollment_date' => $data['enrollment_date'] ?? now()->toDateString(),
-                'enrolled_at' => $data['enrollment_date'] ?? now()->toDateString(),
-
-                'status' => $data['status'],
-                'notes' => $data['notes'] ?? null,
-                'is_active' => $data['status'] === 'active',
-            ]);
-
-            if ($data['status'] === 'active' && $year->is_active) {
-                $student->update([
-                    'class_id' => $data['class_id'],
-                ]);
-            }
-        });
+        // Existing Student Enrollment Extraction (Phase 1) — the domain
+        // behavior (resolving the target year, placement validation,
+        // creating the Enrollment row, syncing Student.class_id) now lives
+        // in EnrollmentService::create(), unchanged, so it can be reused by
+        // a future Existing Student → New Academic Year workflow. This
+        // controller keeps request validation (including the duplicate-year
+        // Rule::unique check above), authorization, and the redirect/flash
+        // response exactly as before.
+        $enrollments->create($student, $data);
 
         return redirect()
             ->route('dashboard.students.show', $student->id)

@@ -41,9 +41,9 @@
             @endcanany
         </div>
         <div class="col-6 col-md-3">
-            @can('view cash reports')
-                <a href="{{ route('dashboard.cash.reports') }}" class="btn btn-outline-secondary btn-lg w-100">{{ __('finance_workspace.reports') }}</a>
-            @endcan
+            @canany(['view cash reports', 'view collections'])
+                <a href="{{ route('dashboard.finance.reports.index') }}" class="btn btn-outline-secondary btn-lg w-100">{{ __('finance_workspace.reports') }}</a>
+            @endcanany
         </div>
     </div>
 

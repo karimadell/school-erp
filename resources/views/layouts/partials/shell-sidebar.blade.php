@@ -105,7 +105,17 @@
                 ['label' => __('finance_workspace.add_income'), 'icon' => 'payments', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.income.index' : null, 'active' => 'dashboard.finance.income.*'],
                 ['label' => __('finance_workspace.add_expense'), 'icon' => 'trending_down', 'route' => auth()->user()?->can('manage expenses') ? 'dashboard.finance.expenses.index' : null, 'active' => ['dashboard.finance.expenses.*', 'dashboard.finance.expense-categories.*', 'dashboard.finance.payees.*']],
                 ['label' => __('finance_workspace.cash'), 'icon' => 'briefcase', 'route' => auth()->user()?->hasAnyPermission(['manage cash', 'transfer cash', 'view cash reports']) ? 'dashboard.cash.operations.index' : null, 'active' => ['dashboard.cash.operations.*', 'dashboard.cash.accounts', 'dashboard.cash.accounts.*', 'dashboard.cash.sessions.*', 'dashboard.cash.ledger', 'dashboard.cash.transactions', 'dashboard.cash.transfers', 'dashboard.cash.transfer.*', 'dashboard.cash.income', 'dashboard.cash.expenses*']],
-                ['label' => __('finance_workspace.reports'), 'icon' => 'pie_chart', 'route' => auth()->user()?->can('view cash reports') ? 'dashboard.cash.reports' : null, 'active' => 'dashboard.cash.reports'],
+                // Combined Finance Reporting V1 — Отчёты now points at the
+                // combined reporting surface (cash movement + student
+                // collections, permission-isolated inside
+                // FinanceReportsController) instead of the old cash-only
+                // report. Gate matches that controller's own "either
+                // permission reaches the page" rule exactly, so an
+                // operational user is never shown a link that 403s them.
+                // dashboard.cash.reports (CashTransactionController::
+                // reports()) remains fully functional as a technical
+                // fallback, just no longer linked from here.
+                ['label' => __('finance_workspace.reports'), 'icon' => 'pie_chart', 'route' => auth()->user()?->hasAnyPermission(['view cash reports', 'view collections']) ? 'dashboard.finance.reports.index' : null, 'active' => 'dashboard.finance.reports.*'],
             ],
         ],
         [

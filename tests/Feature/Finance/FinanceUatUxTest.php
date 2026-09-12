@@ -77,7 +77,12 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             ->assertSee(route('dashboard.finance.income.index'), false)
             ->assertSee(route('dashboard.finance.expenses.index'), false)
             ->assertSee(route('dashboard.cash.operations.index'), false)
-            ->assertSee(route('dashboard.cash.reports'), false)
+            // Combined Finance Reporting V1 integration: Отчёты now points
+            // at the combined reporting surface, not the old cash-only
+            // report (dashboard.cash.reports remains a working technical
+            // fallback, just no longer linked from here).
+            ->assertSee(route('dashboard.finance.reports.index'), false)
+            ->assertDontSee(route('dashboard.cash.reports'), false)
             // Internal backend modules no longer get their own sidebar link.
             // dashboard.invoices.index is checked as a quoted href, not a
             // bare substring — the page legitimately still shows a

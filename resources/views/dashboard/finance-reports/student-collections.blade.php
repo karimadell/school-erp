@@ -7,6 +7,7 @@
             <h1 class="h3 mb-0">Поступления от учеников</h1>
             <p class="text-muted mb-0">Сводка по подтверждённым платежам и возвратам учеников (InvoicePayment / PaymentRefund) — только просмотр. Не включает расходы и прочие доходы.</p>
         </div>
+        <a href="{{ route('dashboard.finance.reports.index') }}" class="btn btn-outline-secondary">← Назад к отчётам</a>
     </div>
 
     <div class="card mb-4">

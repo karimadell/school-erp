@@ -62,18 +62,18 @@
 
     <div class="row g-3 mb-4">
         @if($canViewCash)
-        <div class="col-md-6">
-            <a href="{{ route('dashboard.finance.reports.cash-movement') }}" class="btn btn-outline-primary w-100">Движение денежных средств →</a>
+        <div class="col-md-4">
+            <a href="{{ route('dashboard.finance.reports.cash-movement') }}" class="btn btn-outline-primary w-100 h-100">Движение денежных средств →</a>
         </div>
         @endif
         @if($canViewCollections)
-        <div class="col-md-6">
-            <a href="{{ route('dashboard.finance.reports.student-collections') }}" class="btn btn-outline-primary w-100">Поступления от учеников →</a>
+        <div class="col-md-4">
+            <a href="{{ route('dashboard.finance.reports.student-collections') }}" class="btn btn-outline-primary w-100 h-100">Поступления от учеников →</a>
         </div>
         @endif
         @if($canViewCash)
-        <div class="col-md-6">
-            <a href="{{ route('dashboard.finance.reports.account-balances') }}" class="btn btn-outline-secondary w-100">Балансы счетов →</a>
+        <div class="col-md-4">
+            <a href="{{ route('dashboard.finance.reports.account-balances') }}" class="btn btn-outline-primary w-100 h-100">Балансы счетов →</a>
         </div>
         @endif
     </div>

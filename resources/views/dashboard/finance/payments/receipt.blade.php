@@ -133,6 +133,29 @@
         </div>
     @endif
 
+    {{-- Student Payment Allocation UX corrective (Section E) — show exactly
+         what the database records for THIS payment's own PaymentAllocation
+         rows, never inferred. A payment against a single-item invoice, a
+         Quick Registration payment, or an explicit per-item split on a
+         clean multi-item invoice all have real allocation rows and get the
+         breakdown below. A payment against a historically allocation-
+         ambiguous multi-item invoice has zero allocation rows by design
+         (InvoicePaymentService never guesses) and gets the neutral note
+         instead — never a fabricated service list. --}}
+    @if($payment->allocations->isNotEmpty())
+        <div class="notes-block">
+            <span class="k">Оплачено по услугам:</span>
+            @foreach($payment->allocations as $allocation)
+                <div class="info-row" style="padding:4px 0;border:0;">
+                    <span class="info-label">{{ $allocation->item?->fee?->name_ru ?? $allocation->item?->description ?? '—' }}</span>
+                    <span class="info-value">{{ number_format((float) $allocation->amount, 2, '.', '') }} {{ $settings->currency_symbol }}</span>
+                </div>
+            @endforeach
+        </div>
+    @else
+        <div class="notes-block"><span class="k">Распределение по услугам отсутствует.</span></div>
+    @endif
+
     @if($invoice->items->contains('is_non_refundable', true))
         <div class="notice">Регистрационный взнос возврату не подлежит.</div>
     @endif

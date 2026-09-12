@@ -103,6 +103,30 @@ class RevenueEntryController extends Controller
         ]);
     }
 
+    /**
+     * Final Finance UX corrective — a read-only, printable receipt for a
+     * RevenueEntry that has actually reached the ledger. A draft has no
+     * CashTransaction yet, so there is nothing to receipt (404, same
+     * reasoning as ExpenseController never exposing an attachment for a
+     * record that was never posted). A reversed entry still gets a
+     * receipt — its reversal is real financial history — but the
+     * dedicated view renders a clear "Сторнирован" state instead of
+     * presenting it as an ordinary valid payment receipt. Zero writes:
+     * this method only loads and displays already-stored attributes.
+     */
+    public function receipt(RevenueEntry $revenueEntry): View
+    {
+        $this->authorize('view', $revenueEntry);
+        abort_if($revenueEntry->isDraft(), 404);
+
+        $revenueEntry->load(['category', 'cashAccount', 'creator', 'poster', 'reverser', 'cashTransaction', 'reversalTransaction']);
+
+        return view('dashboard.finance.income.revenue.receipt', [
+            'entry' => $revenueEntry,
+            'settings' => \App\Models\SchoolSetting::current(),
+        ]);
+    }
+
     public function post(Request $request, RevenueEntry $revenueEntry): RedirectResponse
     {
         $this->authorize('post', $revenueEntry);

@@ -23,7 +23,31 @@
             $summary = $row['summary'];
             $payable = $summary['invoices']->whereIn('status', ['unpaid', 'partial']);
         @endphp
-<tr><td>{{ $student->full_name }}<div class="small text-muted">ID {{ $student->id }} · {{ $student->phone }}</div></td><td>{{ $student->currentEnrollment?->academicYear?->name ?: '—' }}</td><td>{{ $summary['invoiced'] }} EGP</td><td>{{ $summary['paid'] }} EGP</td><td>{{ $summary['remaining'] }} EGP</td><td>{{ $summary['overdue'] }} EGP</td><td>{{ $summary['invoices']->first()?->display_number ?: '—' }}</td><td>{{ $summary['latest_payment']?->payment_number ?: '—' }}</td><td><div class="d-flex flex-wrap gap-1"><a class="btn btn-sm btn-outline-secondary" href="{{ route('dashboard.students.show',$student) }}">Открыть профиль</a><a class="btn btn-sm btn-outline-primary" href="{{ route('dashboard.students.finance',$student) }}">{{ __('finance_uat.student_account') }}</a>@can('manage invoices')<a class="btn btn-sm btn-primary" href="{{ route('dashboard.students.invoices.create',$student) }}">{{ __('finance_uat.issue_invoice') }}</a>@if($payable->count()===1)<a class="btn btn-sm btn-success" href="{{ route('dashboard.invoices.payments.create',$payable->first()) }}">Принять оплату</a>@endif @endcan</div></td></tr>
+<tr><td>{{ $student->full_name }}<div class="small text-muted">ID {{ $student->id }} · {{ $student->phone }}</div></td><td>{{ $student->currentEnrollment?->academicYear?->name ?: '—' }}</td><td>{{ $summary['invoiced'] }} EGP</td><td>{{ $summary['paid'] }} EGP</td><td>{{ $summary['remaining'] }} EGP</td><td>{{ $summary['overdue'] }} EGP</td><td>{{ $summary['invoices']->first()?->display_number ?: '—' }}</td><td>{{ $summary['latest_payment']?->payment_number ?: '—' }}</td><td>
+        <div class="d-flex flex-wrap gap-1 mb-1">
+            <a class="btn btn-sm btn-outline-secondary" href="{{ route('dashboard.students.show',$student) }}">Открыть профиль</a>
+            <a class="btn btn-sm btn-outline-primary" href="{{ route('dashboard.students.finance',$student) }}">{{ __('finance_uat.student_account') }}</a>
+            @can('manage invoices')<a class="btn btn-sm btn-outline-dark" href="{{ route('dashboard.students.invoices.create',$student) }}">{{ __('finance_uat.issue_invoice') }}</a>@endcan
+        </div>
+        {{-- Faster daily cashier workflow: every open/payable invoice is a
+             direct button into the existing canonical payment form
+             (dashboard.invoices.payments.create -> FinanceOperationsController::
+             createPayment()/storePayment() -> InvoicePaymentService::record()),
+             not just when there happens to be exactly one. No new payment
+             engine, no bypass — same route, same validation, same service. --}}
+        @can('manage invoices')
+            @if($payable->isNotEmpty())
+                <div class="d-flex flex-column gap-1">
+                    @foreach($payable as $invoice)
+                        <a class="btn btn-sm btn-success d-flex justify-content-between align-items-center" href="{{ route('dashboard.invoices.payments.create',$invoice) }}">
+                            <span>{{ $invoice->display_number }}</span>
+                            <span class="ms-2 fw-semibold">{{ number_format((float) $invoice->remaining_amount, 2, '.', ' ') }} EGP</span>
+                        </a>
+                    @endforeach
+                </div>
+            @endif
+        @endcan
+    </td></tr>
     @empty<tr><td colspan="9" class="text-center py-4">Ученики не найдены.</td></tr>@endforelse
     </tbody></table></div><div class="card-footer">{{ $students->links() }}</div></div>
 </div>

@@ -3,26 +3,33 @@
 @section('content')
 <div class="container-fluid py-4">
 
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
         <div>
-            <h3 class="fw-bold mb-0">💰 {{ __('cash_operations.title') }}</h3>
+            <h3 class="fw-bold mb-0">{{ __('cash_operations.title') }}</h3>
             <small class="text-muted">{{ __('cash_operations.subtitle') }}</small>
         </div>
+        {{-- Administrative/navigational links — visually secondary. --}}
         <div class="d-flex gap-2 flex-wrap">
-            <a href="{{ route('dashboard.cash.accounts') }}" class="btn btn-outline-secondary">{{ __('cash_operations.all_accounts_action') }}</a>
+            <a href="{{ route('dashboard.cash.accounts') }}" class="btn btn-sm btn-outline-secondary">{{ __('cash_operations.all_accounts_action') }}</a>
             @can('view cash sessions')
-                <a href="{{ route('dashboard.cash.sessions.index') }}" class="btn btn-outline-secondary">{{ __('cash_operations.sessions_action') }}</a>
+                <a href="{{ route('dashboard.cash.sessions.index') }}" class="btn btn-sm btn-outline-secondary">{{ __('cash_operations.sessions_action') }}</a>
             @endcan
             @can('open cash sessions')
-                <a href="{{ route('dashboard.cash.sessions.create') }}" class="btn btn-outline-secondary">{{ __('cash_operations.open_shift_action') }}</a>
+                <a href="{{ route('dashboard.cash.sessions.create') }}" class="btn btn-sm btn-outline-secondary">{{ __('cash_operations.open_shift_action') }}</a>
             @endcan
-            @canany(['manage cash', 'transfer cash'])
-                <a href="{{ route('dashboard.cash.transfer.form') }}" class="btn btn-outline-primary">{{ __('cash_operations.generic_transfer_action') }}</a>
-                <a href="{{ route('dashboard.cash.operations.owner-return.create') }}" class="btn btn-outline-success">{{ __('cash_operations.owner_return_action') }}</a>
-                <a href="{{ route('dashboard.cash.operations.handover.create') }}" class="btn btn-success">{{ __('cash_operations.handover_action') }}</a>
-            @endcanany
         </div>
     </div>
+
+    {{-- Primary financial actions — transfer stays the visually dominant
+         action; handover/owner-return remain fully available but do not
+         compete with it for attention. No behavior/permission change. --}}
+    @canany(['manage cash', 'transfer cash'])
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-4">
+            <a href="{{ route('dashboard.cash.transfer.form') }}" class="btn btn-primary btn-lg">{{ __('cash_operations.generic_transfer_action') }}</a>
+            <a href="{{ route('dashboard.cash.operations.handover.create') }}" class="btn btn-outline-success">{{ __('cash_operations.handover_action') }}</a>
+            <a href="{{ route('dashboard.cash.operations.owner-return.create') }}" class="btn btn-outline-secondary">{{ __('cash_operations.owner_return_action') }}</a>
+        </div>
+    @endcanany
 
     @if(session('success'))
         <div class="alert alert-success shadow-sm border-0">{{ session('success') }}</div>

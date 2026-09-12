@@ -99,6 +99,9 @@
             <div class="card shadow-sm border-0 mb-4">
                 <div class="card-header bg-light fw-bold">{{ __('revenues.actions') }}</div>
                 <div class="card-body d-flex flex-column gap-2">
+                    @unless($entry->isDraft())
+                        <a href="{{ route('dashboard.finance.income.revenue.receipt', $entry) }}" target="_blank" class="btn btn-outline-primary w-100">{{ __('revenues.print_receipt') }}</a>
+                    @endunless
                     @can('post', $entry)
                         <form method="POST" action="{{ route('dashboard.finance.income.revenue.post', $entry) }}" onsubmit="return confirm('{{ __('revenues.action_post') }}?')">
                             @csrf

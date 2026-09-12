@@ -7,6 +7,7 @@
             <h1 class="h3 mb-0">Движение денежных средств</h1>
             <p class="text-muted mb-0">Только просмотр — данные из кассовых операций (CashTransaction), сгруппированные по кассе, способу оплаты, типу источника и дню.</p>
         </div>
+        <a href="{{ route('dashboard.finance.reports.index') }}" class="btn btn-outline-secondary">← Назад к отчётам</a>
     </div>
 
     <div class="card mb-4">

@@ -486,6 +486,9 @@ Route::middleware(['auth', 'administrative'])
                     Route::post('/', 'store')->name('store');
                     Route::get('{revenueEntry}', 'show')->name('show');
                     Route::get('{revenueEntry}/attachment', 'attachment')->name('attachment');
+                    // Final Finance UX corrective — read-only printable
+                    // receipt (GET only, zero finance writes).
+                    Route::get('{revenueEntry}/receipt', 'receipt')->name('receipt');
                     Route::post('{revenueEntry}/post', 'post')->name('post');
                     Route::post('{revenueEntry}/reverse', 'reverse')->name('reverse');
                     Route::delete('{revenueEntry}', 'destroy')->name('destroy');

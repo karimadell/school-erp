@@ -7,6 +7,7 @@
             <h1 class="h3 mb-0">Балансы счетов</h1>
             <p class="text-muted mb-0">Текущий остаток по каждой кассе/счёту и движение за выбранный период. Только просмотр — остаток счёта не пересчитывается здесь.</p>
         </div>
+        <a href="{{ route('dashboard.finance.reports.index') }}" class="btn btn-outline-secondary">← Назад к отчётам</a>
     </div>
 
     <div class="card mb-4">

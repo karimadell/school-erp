@@ -34,15 +34,43 @@
              (dashboard.invoices.payments.create -> FinanceOperationsController::
              createPayment()/storePayment() -> InvoicePaymentService::record()),
              not just when there happens to be exactly one. No new payment
-             engine, no bypass — same route, same validation, same service. --}}
+             engine, no bypass — same route, same validation, same service.
+
+             Student Payment Allocation UX corrective (Section A) — each
+             payable invoice now also lists its InvoiceItem services so the
+             cashier can see WHAT the outstanding amount is made of before
+             opening the payment form. Deliberately display-only: item
+             names/amounts come straight from the already-eager-loaded
+             invoices.items.fee relation (no new query per row), and the
+             period label (if any) is read from metadata already stored on
+             the item itself — never a live remaining-allocatable
+             computation, which belongs on the single-invoice payment form
+             (create.blade.php) where calling InvoicePaymentService once per
+             page is cheap; doing that here, once per invoice per row of a
+             paginated student list, would be a real N+1 query risk. This
+             screen never performs a payment write. --}}
         @can('manage invoices')
             @if($payable->isNotEmpty())
-                <div class="d-flex flex-column gap-1">
+                <div class="d-flex flex-column gap-2">
                     @foreach($payable as $invoice)
-                        <a class="btn btn-sm btn-success d-flex justify-content-between align-items-center" href="{{ route('dashboard.invoices.payments.create',$invoice) }}">
-                            <span>{{ $invoice->display_number }}</span>
-                            <span class="ms-2 fw-semibold">{{ number_format((float) $invoice->remaining_amount, 2, '.', ' ') }} EGP</span>
-                        </a>
+                        @php $items = $invoice->items; @endphp
+                        <div class="border rounded p-2">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="fw-semibold">{{ $invoice->display_number }}</span>
+                                <span class="small text-muted">Остаток: <strong>{{ number_format((float) $invoice->remaining_amount, 2, '.', ' ') }} EGP</strong></span>
+                            </div>
+                            @if($items->isNotEmpty())
+                                <ul class="list-unstyled small text-muted mb-2">
+                                    @foreach($items as $item)
+                                        <li class="d-flex justify-content-between gap-2">
+                                            <span>{{ $item->fee?->name_ru ?? $item->description }}@if($period = \App\Support\InvoiceItemPeriodLabel::forItem($item))<span class="text-muted"> — {{ $period }}</span>@endif</span>
+                                            <span>{{ number_format((float) $item->amount, 2, '.', ' ') }} EGP</span>
+                                        </li>
+                                    @endforeach
+                                </ul>
+                            @endif
+                            <a class="btn btn-sm btn-success w-100" href="{{ route('dashboard.invoices.payments.create',$invoice) }}">Оплатить</a>
+                        </div>
                     @endforeach
                 </div>
             @endif

@@ -69,7 +69,13 @@ class FinanceOperationsController extends Controller
     {
         $invoices = Invoice::query();
         $payments = InvoicePayment::query();
-        $students = Student::query()->with(['currentEnrollment.academicYear', 'invoices.payments'])
+        // Student Payment Allocation UX corrective — additive eager-load only
+        // (items.fee), so the search/shortcut screen can show each payable
+        // invoice's service breakdown without any N+1 query. No new query
+        // shape, no allocation computation here: this screen is display/
+        // navigation only, per the corrective's own scope (see the
+        // per-invoice item list rendered in dashboard.finance.income.students).
+        $students = Student::query()->with(['currentEnrollment.academicYear', 'invoices.payments', 'invoices.items.fee'])
             ->when($request->filled('q'), function ($query) use ($request) {
                 $term = trim((string) $request->input('q'));
                 $query->where(fn ($query) => $query
@@ -422,7 +428,14 @@ class FinanceOperationsController extends Controller
 
     private function receiptData(InvoicePayment $payment): array
     {
-        $payment->load(['invoice.student.representatives', 'invoice.academicYear', 'invoice.payments', 'invoice.items', 'installment', 'cashAccount', 'creator']);
+        // Student Payment Allocation UX corrective — additive eager-load of
+        // this one payment's own PaymentAllocation rows (with their item and
+        // fee) so the receipt can show which service(s) this payment paid
+        // down when that is known. Read-only: never creates, infers, or
+        // backfills an allocation — see the receipt view for the exact
+        // "show breakdown only when rows exist, otherwise a neutral note"
+        // rule (Section E of the corrective).
+        $payment->load(['invoice.student.representatives', 'invoice.academicYear', 'invoice.payments', 'invoice.items.fee', 'installment', 'cashAccount', 'creator', 'allocations.item.fee']);
         $ordered = $payment->invoice->payments->sortBy(fn ($item) => sprintf('%s-%010d', ($item->paid_at ?? $item->created_at)?->format('YmdHis.u'), $item->id));
         $through = $ordered->takeUntil(fn ($item) => $item->id === $payment->id)->push($payment)->unique('id');
         $paidThrough = $this->money($through->sum('amount'));

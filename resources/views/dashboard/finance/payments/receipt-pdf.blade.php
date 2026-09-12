@@ -90,6 +90,20 @@
     <div class="box"><span class="k">Этап рассрочки:</span><strong>{{ $payment->installment->name_ru }}</strong> &nbsp;&nbsp; <span class="k">Остаток по этапу после платежа:</span><strong>{{ number_format((float) $payment->installment->remaining_amount, 2, '.', '') }} {{ $settings->currency_symbol }}</strong></div>
 @endif
 
+{{-- Student Payment Allocation UX corrective (Section E) — same rule as the
+     HTML receipt: show this payment's own PaymentAllocation rows when they
+     exist, a neutral note when they don't. Never inferred. --}}
+@if($payment->allocations->isNotEmpty())
+    <div class="box">
+        <span class="k">Оплачено по услугам:</span>
+        @foreach($payment->allocations as $allocation)
+            <div>{{ $allocation->item?->fee?->name_ru ?? $allocation->item?->description ?? '—' }} — {{ number_format((float) $allocation->amount, 2, '.', '') }} {{ $settings->currency_symbol }}</div>
+        @endforeach
+    </div>
+@else
+    <div class="box"><span class="k">Распределение по услугам отсутствует.</span></div>
+@endif
+
 @if($invoice->items->contains('is_non_refundable', true))
     <div class="box notice">Регистрационный взнос возврату не подлежит.</div>
 @endif

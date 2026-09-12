@@ -18,10 +18,13 @@ class StoreModernInvoicePaymentRequest extends FormRequest
         return [
             'amount' => ['required', 'decimal:0,2', 'gt:0'],
             'invoice_installment_id' => ['nullable', 'integer', 'exists:invoice_installments,id'],
-            // cash/bank/instapay resolve to their canonical account
-            // server-side (see CashAccount::resolvePaymentAccountId) and
-            // never consult this field — it is only load-bearing for card,
-            // which has no canonical mapping yet.
+            // Student Payment Final Corrective — bank/instapay still resolve
+            // to their one canonical account server-side (see
+            // CashAccount::resolvePaymentAccountId()) and never consult this
+            // field. cash no longer does: the operator must explicitly pick
+            // which physical drawer received the money (see withValidator()
+            // below for the required + eligibility check); card keeps its
+            // existing manual-selection behavior, unchanged.
             'cash_account_id' => ['nullable', 'integer', 'exists:cash_accounts,id'],
             'payment_method' => ['required', 'in:cash,card,bank,instapay'],
             'idempotency_key' => ['required', 'uuid'],
@@ -43,7 +46,36 @@ class StoreModernInvoicePaymentRequest extends FormRequest
             if ($validator->errors()->isNotEmpty()) {
                 return;
             }
-            if (CashAccount::canonicalRoleForMethod((string) $this->input('payment_method')) === null && ! $this->filled('cash_account_id')) {
+
+            $method = (string) $this->input('payment_method');
+
+            // Student Payment Final Corrective — a cash payment must name
+            // the physical drawer that actually received the money. This
+            // narrows the "exempt from manual selection" set from "every
+            // canonical-routed method" down to "bank/instapay only" — it
+            // does not change how bank/instapay themselves resolve (see
+            // CashAccount::canonicalRoleForMethod()/resolvePaymentAccountId(),
+            // both untouched) and does not touch card's existing manual
+            // selection below.
+            if ($method === 'cash') {
+                if (! $this->filled('cash_account_id')) {
+                    $validator->errors()->add('cash_account_id', 'Выберите кассу, в которую фактически поступили наличные.');
+
+                    return;
+                }
+                $eligible = CashAccount::query()
+                    ->whereKey($this->integer('cash_account_id'))
+                    ->where('is_active', true)
+                    ->where('type', CashAccount::TYPE_CASH)
+                    ->exists();
+                if (! $eligible) {
+                    $validator->errors()->add('cash_account_id', 'Выбранная касса недоступна для приёма наличных.');
+                }
+
+                return;
+            }
+
+            if (CashAccount::canonicalRoleForMethod($method) === null && ! $this->filled('cash_account_id')) {
                 $validator->errors()->add('cash_account_id', 'Выберите кассу.');
             }
         });

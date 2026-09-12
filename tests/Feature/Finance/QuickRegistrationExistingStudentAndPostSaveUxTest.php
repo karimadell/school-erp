@@ -30,6 +30,12 @@ class QuickRegistrationExistingStudentAndPostSaveUxTest extends FinanceOperation
             ->post(route('dashboard.invoices.payments.store', $invoice), [
                 'amount' => '500.00',
                 'payment_method' => 'cash',
+                // Student Payment Final Corrective — cash_account_id is now
+                // required for a cash payment (the operator must name the
+                // drawer that received the money); $this->cash is the
+                // FinanceOperationsTestCase fixture's already-open-session
+                // operating drawer.
+                'cash_account_id' => $this->cash->id,
                 'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
             ])->assertSessionHasNoErrors();
 

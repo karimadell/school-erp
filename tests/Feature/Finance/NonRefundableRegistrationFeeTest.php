@@ -54,9 +54,16 @@ class NonRefundableRegistrationFeeTest extends FinanceOperationsTestCase
         $this->get(route('dashboard.payments.receipt.pdf',$payment))->assertOk()->assertHeader('content-type','application/pdf');
         $invoice->load(['items','student.grade','fees','cashAccount','payments.cashAccount','academicYear']);
         $this->assertStringContainsString('Регистрационный взнос возврату не подлежит.', view('dashboard.invoices.pdf',compact('invoice'))->render());
+        // Student Payment Final Corrective — the view now reads
+        // $hasNonRefundableAllocation (this payment's own PaymentAllocation
+        // rows, never the invoice's contents), not $invoice->items directly.
+        // true here because this is a single-item invoice: Phase 1A always
+        // auto-allocates the full payment to that one (now non-refundable)
+        // item, so the payment's own allocation is guaranteed to cover it.
         $this->assertStringContainsString('Регистрационный взнос возврату не подлежит.', view('dashboard.finance.payments.receipt-pdf',[
             'payment'=>$payment->load(['cashAccount','creator']), 'invoice'=>$invoice, 'settings'=>SchoolSetting::current(),
             'previouslyPaid'=>'0.00', 'remainingAfter'=>'6000.00', 'methodLabels'=>['cash'=>'Наличные'],
+            'hasNonRefundableAllocation'=>true,
         ])->render());
         $this->assertSame($snapshot,[$invoice->fresh()->toArray(),$item->fresh()->toArray(),$payment->fresh()->toArray()]);
     }

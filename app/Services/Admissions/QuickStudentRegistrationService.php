@@ -18,14 +18,11 @@ use App\Models\Stage;
 use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
-use App\Models\Bus;
-use App\Models\TransportRoute;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\AcademicStructureService;
 use App\Services\StudentServiceSubscriptionService;
-use App\Services\Transport\TransportAssignmentService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -40,7 +37,6 @@ class QuickStudentRegistrationService
         private InvoicePaymentService $payments,
         private StudentServiceSubscriptionService $subscriptions,
         private AcademicStructureService $structure,
-        private TransportAssignmentService $transportAssignments,
     )
     {
     }
@@ -337,42 +333,28 @@ class QuickStudentRegistrationService
                     ]);
                 }
 
-                // Transport Management Phase C — the canonical durable
-                // assignment (bus capacity, route/zone identity, audit) is
-                // created inside this SAME outer transaction, right where
-                // Food's own MealSubscription is created above: this is the
-                // one place per submission that already knows the resolved
-                // Enrollment and the Transport service's own selection.
-                // TransportAssignmentService::assign() wraps itself in its
-                // own DB::transaction() (Laravel nests it as a savepoint),
-                // enforces the Phase A 'manage transport assignments'
-                // permission itself (abort_unless — never duplicated here),
-                // and is the sole capacity-locking authority — any failure
-                // it throws (capacity, inactive route/bus, permission,
-                // overlap) propagates straight out of this closure and out
-                // of InvoiceIssuanceService::issue() to the outer
-                // DB::transaction() in register() below, rolling back the
-                // whole registration (Student/Enrollment/Invoice/coverage)
-                // with no orphan rows anywhere.
-                if ($fee->category === Fee::CATEGORY_TRANSPORT) {
-                    $this->transportAssignments->assign(
-                        $enrollment,
-                        TransportRoute::findOrFail($selection['transport_route_id']),
-                        Bus::findOrFail($selection['bus_id']),
-                        [
-                            'pricing_zone' => $selection['transport_area'],
-                            'pickup_point' => $selection['transport_stop'] ?? null,
-                            'billing_period' => $selection['payment_period'] ?? null,
-                            // Same start-date semantics already used for this
-                            // exact Transport subscription two lines above —
-                            // Transport has no coverage-range concept of its
-                            // own the way Food does, so the registration date
-                            // is the correct "service begins now" anchor.
-                            'effective_from' => $data['registration_date'],
-                        ],
-                        $actor,
-                    );
-                }
+                // Transport capacity decoupling: Quick Registration no
+                // longer creates a StudentTransportAssignment (a real,
+                // capacity-locked seat) — that call used to reuse Operations'
+                // own vehicle-assignment mechanism (TransportAssignmentService
+                // ::assign(), which enforces TransportPassengerCapacityService)
+                // for what should only ever be a billing/demand-capture step,
+                // causing a hard failure (TransportCapacityExceeded -> 500,
+                // full registration rollback) whenever the selected bus was
+                // already at capacity. The school's actual rule: a student
+                // must be accepted and billed for Transport even when no
+                // vehicle has spare capacity yet or no final vehicle is known
+                // at all — final seat assignment is a later, separate
+                // Operations decision (see TransportManagementController::
+                // assignStudent(), unchanged, still capacity-enforced there).
+                //
+                // The StudentServiceSubscription created above (identical
+                // code path for every Fee category, Transport included)
+                // already carries everything Operations needs to later
+                // assign a seat: this Fee's own metadata() branch for
+                // Fee::CATEGORY_TRANSPORT stores area/route_id/route/stop/
+                // payment_period. No Bus, no TransportRoute model fetch, no
+                // capacity check belongs in this closure any more.
 
                 return $subscription->id;
             };

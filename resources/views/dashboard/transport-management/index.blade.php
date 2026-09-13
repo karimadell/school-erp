@@ -47,6 +47,56 @@
                 @endforeach
             </div>
             <div class="alert alert-light border mt-3 mb-0">Сотрудники учитываются отдельно и не занимают ученические места. Рабочий лимит — не более 14 учеников на автобус.</div>
+
+            {{-- Transport capacity decoupling: informational only, never a
+                 registration/billing blocker. Quick Registration bills and
+                 records Transport demand without assigning a seat; this
+                 panel is where that demand becomes visible to Operations so
+                 a real vehicle assignment (or an additional vehicle) can be
+                 arranged. "Оформлено" (subscribed/billed), "Закреплено
+                 место" (actually assigned a seat) and "Ожидают места"
+                 (unassigned) are kept as three distinct counts on purpose —
+                 never collapse them into one figure. --}}
+            @if($transportDemand->isNotEmpty())
+                <div class="card mt-3">
+                    <div class="card-header fw-semibold">Спрос на транспорт по маршрутам</div>
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0 align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Маршрут / зона</th>
+                                    <th class="text-end">Оформлено (выставлен счёт)</th>
+                                    <th class="text-end">Закреплено место</th>
+                                    <th class="text-end">Ожидают места</th>
+                                    <th class="text-end">Свободно мест (активные автобусы маршрута)</th>
+                                    <th>Статус</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($transportDemand as $row)
+                                    <tr class="{{ $row['shortfall'] > 0 ? 'table-warning' : '' }}">
+                                        <td>{{ $row['route']?->name ?? ($row['zone'] ? 'Зона: '.$row['zone'] : 'Маршрут не указан') }}</td>
+                                        <td class="text-end">{{ $row['subscribed'] }}</td>
+                                        <td class="text-end">{{ $row['assigned'] }}</td>
+                                        <td class="text-end">{{ $row['unassigned'] }}</td>
+                                        <td class="text-end">{{ $row['available_capacity'] }}</td>
+                                        <td>
+                                            @if($row['shortfall'] > 0)
+                                                <span class="badge text-bg-warning">Не хватает мест на {{ $row['shortfall'] }} {{ $row['shortfall'] === 1 ? 'ученика' : 'учеников' }} — требуется доп. транспорт</span>
+                                            @elseif($row['unassigned'] > 0)
+                                                <span class="badge text-bg-info">{{ $row['unassigned'] }} {{ $row['unassigned'] === 1 ? 'ученик ожидает' : 'учеников ожидают' }} назначения места (места есть)</span>
+                                            @else
+                                                <span class="badge text-bg-success">Все закреплены</span>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="card-body py-2 text-muted small">Это информационная панель — она не блокирует регистрацию, счета или оплату. Назначение конкретного автобуса выполняется отдельно, во вкладке «Ученики».</div>
+                </div>
+            @endif
         </section>
 
         <section id="transport-vehicles" class="tab-pane fade">

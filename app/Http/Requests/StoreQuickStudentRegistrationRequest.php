@@ -221,12 +221,16 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                     if (blank($item['transport_area'] ?? null) || blank($item['transport_route_id'] ?? null)) {
                         $validator->errors()->add("services.{$index}.transport_area", 'Для транспорта укажите район и маршрут.');
                     }
-                    // Transport Management Phase C — canonical bus selection
-                    // is required alongside the pricing zone/route; never
-                    // guessed among multiple active buses.
-                    if (blank($item['bus_id'] ?? null)) {
-                        $validator->errors()->add("services.{$index}.bus_id", 'Для транспорта выберите микроавтобус.');
-                    }
+                    // Transport capacity decoupling: bus_id is deliberately
+                    // NOT required here any more. Quick Registration only
+                    // captures zone/route/stop demand and bills for it —
+                    // final vehicle assignment (where a specific bus and its
+                    // capacity genuinely matter) is a later, separate
+                    // Operations action via TransportManagementController,
+                    // unaffected by this request. 'services.*.bus_id' stays
+                    // 'nullable' in the base rule above; if a value is ever
+                    // submitted it's still validated to be a real bus, just
+                    // never required.
                     // route.pricing_zone is a UI hint/default only — FeePrice
                     // (option_type=zone) remains the sole pricing authority.
                     // A non-null route pricing_zone that disagrees with the
@@ -238,6 +242,15 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                         $route = \App\Models\TransportRoute::find($item['transport_route_id']);
                         if ($route && filled($route->pricing_zone) && filled($item['transport_area'] ?? null) && $route->pricing_zone !== $item['transport_area']) {
                             $validator->errors()->add("services.{$index}.transport_route_id", 'Выбранный маршрут не относится к указанной зоне тарифа.');
+                        }
+                        // Preserved from the pre-decoupling TransportAssignmentService
+                        // ::validate() check (unrelated to capacity — a genuine data-
+                        // integrity rule, not the bug being fixed): an inactive route
+                        // must still be rejected here, cleanly, as a normal validation
+                        // error, now that Quick Registration no longer routes through
+                        // TransportAssignmentService at all.
+                        if ($route && ! $route->is_active) {
+                            $validator->errors()->add("services.{$index}.transport_route_id", 'Выбранный маршрут не активен.');
                         }
                     }
                     // Mirrors InvoiceCalculationService::resolvePrice()'s own

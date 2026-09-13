@@ -207,7 +207,11 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             }
 
             $services = collect($this->input('services', []));
-            $fees = Fee::whereIn('id', $services->pluck('fee_id'))->get()->keyBy('id');
+            // Perf (Quick Registration end-to-end investigation): every
+            // fee in $fees is checked against allowsBillingPeriod()/
+            // allowedBillingPeriods() below, each of which queries
+            // fee_billing_periods unless already eager-loaded.
+            $fees = Fee::with('billingPeriods')->whereIn('id', $services->pluck('fee_id'))->get()->keyBy('id');
             if ($services->filter(fn ($item) => $fees->get((int) ($item['fee_id'] ?? 0))?->category === Fee::CATEGORY_REGISTRATION)->count() > 1) {
                 $validator->errors()->add('services', 'Регистрационный взнос можно добавить только один раз за учебный год.');
             }

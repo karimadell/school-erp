@@ -180,7 +180,12 @@ class InvoiceIssuanceService
             // fetch, reused by both loops, removes that duplication without
             // changing the not-found behaviour (still throws
             // ModelNotFoundException for an unknown fee_id).
-            $feesById = Fee::whereIn('id', collect($data['items'])->pluck('fee_id')->unique())->get()->keyBy('id');
+            // Perf (Quick Registration end-to-end investigation):
+            // billingPeriods eager-loaded too — allowsBillingPeriod()/
+            // allowedBillingPeriods() are called on Fees drawn from this
+            // same map in the mixed-billing group-validation loop below,
+            // each of which would otherwise re-query fee_billing_periods.
+            $feesById = Fee::with('billingPeriods')->whereIn('id', collect($data['items'])->pluck('fee_id')->unique())->get()->keyBy('id');
             $resolveFee = function (int $feeId) use ($feesById): Fee {
                 return $feesById->get($feeId) ?? throw (new ModelNotFoundException())->setModel(Fee::class, [$feeId]);
             };
@@ -548,7 +553,7 @@ class InvoiceIssuanceService
                     // 'monthly'. Food is never passed here (see $invoiceFees
                     // above) — its own coverage is created by
                     // createFoodInstallmentAndCoverage() below instead.
-                    $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
+                    $this->createAutomaticCoverage($invoice, $billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
                 } elseif ($data['payment_type'] === 'mixed') {
                     $this->issueMixedInstallmentsAndCoverage($invoice, $calculation['_mixed_groups'] ?? [], $invoiceFees, $itemsByFeeId, $periodAmountsByFeeId, $actor, $year->id, $data);
                 } else {
@@ -557,7 +562,7 @@ class InvoiceIssuanceService
             }
 
             foreach ($foodFees as $fee) {
-                $this->createFoodInstallmentAndCoverage($invoice, $itemsByFeeId[$fee->id], $actor);
+                $this->createFoodInstallmentAndCoverage($invoice, $fee, $itemsByFeeId[$fee->id], $actor);
             }
 
             QrTrace::log('issuer:coverage_done');
@@ -803,7 +808,7 @@ class InvoiceIssuanceService
                 $group['schedule_amounts'], $group['scheduleable_total'], $startSequence,
             );
             QrTrace::log('installments:done', ['billing_period' => $billingPeriod, 'installment_count' => count($schedule)]);
-            $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $groupFees, $actor, $academicYearId, $data['pricing_date']);
+            $this->createAutomaticCoverage($invoice, $billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $groupFees, $actor, $academicYearId, $data['pricing_date']);
         }
     }
 
@@ -812,7 +817,7 @@ class InvoiceIssuanceService
      * @param  array<int, InvoiceItem>  $itemsByFeeId
      * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees
      */
-    private function createAutomaticCoverage(string $billingPeriod, array $schedule, array $itemsByFeeId, array $periodAmountsByFeeId, \Illuminate\Support\Collection $invoiceFees, User $actor, int $academicYearId, string $pricingDate): void
+    private function createAutomaticCoverage(Invoice $invoice, string $billingPeriod, array $schedule, array $itemsByFeeId, array $periodAmountsByFeeId, \Illuminate\Support\Collection $invoiceFees, User $actor, int $academicYearId, string $pricingDate): void
     {
         if ($schedule === []) {
             return;
@@ -827,6 +832,18 @@ class InvoiceIssuanceService
             if (! $item) {
                 throw ValidationException::withMessages(['fees' => "Не удалось найти позицию счёта для услуги «{$fee->name_ru}» при создании покрытия."]);
             }
+            // Perf (Quick Registration end-to-end investigation):
+            // ServiceCoverageService::record()/recordWithBasisPrice() both
+            // start with $item->loadMissing(['invoice', 'fee', ...]) — a
+            // cold, per-fee re-query of two objects this method ALREADY
+            // has in hand ($invoice is this same request's own invoice;
+            // $fee is this loop's own variable). Pre-setting both relations
+            // makes loadMissing() skip them entirely (Eloquent's own
+            // relationLoaded() check), with zero change to
+            // ServiceCoverageService's own behavior or its other callers —
+            // it still resolves them itself when a caller hasn't already.
+            $item->setRelation('invoice', $invoice);
+            $item->setRelation('fee', $fee);
             $isFood = $fee->category === Fee::CATEGORY_FOOD;
             $billingUnit = $isFood ? 'daily' : 'monthly';
 
@@ -1046,8 +1063,17 @@ class InvoiceIssuanceService
      * kept only as defensive fallback, since $invoiceFees passed to
      * createAutomaticCoverage() above never includes a Food Fee anymore).
      */
-    private function createFoodInstallmentAndCoverage(Invoice $invoice, InvoiceItem $item, User $actor): void
+    private function createFoodInstallmentAndCoverage(Invoice $invoice, Fee $fee, InvoiceItem $item, User $actor): void
     {
+        // Perf (Quick Registration end-to-end investigation): see the
+        // identical note in createAutomaticCoverage() — both $invoice and
+        // $fee are already loaded objects the caller has in hand, so
+        // pre-setting them here makes ServiceCoverageService::
+        // recordWithBasisPrice()'s own loadMissing() below skip two of its
+        // four relation loads for free.
+        $item->setRelation('invoice', $invoice);
+        $item->setRelation('fee', $fee);
+
         $coverageStart = $item->metadata['food_coverage_start'] ?? null;
         $coverageEnd = $item->metadata['food_coverage_end'] ?? null;
         if (! $coverageStart || ! $coverageEnd || empty($item->metadata['food_tariff_segments'])) {

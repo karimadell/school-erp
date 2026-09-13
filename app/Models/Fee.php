@@ -111,11 +111,7 @@ class Fee extends Model
      */
     public function allowsBillingPeriod(string $period): bool
     {
-        if ($this->relationLoaded('billingPeriods')) {
-            return $this->billingPeriods->contains('billing_period', $period);
-        }
-
-        return $this->billingPeriods()->where('billing_period', $period)->exists();
+        return $this->cachedBillingPeriods()->contains('billing_period', $period);
     }
 
     /**
@@ -132,11 +128,31 @@ class Fee extends Model
      */
     public function allowedBillingPeriods(): \Illuminate\Support\Collection
     {
-        if ($this->relationLoaded('billingPeriods')) {
-            return $this->billingPeriods->pluck('billing_period')->unique()->values();
+        return $this->cachedBillingPeriods()->pluck('billing_period')->unique()->values();
+    }
+
+    /**
+     * Perf (Quick Registration end-to-end investigation): allowsBillingPeriod()/
+     * allowedBillingPeriods() are each called multiple times per Fee across
+     * a single request (request validation, Quick Registration's own
+     * per-service resolution, and InvoiceIssuanceService's mixed-billing
+     * group validation all call one or both at least once per relevant
+     * Fee) — confirmed via query-count test: 14 separate fee_billing_periods
+     * SELECTs for a 5-service registration with only 2-3 billing-period-
+     * aware Fees. Both methods already preferred an eager-loaded
+     * billingPeriods relation when present; the missing piece was caching
+     * a FALLBACK query's own result onto the instance too, so a second
+     * call on the SAME un-eager-loaded Fee object doesn't re-query. Every
+     * caller's return value is unchanged — this only changes how many
+     * times the identical rows are fetched.
+     */
+    private function cachedBillingPeriods(): \Illuminate\Support\Collection
+    {
+        if (! $this->relationLoaded('billingPeriods')) {
+            $this->setRelation('billingPeriods', $this->billingPeriods()->get());
         }
 
-        return $this->billingPeriods()->pluck('billing_period')->unique()->values();
+        return $this->billingPeriods;
     }
 
     /**

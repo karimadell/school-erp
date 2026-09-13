@@ -262,4 +262,119 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $coverageId = DB::connection($this->connectionName)->table('service_coverages')->where('invoice_item_id', $itemId)->value('id');
         $this->assertSame(10, DB::connection($this->connectionName)->table('installment_coverage_periods')->where('service_coverage_id', $coverageId)->count());
     }
+
+    /**
+     * Lock-contention corrective pass. Unlike the two tests above (which
+     * prove SAME-token idempotency under a genuine race), these two prove
+     * the opposite direction: a DIFFERENT student's registration, sharing
+     * the SAME AcademicYear/Fee reference rows, must never be forced to
+     * wait behind another transaction that merely holds those rows locked
+     * (e.g. a concurrent registration that hasn't committed yet, or any
+     * other Finance service's own lockForUpdate() elsewhere in the app).
+     *
+     * A forked child opens its own real connection, takes a genuine
+     * `SELECT ... FOR UPDATE` on the shared row, signals it has the lock,
+     * then holds it for HOLD_SECONDS before committing. The parent process
+     * waits for that signal, then calls the real register() HTTP-equivalent
+     * service call for a second, unrelated student against the exact same
+     * row, and times it. Before this corrective pass, register() itself
+     * took the same lockForUpdate() on this row for its own entire
+     * transaction duration, so the second registration would have blocked
+     * for approximately HOLD_SECONDS. After this pass, it must complete
+     * quickly — well under HOLD_SECONDS — because it never needs that lock
+     * for a read-only reference row.
+     */
+    private const HOLD_SECONDS = 3;
+
+    private function assertRegistrationIsNotBlockedByHeldLockOn(string $table, int $id, array $data, User $accountant): void
+    {
+        $barrier = tempnam(sys_get_temp_dir(), 'pg_lock_hold_');
+        unlink($barrier);
+        $lockedSignal = $barrier.'.locked';
+
+        $pid = pcntl_fork();
+        if ($pid === -1) {
+            $this->fail('pcntl_fork() failed.');
+        }
+        if ($pid === 0) {
+            DB::purge($this->connectionName);
+            DB::connection($this->connectionName)->transaction(function () use ($table, $id, $lockedSignal) {
+                DB::connection($this->connectionName)->table($table)->where('id', $id)->lockForUpdate()->first();
+                touch($lockedSignal);
+                sleep(self::HOLD_SECONDS);
+            });
+            exit(0);
+        }
+
+        $deadline = microtime(true) + 5;
+        while (! file_exists($lockedSignal) && microtime(true) < $deadline) {
+            usleep(2000);
+        }
+        $this->assertFileExists($lockedSignal, 'the holder process never signalled that it acquired the lock');
+
+        $start = microtime(true);
+        $result = app(QuickStudentRegistrationService::class)->register($data, $accountant);
+        $elapsed = microtime(true) - $start;
+
+        pcntl_waitpid($pid, $status);
+        @unlink($lockedSignal);
+        @unlink($barrier);
+
+        $this->assertNotNull($result['student'] ?? null);
+        $this->assertLessThan(
+            self::HOLD_SECONDS * 0.6,
+            $elapsed,
+            "registration took {$elapsed}s while another transaction held {$table}.id={$id} for ".self::HOLD_SECONDS."s — it should never have needed that lock"
+        );
+    }
+
+    public function test_registration_is_not_blocked_by_a_concurrent_transactions_hold_on_the_shared_academic_year_row(): void
+    {
+        (new RolesAndPermissionsSeeder)->run();
+        $accountant = User::factory()->create(['is_active' => true]);
+        $accountant->assignRole('accountant');
+        $year = AcademicYear::create(['name' => 'Lock Test Year '.uniqid(), 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        $stage = Stage::create(['name' => 'Lock Test Stage '.uniqid(), 'order' => 3, 'is_active' => true]);
+        $grade = Grade::forceCreate(['name' => 'Lock Test Grade '.uniqid(), 'stage_id' => $stage->id, 'level' => 3]);
+        $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'L'.uniqid(), 'name_ru' => 'L', 'name_ar' => 'L', 'is_active' => true]);
+        $mode = EnrollmentMode::firstOrCreate(['code' => 'regular'], ['name_ru' => 'Test Mode', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Lock Test Fee '.uniqid(), 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+
+        $data = [
+            'student_last_name_ru' => 'Год', 'student_first_name_ru' => 'НеЗаблокирован',
+            'phone' => '+20 100 000 0001', 'registration_date' => '2026-09-01',
+            'academic_year_id' => $year->id, 'stage_id' => $stage->id, 'grade_id' => $grade->id,
+            'class_id' => $class->id, 'enrollment_mode_id' => $mode->id,
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+            'payment_type' => 'one_time', 'idempotency_token' => 'pg-ay-lock-'.uniqid(),
+        ];
+
+        $this->assertRegistrationIsNotBlockedByHeldLockOn('academic_years', $year->id, $data, $accountant);
+    }
+
+    public function test_registration_is_not_blocked_by_a_concurrent_transactions_hold_on_the_shared_fee_row(): void
+    {
+        (new RolesAndPermissionsSeeder)->run();
+        $accountant = User::factory()->create(['is_active' => true]);
+        $accountant->assignRole('accountant');
+        $year = AcademicYear::create(['name' => 'Lock Test Year '.uniqid(), 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+        $stage = Stage::create(['name' => 'Lock Test Stage '.uniqid(), 'order' => 4, 'is_active' => true]);
+        $grade = Grade::forceCreate(['name' => 'Lock Test Grade '.uniqid(), 'stage_id' => $stage->id, 'level' => 4]);
+        $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'L'.uniqid(), 'name_ru' => 'L', 'name_ar' => 'L', 'is_active' => true]);
+        $mode = EnrollmentMode::firstOrCreate(['code' => 'regular'], ['name_ru' => 'Test Mode', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Lock Test Fee '.uniqid(), 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
+
+        $data = [
+            'student_last_name_ru' => 'Услуга', 'student_first_name_ru' => 'НеЗаблокирован',
+            'phone' => '+20 100 000 0002', 'registration_date' => '2026-09-01',
+            'academic_year_id' => $year->id, 'stage_id' => $stage->id, 'grade_id' => $grade->id,
+            'class_id' => $class->id, 'enrollment_mode_id' => $mode->id,
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '0.00']],
+            'payment_type' => 'one_time', 'idempotency_token' => 'pg-fee-lock-'.uniqid(),
+        ];
+
+        $this->assertRegistrationIsNotBlockedByHeldLockOn('fees', $fee->id, $data, $accountant);
+    }
 }

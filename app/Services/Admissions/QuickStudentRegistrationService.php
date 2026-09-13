@@ -109,7 +109,27 @@ class QuickStudentRegistrationService
                 ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration-invoice:{$outerToken}")
                 : null;
 
-            $year = AcademicYear::query()->lockForUpdate()->findOrFail($data['academic_year_id']);
+            // Lock-contention corrective pass: AcademicYear/Stage/Grade/
+            // SchoolClass/EnrollmentMode are read here for validation only —
+            // none of them is ever written by this transaction, so holding
+            // a row lock on them for the whole remaining registration
+            // (Student/Enrollment/every service/invoice issuance/payment)
+            // only serializes unrelated, concurrent registrations against
+            // each other for no correctness benefit. Two things already
+            // prove these locks were never load-bearing: (1)
+            // AcademicYear is independently re-locked, correctly, by
+            // InvoiceIssuanceService::issue() right before it actually
+            // matters (Enrollment/Invoice creation) later in this same
+            // transaction — removing the early lock here only shortens how
+            // long the row is held, it does not remove the real protection;
+            // (2) AcademicStructureService::validatePlacement() below
+            // already re-fetches Stage/Grade/SchoolClass itself, unlocked,
+            // by id — the locked reads here were never what that
+            // validation actually relied on. EnrollmentMode has no
+            // downstream re-check at all, but is small, static reference
+            // data (regular/distance_learning) with nothing else in this
+            // transaction writing to it.
+            $year = AcademicYear::query()->findOrFail($data['academic_year_id']);
             if (! $year->is_active) {
                 throw ValidationException::withMessages(['academic_year_id' => 'Выбранный учебный год больше не активен.']);
             }
@@ -118,10 +138,10 @@ class QuickStudentRegistrationService
                 throw ValidationException::withMessages(['registration_date' => 'Дата регистрации не может быть позже окончания учебного года.']);
             }
 
-            $stage = Stage::query()->lockForUpdate()->findOrFail($data['stage_id']);
-            $grade = Grade::query()->lockForUpdate()->findOrFail($data['grade_id']);
-            $class = SchoolClass::query()->lockForUpdate()->findOrFail($data['class_id']);
-            $mode = EnrollmentMode::query()->lockForUpdate()->findOrFail($data['enrollment_mode_id']);
+            $stage = Stage::query()->findOrFail($data['stage_id']);
+            $grade = Grade::query()->findOrFail($data['grade_id']);
+            $class = SchoolClass::query()->findOrFail($data['class_id']);
+            $mode = EnrollmentMode::query()->findOrFail($data['enrollment_mode_id']);
             $this->structure->validatePlacement(
                 $stage->id,
                 $grade->id,
@@ -162,7 +182,20 @@ class QuickStudentRegistrationService
             $feesById = [];
             $paymentType = $data['payment_type'] ?? 'one_time';
             $normalizedServices = collect($data['services'])->flatMap(function (array $service) use ($grade, $mode, &$feesById, $paymentType) {
-                $fee = Fee::query()->lockForUpdate()->findOrFail($service['fee_id']);
+                // Lock-contention corrective pass: this read is used only
+                // for category-branching and metadata (never for pricing),
+                // and Fee is never written by this transaction. Pricing
+                // itself — the one place a stale/mid-edit Fee or FeePrice
+                // would actually matter — is resolved and re-validated
+                // (including Fee.is_active, see InvoiceCalculationService::
+                // resolvePrice()) with its own proper lock later, inside
+                // InvoiceIssuanceService::issue() below. A popular Fee
+                // (e.g. Tuition/Registration) is looked up here on every
+                // single Quick Registration submission that includes it —
+                // holding a lock on it for this transaction's entire
+                // remaining duration serialized unrelated registrations
+                // against each other for no correctness benefit.
+                $fee = Fee::query()->findOrFail($service['fee_id']);
                 $feesById[$fee->id] = $fee;
 
                 $common = [
@@ -238,7 +271,13 @@ class QuickStudentRegistrationService
                     }
 
                     return collect($uniformItems)->map(function (array $row, int $position) use ($service, $common) {
-                        $product = DB::table('uniform_products')->where('is_active', true)->lockForUpdate()->find($row['uniform_product_id']);
+                        // Lock-contention corrective pass: uniform_products
+                        // is a catalog table only — its `stock` column is
+                        // never read or written anywhere in this codebase
+                        // outside being explicitly set to null on catalog
+                        // sync (no inventory decrement exists to protect).
+                        // Only `is_active` is checked here.
+                        $product = DB::table('uniform_products')->where('is_active', true)->find($row['uniform_product_id']);
                         if (! $product) {
                             throw ValidationException::withMessages(['services' => 'Выбранное изделие школьной формы больше не доступно.']);
                         }
@@ -253,16 +292,23 @@ class QuickStudentRegistrationService
                     })->values();
                 }
 
+                // Lock-contention corrective pass: transport_routes and
+                // meal_plans are read-only catalog checks here (existence /
+                // is_active only). Since PR #42's Transport capacity
+                // decoupling, Quick Registration never assigns a seat or
+                // touches vehicle capacity at all — transport_routes has no
+                // remaining write/consistency concern in this transaction.
+                // meal_plans similarly has no capacity/quantity column.
                 $route = null;
                 $mealPlan = null;
                 if ($fee->category === Fee::CATEGORY_TRANSPORT) {
-                    $route = DB::table('transport_routes')->lockForUpdate()->find($service['transport_route_id']);
+                    $route = DB::table('transport_routes')->find($service['transport_route_id']);
                     if (! $route) {
                         throw ValidationException::withMessages(['services' => 'Выбранный транспортный маршрут больше не доступен.']);
                     }
                 }
                 if ($fee->category === Fee::CATEGORY_FOOD) {
-                    $mealPlan = MealPlan::query()->where('is_active', true)->lockForUpdate()->find($service['meal_plan_id']);
+                    $mealPlan = MealPlan::query()->where('is_active', true)->find($service['meal_plan_id']);
                     if (! $mealPlan) {
                         throw ValidationException::withMessages(['services' => 'Выбранный план питания больше не доступен.']);
                     }

@@ -363,10 +363,15 @@ class InvoiceIssuanceService
                 // to the SAME (first) selection.
                 $selection = $items[$lineIndex] ?? [];
                 $fee = $resolveFee((int) $line['fee_id']);
+
+                QrTrace::log('issuer:item_start', ['line_index' => $lineIndex, 'category' => $fee->category]);
+
                 $subscriptionId = $activeSubscriptionsByFee->get($line['fee_id'])?->id;
                 if (! $subscriptionId && $subscriptionResolver) {
+                    QrTrace::log('issuer:subscription_start', ['line_index' => $lineIndex, 'category' => $fee->category]);
                     $subscriptionId = $subscriptionResolver($fee, $selection, $enrollment);
                     $activeSubscriptionsByFee->put($line['fee_id'], (object) ['id' => $subscriptionId]);
+                    QrTrace::log('issuer:subscription_done', ['line_index' => $lineIndex, 'category' => $fee->category]);
                 }
                 $itemsByFeeId[$line['fee_id']] = InvoiceItem::create([
                     'invoice_id'=>$invoice->id, 'fee_id'=>$line['fee_id'], 'subscription_id'=>$subscriptionId,
@@ -448,6 +453,9 @@ class InvoiceIssuanceService
                         'food_requested_day_count'=>$line['metadata']['food_requested_day_count'] ?? null,
                     ])->filter(fn ($value) => filled($value))->all(),
                 ]);
+
+                QrTrace::log('issuer:item_created', ['line_index' => $lineIndex, 'category' => $fee->category]);
+
                 if (isset($feePivotRows[$line['fee_id']])) {
                     // A sibling line for this same Fee already staged a row
                     // (Uniform multi-item selection) — sum the amount into
@@ -467,6 +475,8 @@ class InvoiceIssuanceService
                         'option_type'=>$line['option_type'], 'option_value'=>$line['option_value'],
                     ];
                 }
+
+                QrTrace::log('issuer:item_done', ['line_index' => $lineIndex, 'category' => $fee->category]);
             }
             if ($feePivotRows) {
                 $invoice->fees()->attach($feePivotRows);
@@ -526,7 +536,9 @@ class InvoiceIssuanceService
                     // already computed (unit price x each group's own
                     // month-count, never an even division) — passed straight
                     // through so scheduling can never disagree with pricing.
+                    QrTrace::log('installments:start', ['billing_period' => $billingPeriod]);
                     $schedule = $this->plans->generateCalendarSchedule($invoice, $billingPeriod, $calendarStart, $calendarEnd, $calculation['schedule_amounts'] ?? null, $calculation['scheduleable_total'] ?? null);
+                    QrTrace::log('installments:done', ['billing_period' => $billingPeriod, 'installment_count' => count($schedule)]);
 
                     // Finance V2, Phase 2D corrective pass (P0 Blocker 2):
                     // coverage is now created for EVERY calendar billing
@@ -668,6 +680,8 @@ class InvoiceIssuanceService
         $mixedGroups = [];
 
         foreach ($groups as $groupKey => $group) {
+            QrTrace::log('calculation:group_start', ['group' => $groupKey, 'item_count' => count($group['items'])]);
+
             $billingPeriod = str_starts_with($groupKey, 'calendar:') ? substr($groupKey, 9) : null;
             $calendarStart = $data['coverage_start'] ?? $data['pricing_date'];
             $calendarEnd = $billingPeriod !== null ? $year->end_date->toDateString() : null;
@@ -681,6 +695,8 @@ class InvoiceIssuanceService
                 $mergedLines[$group['indices'][$j]] = $line;
             }
             $subtotal = bcadd($subtotal, $result['subtotal'], 2);
+
+            QrTrace::log('calculation:group_done', ['group' => $groupKey, 'item_count' => count($group['items'])]);
 
             if ($billingPeriod !== null) {
                 $mixedGroups[$billingPeriod] = [
@@ -781,10 +797,12 @@ class InvoiceIssuanceService
                 }
             }
             $startSequence = ((int) $invoice->installments()->max('sequence')) + 1;
+            QrTrace::log('installments:start', ['billing_period' => $billingPeriod]);
             $schedule = $this->plans->generateCalendarSchedule(
                 $invoice, $billingPeriod, $group['calendar_start'], $group['calendar_end'],
                 $group['schedule_amounts'], $group['scheduleable_total'], $startSequence,
             );
+            QrTrace::log('installments:done', ['billing_period' => $billingPeriod, 'installment_count' => count($schedule)]);
             $this->createAutomaticCoverage($billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $groupFees, $actor, $academicYearId, $data['pricing_date']);
         }
     }
@@ -805,8 +823,6 @@ class InvoiceIssuanceService
         $now = Carbon::now();
 
         foreach ($invoiceFees as $fee) {
-            QrTrace::log('coverage_batch:start', ['period_count' => count($schedule)]);
-
             $item = $itemsByFeeId[$fee->id] ?? null;
             if (! $item) {
                 throw ValidationException::withMessages(['fees' => "Не удалось найти позицию счёта для услуги «{$fee->name_ru}» при создании покрытия."]);
@@ -814,8 +830,11 @@ class InvoiceIssuanceService
             $isFood = $fee->category === Fee::CATEGORY_FOOD;
             $billingUnit = $isFood ? 'daily' : 'monthly';
 
+            QrTrace::log('coverage_setup:start', ['category' => $fee->category]);
+
             if ($isFood && ! empty($item->metadata['food_tariff_segments'])) {
                 $basisPrice = FeePrice::query()->lockForUpdate()->findOrFail((int) $item->metadata['food_tariff_segments'][0]['fee_price_id']);
+                QrTrace::log('coverage_basis_resolved', ['category' => $fee->category]);
                 $coverage = $this->coverage->recordWithBasisPrice($item, $basisPrice, [
                     'coverage_start' => $coverageStart,
                     'coverage_end' => $coverageEnd,
@@ -827,16 +846,22 @@ class InvoiceIssuanceService
                         'food_tariff_segments' => $item->metadata['food_tariff_segments'],
                     ],
                 ], $actor);
+                QrTrace::log('coverage_recorded', ['category' => $fee->category]);
             } elseif (! $isFood && $billingPeriod === FeeBillingPeriod::PERIOD_MONTHLY && ($item->metadata['fee_price_id'] ?? null)) {
                 // Fast, unchanged path: the item's own charged price is
                 // already monthly-denominated — reuse it directly,
-                // exactly like Stage B did.
+                // exactly like Stage B did. No separate basis-lookup step
+                // exists on this path (the fee_price_id is already known
+                // from the item's own metadata), so the checkpoint fires
+                // immediately, at zero extra cost.
+                QrTrace::log('coverage_basis_resolved', ['category' => $fee->category]);
                 $coverage = $this->coverage->record($item, [
                     'fee_price_id' => $item->metadata['fee_price_id'],
                     'coverage_start' => $coverageStart,
                     'coverage_end' => $coverageEnd,
                     'billing_unit' => $billingUnit,
                 ], $actor);
+                QrTrace::log('coverage_recorded', ['category' => $fee->category]);
             } else {
                 // Corrective pass #2 (HIGH 5): the FULL selection/metadata
                 // — grade_id, enrollment_mode_id and every other canonical
@@ -846,6 +871,9 @@ class InvoiceIssuanceService
                 // matter.
                 $selection = $item->metadata ?? [];
                 $basisPrice = $this->calculator->resolveCoverageBasisPrice($fee, $selection, $pricingDate, $academicYearId, $billingUnit);
+
+                QrTrace::log('coverage_basis_resolved', ['category' => $fee->category]);
+
                 if (! $basisPrice) {
                     // Corrective pass #3 (P2 — Food remediation message
                     // clarity, no behavior change): the Food/daily case
@@ -874,7 +902,11 @@ class InvoiceIssuanceService
                     'coverage_end' => $coverageEnd,
                     'billing_unit' => $billingUnit,
                 ], $actor);
+                QrTrace::log('coverage_recorded', ['category' => $fee->category]);
             }
+
+            QrTrace::log('coverage_setup:done', ['category' => $fee->category]);
+            QrTrace::log('coverage_batch:start', ['period_count' => count($schedule)]);
 
             $periodAmounts = $periodAmountsByFeeId[$fee->id] ?? null;
             $seenPeriods = [];

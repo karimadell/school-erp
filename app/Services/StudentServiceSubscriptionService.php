@@ -9,6 +9,7 @@ use App\Models\Fee;
 use App\Models\FinancePolicySetting;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
+use App\Support\QrTrace;
 use Illuminate\Auth\Access\AuthorizationException;
 use InvalidArgumentException;
 
@@ -37,6 +38,8 @@ class StudentServiceSubscriptionService
         array $attributes = [],
         ?User $actingUser = null
     ): StudentServiceSubscription {
+        QrTrace::log('subscription:start');
+
         // Policy decision 3: reuse Enrollment's existing one-per-year
         // guarantee — a subscription is unique per (enrollment, fee), which
         // is exactly "one per (student, academic_year) per service".
@@ -46,6 +49,9 @@ class StudentServiceSubscriptionService
             ->whereIn('status', [StudentServiceSubscription::STATUS_ACTIVE, StudentServiceSubscription::STATUS_SUSPENDED])
             ->where(fn ($query) => $query->whereNull('start_date')->orWhereDate('start_date', '<=', $endDate ?? '9999-12-31'))
             ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $startDate))->exists();
+
+        QrTrace::log('subscription:duplicate_check_done');
+
         if ($existing) {
             throw new DuplicateSubscriptionException(
                 "Enrollment #{$enrollment->id} is already subscribed to fee #{$fee->id}."
@@ -65,15 +71,23 @@ class StudentServiceSubscriptionService
             $attributes['negotiated_by'] = $actingUser->id;
         }
 
-        return StudentServiceSubscription::create(array_merge($attributes, [
+        $subscription = StudentServiceSubscription::create(array_merge($attributes, [
             'enrollment_id' => $enrollment->id,
             'fee_id' => $fee->id,
         ]));
+
+        QrTrace::log('subscription:model_created');
+        QrTrace::log('subscription:done');
+
+        return $subscription;
     }
 
     protected function assertBalanceAllowsNewSubscription(Enrollment $enrollment): void
     {
         $settings = FinancePolicySetting::current();
+
+        QrTrace::log('subscription:policy_loaded');
+
         $student = $enrollment->student;
 
         if (! is_null($settings->overdue_block_threshold_amount)) {
@@ -93,6 +107,8 @@ class StudentServiceSubscriptionService
                 );
             }
         }
+
+        QrTrace::log('subscription:balance_checks_done');
     }
 
     /**

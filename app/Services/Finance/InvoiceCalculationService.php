@@ -8,6 +8,7 @@ use App\Models\FeePrice;
 use App\Models\EnrollmentMode;
 use App\Models\Grade;
 use App\Models\Invoice;
+use App\Support\QrTrace;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\ValidationException;
@@ -77,6 +78,8 @@ class InvoiceCalculationService
         ?string $academicYearEndDate = null,
         ?string $calendarStartDate = null,
     ): array {
+        QrTrace::log('calculation:start', ['line_count' => count($items)]);
+
         $pricingDate ??= now()->toDateString();
         $feeIds = collect($items)->pluck('fee_id')->map(fn ($id) => (int) $id)->all();
 
@@ -108,7 +111,9 @@ class InvoiceCalculationService
         // input for the whole call.
         $modeCache = [];
 
-        foreach ($items as $item) {
+        foreach ($items as $lineIndex => $item) {
+            QrTrace::log('calculation:line_start', ['line_index' => $lineIndex]);
+
             $fee = $fees->get((int) $item['fee_id']);
 
             if (! $fee) {
@@ -122,6 +127,8 @@ class InvoiceCalculationService
                     'fees' => "Услуга «{$fee->name_ru}» отключена и не может быть добавлена в счёт.",
                 ]);
             }
+
+            QrTrace::log('calculation:line_after_fee_lookup', ['line_index' => $lineIndex, 'category' => $fee->category]);
 
             // Food resolves its own [start,end] range directly from its
             // duration-mode selection (day/school_week/teaching_days/
@@ -162,7 +169,7 @@ class InvoiceCalculationService
             if ($fee->category === Fee::CATEGORY_FOOD && $foodResolution !== null) {
                 $foodPricing = $this->priceFoodDailyLine($fee, $item, $foodResolution, $academicYearId, $modeCache);
             }
-            $resolvedPrice = $foodPricing['resolved_price'] ?? $this->resolvePrice($fee, $item, $pricingDate, $academicYearId, $modeCache);
+            $resolvedPrice = $foodPricing['resolved_price'] ?? $this->resolvePrice($fee, $item, $pricingDate, $academicYearId, $modeCache, $lineIndex);
             $submittedQuantity = (int) ($item['quantity'] ?? 1);
 
             if (bccomp($resolvedPrice['amount'], '0.00', 2) <= 0) {
@@ -342,7 +349,11 @@ class InvoiceCalculationService
                 // Null for a non-calendar-billed line (nothing to persist).
                 'period_amounts' => $groupAmounts,
             ];
+
+            QrTrace::log('calculation:line_done', ['line_index' => $lineIndex]);
         }
+
+        QrTrace::log('calculation:done', ['line_count' => count($items)]);
 
         $discount = $this->discountAmount($subtotal, $discountType, $discountValue);
         $total = bcsub($subtotal, $discount, 2);
@@ -878,13 +889,35 @@ class InvoiceCalculationService
     }
 
     /**
+     * Diagnostic-only wrapper (504 investigation, round 3 — hotspot
+     * breakdown): brackets the actual pricing work below with QR_TRACE
+     * checkpoints so the calculation phase's cost can be attributed to a
+     * specific line, without touching resolvePriceInternal()'s own
+     * control flow at all.
+     *
      * @param  array<string, mixed>  $selection
      * @param  array<int, ?EnrollmentMode>  $modeCache  Keyed by enrollment_mode_id,
      *         shared across every line item in the same calculate() call —
      *         see the perf note at its call site.
      * @return array{amount:string, valid_from:?string, valid_to:?string, metadata:array<string, mixed>}
      */
-    private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId, array &$modeCache = []): array
+    private function resolvePrice(Fee $fee, array $selection, string $date, ?int $academicYearId, array &$modeCache = [], ?int $lineIndex = null): array
+    {
+        $result = $this->resolvePriceInternal($fee, $selection, $date, $academicYearId, $modeCache, $lineIndex);
+
+        QrTrace::log('calculation:line_after_price_resolution', ['line_index' => $lineIndex, 'category' => $fee->category]);
+
+        return $result;
+    }
+
+    /**
+     * @param  array<string, mixed>  $selection
+     * @param  array<int, ?EnrollmentMode>  $modeCache  Keyed by enrollment_mode_id,
+     *         shared across every line item in the same calculate() call —
+     *         see the perf note at its call site.
+     * @return array{amount:string, valid_from:?string, valid_to:?string, metadata:array<string, mixed>}
+     */
+    private function resolvePriceInternal(Fee $fee, array $selection, string $date, ?int $academicYearId, array &$modeCache, ?int $lineIndex): array
     {
         if (filled($selection['fee_price_id'] ?? null)) {
             $price = FeePrice::query()->lockForUpdate()->find((int) $selection['fee_price_id']);
@@ -927,6 +960,11 @@ class InvoiceCalculationService
         }
 
         $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $modeCache);
+
+        QrTrace::log('calculation:line_after_dimension_checks', [
+            'line_index' => $lineIndex, 'category' => $fee->category, 'candidate_count' => $candidates->count(),
+        ]);
+
         $price = $this->selectAmongCandidates($candidates, $date);
         $derived = null;
 

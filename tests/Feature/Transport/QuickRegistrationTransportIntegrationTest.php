@@ -28,14 +28,21 @@ use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Transport Management Phase C — Quick Registration integration.
+ * Transport capacity decoupling (corrects the original Transport Management
+ * Phase C integration, which is what this file used to test).
  *
- * When Quick Registration includes a Transport service, a canonical
- * StudentTransportAssignment is now created inside the SAME outer
- * transaction (App\Services\Admissions\QuickStudentRegistrationService::
- * register()) via the existing App\Services\Transport\
- * TransportAssignmentService — never a second, parallel write path, never
- * FeePrices/pricing/coverage/payment-allocation semantics changed.
+ * The authoritative business rule: at Quick Registration time the school
+ * often does not yet know the final vehicle/route assignment, and a student
+ * must be accepted and billed for Transport even if the currently selected
+ * route/vehicle is already at capacity. Final seat assignment is always a
+ * later, separate Operations action (TransportManagementController ->
+ * TransportAssignmentService::assign(), unchanged, still capacity-enforced
+ * there). Quick Registration now only creates the same generic
+ * StudentServiceSubscription every other service category uses — its
+ * metadata (area/route_id/route/stop/payment_period) carries everything
+ * Operations needs to assign a real seat later. No StudentTransportAssignment
+ * row, no Bus involvement, no capacity check, no TransportPermissions::
+ * MANAGE_ASSIGNMENTS requirement, is reachable from this controller any more.
  */
 class QuickRegistrationTransportIntegrationTest extends TestCase
 {
@@ -80,9 +87,9 @@ class QuickRegistrationTransportIntegrationTest extends TestCase
         ]);
     }
 
-    private function route(?string $pricingZone = 'Зона 1'): TransportRoute
+    private function route(?string $pricingZone = 'Зона 1', bool $isActive = true): TransportRoute
     {
-        return TransportRoute::create(['name' => 'Маршрут 1', 'pricing_zone' => $pricingZone, 'is_active' => true]);
+        return TransportRoute::create(['name' => 'Маршрут 1', 'pricing_zone' => $pricingZone, 'is_active' => $isActive]);
     }
 
     private function bus(): Bus
@@ -102,11 +109,12 @@ class QuickRegistrationTransportIntegrationTest extends TestCase
         ], $overrides);
     }
 
-    private function transportService(TransportRoute $route, Bus $bus, array $overrides = []): array
+    /** No bus_id: no longer part of the Quick Registration Transport payload at all. */
+    private function transportService(TransportRoute $route, array $overrides = []): array
     {
         return array_replace([
             'fee_id' => $this->transportFee->id, 'quantity' => 1, 'paid_now' => '0.00',
-            'transport_area' => 'Зона 1', 'transport_route_id' => $route->id, 'bus_id' => $bus->id,
+            'transport_area' => 'Зона 1', 'transport_route_id' => $route->id,
             'payment_period' => 'monthly', 'transport_stop' => 'У ворот',
         ], $overrides);
     }
@@ -129,50 +137,49 @@ class QuickRegistrationTransportIntegrationTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 2. Transport QR creates exactly one StudentTransportAssignment.
-    // 3. Correct Enrollment/route/bus/zone/pickup/effective date.
+    // 2. Transport QR creates NO StudentTransportAssignment — only a
+    //    StudentServiceSubscription carrying the demand metadata Operations
+    //    will need for the later, separate seat-assignment action.
     // ------------------------------------------------------------------
-    public function test_transport_registration_creates_exactly_one_correct_assignment(): void
+    public function test_transport_registration_creates_no_seat_assignment_but_correct_subscription_metadata(): void
     {
         $route = $this->route();
-        $bus = $this->bus();
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus)],
+            'services' => [$this->transportService($route, ['transport_stop' => 'У ворот', 'payment_period' => 'monthly'])],
         ]));
 
         $response->assertSessionHasNoErrors()->assertRedirect();
-        $this->assertSame(1, StudentTransportAssignment::count());
-        $assignment = StudentTransportAssignment::sole();
+        $this->assertSame(0, StudentTransportAssignment::count(), 'Quick Registration must never create a real seat assignment.');
+        $subscription = StudentServiceSubscription::sole();
         $enrollment = Enrollment::sole();
-        $this->assertSame($enrollment->id, $assignment->enrollment_id);
-        $this->assertSame($route->id, $assignment->transport_route_id);
-        $this->assertSame($bus->id, $assignment->bus_id);
-        $this->assertSame('Зона 1', $assignment->pricing_zone);
-        $this->assertSame('У ворот', $assignment->pickup_point);
-        $this->assertSame('2026-09-05', $assignment->effective_from->toDateString());
-        $this->assertSame(StudentTransportAssignment::STATUS_ACTIVE, $assignment->status);
+        $this->assertSame($enrollment->id, $subscription->enrollment_id);
+        $this->assertSame($this->transportFee->id, $subscription->fee_id);
+        $this->assertSame('Зона 1', $subscription->metadata['area']);
+        $this->assertSame($route->id, $subscription->metadata['route_id']);
+        $this->assertSame($route->name, $subscription->metadata['route']);
+        $this->assertSame('У ворот', $subscription->metadata['stop']);
+        $this->assertSame('monthly', $subscription->metadata['payment_period']);
+        $this->assertSame(StudentServiceSubscription::STATUS_ACTIVE, $subscription->status);
     }
 
     // ------------------------------------------------------------------
-    // 4. Invoice amount unchanged. 5. FeePrice resolution remains zone-based.
+    // 3. Invoice amount unchanged, zone-priced, independent of route.
     // ------------------------------------------------------------------
-    public function test_invoice_amount_is_zone_priced_regardless_of_route_or_bus(): void
+    public function test_invoice_amount_is_zone_priced_regardless_of_route(): void
     {
         $routeA = $this->route();
-        $busA = $this->bus();
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($routeA, $busA)],
+            'services' => [$this->transportService($routeA)],
         ]));
         $response->assertSessionHasNoErrors();
         $this->assertSame('1500.00', Invoice::sole()->total_amount);
 
-        // A different route/bus, same zone -> identical price.
+        // A different route, same zone -> identical price.
         $routeB = TransportRoute::create(['name' => 'Другой маршрут', 'pricing_zone' => null, 'is_active' => true]);
-        $busB = $this->bus();
         $response2 = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             'student_last_name_ru' => 'Петров', 'student_first_name_ru' => 'Пётр',
-            'services' => [$this->transportService($routeB, $busB)],
+            'services' => [$this->transportService($routeB)],
         ]));
         $response2->assertSessionHasNoErrors();
         $this->assertSame(2, Invoice::count());
@@ -180,37 +187,35 @@ class QuickRegistrationTransportIntegrationTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 6. Mixed billing unchanged.
+    // 4. Mixed billing unchanged, still creates no assignment.
     // ------------------------------------------------------------------
     public function test_mixed_billing_with_transport_and_registration_unchanged(): void
     {
         $registration = Fee::create(['name_ru' => 'Регистрационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '1000.00', 'is_active' => true]);
         $route = $this->route();
-        $bus = $this->bus();
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             'services' => [
                 ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '0.00'],
-                $this->transportService($route, $bus),
+                $this->transportService($route),
             ],
         ]));
 
         $response->assertSessionHasNoErrors()->assertRedirect();
         $this->assertSame('2500.00', Invoice::sole()->total_amount);
         $this->assertSame(2, InvoiceItem::count());
-        $this->assertSame(1, StudentTransportAssignment::count());
+        $this->assertSame(0, StudentTransportAssignment::count());
     }
 
     // ------------------------------------------------------------------
-    // 7. Coverage/payment allocation unchanged.
+    // 5. Coverage/payment allocation unchanged.
     // ------------------------------------------------------------------
     public function test_transport_subscription_and_payment_still_created_as_before(): void
     {
         $route = $this->route();
-        $bus = $this->bus();
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus, ['paid_now' => '1500.00'])],
+            'services' => [$this->transportService($route, ['paid_now' => '1500.00'])],
         ]));
 
         $response->assertSessionHasNoErrors()->assertRedirect();
@@ -221,122 +226,111 @@ class QuickRegistrationTransportIntegrationTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 8. 14th student succeeds. 9. 15th rejected. 10. Rollback on capacity failure.
+    // 6. THE REGRESSION: a route/vehicle already at full capacity must
+    //    never block Quick Registration, never throw TransportCapacityExceeded,
+    //    and must never create a seat assignment. This is the exact original
+    //    UAT failure ("Passenger capacity 15 exceeded...") made impossible.
     // ------------------------------------------------------------------
-    public function test_fourteenth_succeeds_fifteenth_rejected_with_full_rollback(): void
+    public function test_registration_succeeds_when_the_route_vehicle_is_already_at_full_capacity(): void
     {
         $route = $this->route();
         $bus = $this->bus();
         $admin = User::factory()->create(['is_active' => true]);
         $admin->assignRole('admin');
 
-        foreach (range(1, 13) as $n) {
+        // Fill the bus to its real capacity (14 students, the same
+        // student_capacity ceiling TransportPassengerCapacityService
+        // enforces) via the Operations assignment path directly — proving
+        // this scenario is a genuinely full vehicle, not a contrived one.
+        foreach (range(1, 14) as $n) {
             $student = Student::create(['name' => "Filler {$n}", 'status' => Student::STATUS_ACTIVE]);
             $enrollment = Enrollment::create(['student_id' => $student->id, 'academic_year_id' => $this->year->id, 'stage_id' => $this->stage->id, 'grade_id' => $this->grade->id, 'class_id' => $this->class->id, 'enrolled_at' => '2026-09-01', 'status' => 'active', 'is_active' => true]);
             app(TransportAssignmentService::class)->assign($enrollment, $route, $bus, ['effective_from' => '2026-09-01'], $admin);
         }
-        $this->assertSame(13, StudentTransportAssignment::where('bus_id', $bus->id)->count());
+        $this->assertSame(14, StudentTransportAssignment::where('bus_id', $bus->id)->count(), 'the vehicle must genuinely be full before this test proves anything');
 
-        // 14th — via the full Quick Registration HTTP flow.
-        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus)],
-        ]));
-        $response->assertSessionHasNoErrors();
-        $this->assertSame(14, StudentTransportAssignment::where('bus_id', $bus->id)->count());
-        $this->assertSame(1, Student::where('last_name_ru', 'Иванов')->count());
-
-        // 15th — must be rejected, and the WHOLE registration rolled back.
         $studentCountBefore = Student::count();
-        $invoiceCountBefore = Invoice::count();
-        $response2 = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+
+        // The 15th student — via the full Quick Registration HTTP flow —
+        // must succeed even though the only vehicle on this route is full.
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
             'student_last_name_ru' => 'Пятнадцатый', 'student_first_name_ru' => 'Ученик',
-            'services' => [$this->transportService($route, $bus)],
+            'services' => [$this->transportService($route)],
         ]));
-        $response2->assertStatus(500)->assertSee('14', false);
+
+        $response->assertSessionHasNoErrors()->assertRedirect();
+        $this->assertSame($studentCountBefore + 1, Student::count());
+        $this->assertSame(1, Enrollment::where('student_id', Student::where('last_name_ru', 'Пятнадцатый')->value('id'))->count());
+        $this->assertSame(1, Invoice::where('student_id', Student::where('last_name_ru', 'Пятнадцатый')->value('id'))->count());
+        $newInvoice = Invoice::whereHas('student', fn ($q) => $q->where('last_name_ru', 'Пятнадцатый'))->sole();
+        $this->assertSame('1500.00', $newInvoice->total_amount);
+        $this->assertSame(1, StudentServiceSubscription::whereHas('enrollment.student', fn ($q) => $q->where('last_name_ru', 'Пятнадцатый'))->count());
+        // The vehicle's real seat count is untouched — Quick Registration
+        // never wrote to student_transport_assignments.
         $this->assertSame(14, StudentTransportAssignment::where('bus_id', $bus->id)->count());
-        $this->assertSame($studentCountBefore, Student::count(), 'no orphan Student on capacity rollback');
-        $this->assertSame($invoiceCountBefore, Invoice::count(), 'no orphan Invoice on capacity rollback');
     }
 
     // ------------------------------------------------------------------
-    // 11. Inactive route rejected. 12. Inactive bus rejected.
+    // 7. Inactive route still rejected — preserved, unrelated-to-capacity
+    //    validation, now enforced by StoreQuickStudentRegistrationRequest
+    //    directly instead of TransportAssignmentService::validate().
     // ------------------------------------------------------------------
     public function test_inactive_route_is_rejected_and_rolls_back(): void
     {
-        $route = TransportRoute::create(['name' => 'Неактивный', 'pricing_zone' => null, 'is_active' => false]);
-        $bus = $this->bus();
+        $route = $this->route(pricingZone: null, isActive: false);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus)],
-        ]));
-
-        // TransportAssignmentService throws ValidationException, which
-        // Laravel's default handler converts into the SAME
-        // redirect-back-with-session-errors response as every other
-        // validation failure in this app — never a raw 500.
-        $response->assertSessionHasErrors();
-        $this->assertSame(0, Student::count());
-        $this->assertSame(0, Invoice::count());
-        $this->assertSame(0, StudentTransportAssignment::count());
-    }
-
-    public function test_inactive_bus_is_rejected_and_rolls_back(): void
-    {
-        $route = $this->route();
-        $bus = Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => false]);
-
-        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus)],
-        ]));
-
-        $response->assertSessionHasErrors();
-        $this->assertSame(0, Student::count());
-        $this->assertSame(0, Invoice::count());
-        $this->assertSame(0, StudentTransportAssignment::count());
-    }
-
-    // ------------------------------------------------------------------
-    // 13. route/zone mismatch rejected. 14. nullable route zone + explicit valid zone succeeds.
-    // ------------------------------------------------------------------
-    public function test_route_zone_mismatch_is_rejected_by_validation(): void
-    {
-        $route = $this->route('Зона 2'); // route belongs to a different zone than submitted
-        $bus = $this->bus();
-
-        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus, ['transport_area' => 'Зона 1'])],
+            'services' => [$this->transportService($route, ['transport_area' => 'Зона 1'])],
         ]));
 
         $response->assertSessionHasErrors(['services.0.transport_route_id']);
         $this->assertSame(0, Student::count());
+        $this->assertSame(0, Invoice::count());
+        $this->assertSame(0, StudentServiceSubscription::count());
         $this->assertSame(0, StudentTransportAssignment::count());
+    }
+
+    // ------------------------------------------------------------------
+    // 8. route/zone mismatch rejected. 9. nullable route zone + explicit
+    //    valid zone succeeds (now proven via subscription metadata, since
+    //    there is no StudentTransportAssignment any more).
+    // ------------------------------------------------------------------
+    public function test_route_zone_mismatch_is_rejected_by_validation(): void
+    {
+        $route = $this->route('Зона 2'); // route belongs to a different zone than submitted
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            'services' => [$this->transportService($route, ['transport_area' => 'Зона 1'])],
+        ]));
+
+        $response->assertSessionHasErrors(['services.0.transport_route_id']);
+        $this->assertSame(0, Student::count());
+        $this->assertSame(0, StudentServiceSubscription::count());
     }
 
     public function test_nullable_route_zone_with_explicit_valid_zone_succeeds(): void
     {
         $route = $this->route(null);
-        $bus = $this->bus();
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus, ['transport_area' => 'Зона 1'])],
+            'services' => [$this->transportService($route, ['transport_area' => 'Зона 1'])],
         ]));
 
         $response->assertSessionHasNoErrors()->assertRedirect();
-        $this->assertSame('Зона 1', StudentTransportAssignment::sole()->pricing_zone);
+        $this->assertSame('Зона 1', StudentServiceSubscription::sole()->metadata['area']);
     }
 
     // ------------------------------------------------------------------
-    // 15. Retry does not duplicate assignment.
+    // 10. Retry does not duplicate the subscription.
     // ------------------------------------------------------------------
-    public function test_retry_with_same_idempotency_token_does_not_duplicate_assignment(): void
+    public function test_retry_with_same_idempotency_token_does_not_duplicate_subscription(): void
     {
         $route = $this->route();
-        $bus = $this->bus();
         $token = 'retry-token-'.uniqid();
 
         $payload = $this->payload([
             'idempotency_token' => $token,
-            'services' => [$this->transportService($route, $bus)],
+            'services' => [$this->transportService($route)],
         ]);
 
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $payload)->assertSessionHasNoErrors();
@@ -344,43 +338,68 @@ class QuickRegistrationTransportIntegrationTest extends TestCase
 
         $this->assertSame(1, Student::count());
         $this->assertSame(1, Invoice::count());
-        $this->assertSame(1, StudentTransportAssignment::count());
+        $this->assertSame(1, StudentServiceSubscription::count());
+        $this->assertSame(0, StudentTransportAssignment::count());
     }
 
     // ------------------------------------------------------------------
-    // 16. Missing Transport permission rejected server-side.
+    // 11. A user who holds ONLY 'manage invoices' (no Transport assignment
+    //     permission at all) can now successfully register a Transport
+    //     student — TransportPermissions::MANAGE_ASSIGNMENTS is no longer
+    //     reachable from Quick Registration, by design: it remains the
+    //     gate for Operations' real seat-assignment action only.
     // ------------------------------------------------------------------
-    public function test_missing_transport_permission_is_rejected_server_side(): void
+    public function test_a_user_without_transport_assignment_permission_can_still_register_transport_billing(): void
     {
-        // 'cashier' has portal access + 'manage invoices' (passes the
-        // FormRequest gate) but was never granted
-        // TransportPermissions::MANAGE_ASSIGNMENTS.
         $operator = User::factory()->create(['is_active' => true]);
         $operator->assignRole('cashier');
         $this->assertTrue($operator->can('manage invoices'));
         $this->assertFalse($operator->can(TransportPermissions::MANAGE_ASSIGNMENTS));
         $route = $this->route();
-        $bus = $this->bus();
 
         $response = $this->actingAs($operator)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus)],
+            'services' => [$this->transportService($route)],
         ]));
 
-        $response->assertForbidden();
-        $this->assertSame(0, Student::count());
+        $response->assertSessionHasNoErrors()->assertRedirect();
+        $this->assertSame(1, Student::count());
+        $this->assertSame(1, StudentServiceSubscription::count());
         $this->assertSame(0, StudentTransportAssignment::count());
     }
 
     // ------------------------------------------------------------------
-    // 17. No legacy table writes.
+    // 12. Operations' real seat assignment still enforces capacity —
+    //     completely unchanged by this decoupling.
+    // ------------------------------------------------------------------
+    public function test_operations_seat_assignment_still_enforces_capacity_after_decoupling(): void
+    {
+        $route = $this->route();
+        $bus = $this->bus();
+        $admin = User::factory()->create(['is_active' => true]);
+        $admin->assignRole('admin');
+
+        foreach (range(1, 14) as $n) {
+            $student = Student::create(['name' => "Filler {$n}", 'status' => Student::STATUS_ACTIVE]);
+            $enrollment = Enrollment::create(['student_id' => $student->id, 'academic_year_id' => $this->year->id, 'stage_id' => $this->stage->id, 'grade_id' => $this->grade->id, 'class_id' => $this->class->id, 'enrolled_at' => '2026-09-01', 'status' => 'active', 'is_active' => true]);
+            app(TransportAssignmentService::class)->assign($enrollment, $route, $bus, ['effective_from' => '2026-09-01'], $admin);
+        }
+
+        $student15 = Student::create(['name' => 'Fifteenth', 'status' => Student::STATUS_ACTIVE]);
+        $enrollment15 = Enrollment::create(['student_id' => $student15->id, 'academic_year_id' => $this->year->id, 'stage_id' => $this->stage->id, 'grade_id' => $this->grade->id, 'class_id' => $this->class->id, 'enrolled_at' => '2026-09-01', 'status' => 'active', 'is_active' => true]);
+
+        $this->expectException(\App\Exceptions\TransportCapacityExceeded::class);
+        app(TransportAssignmentService::class)->assign($enrollment15, $route, $bus, ['effective_from' => '2026-09-01'], $admin);
+    }
+
+    // ------------------------------------------------------------------
+    // 13. No legacy table writes.
     // ------------------------------------------------------------------
     public function test_no_legacy_transport_table_writes(): void
     {
         $route = $this->route();
-        $bus = $this->bus();
 
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
-            'services' => [$this->transportService($route, $bus)],
+            'services' => [$this->transportService($route)],
         ]))->assertSessionHasNoErrors();
 
         $this->assertSame(0, DB::table('transport_subscriptions')->count());
@@ -389,7 +408,7 @@ class QuickRegistrationTransportIntegrationTest extends TestCase
     }
 
     // ------------------------------------------------------------------
-    // 18. Historical Quick Registration remains readable.
+    // 14. Historical Quick Registration remains readable.
     // ------------------------------------------------------------------
     public function test_historical_pre_phase_c_transport_invoice_remains_readable(): void
     {

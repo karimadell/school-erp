@@ -191,6 +191,74 @@ class TransportManagementUiTest extends TestCase
         $this->actingAs($unauthorized)->post(route('dashboard.transport-management.staff-assignments.store'), [])->assertForbidden();
     }
 
+    // ------------------------------------------------------------------
+    // Transport capacity decoupling — the non-blocking demand/capacity
+    // warning panel. Quick Registration only creates
+    // StudentServiceSubscription rows for Transport (no seat), so this
+    // dashboard is where Operations sees unassigned demand and whether it
+    // exceeds the currently available vehicle capacity on that route.
+    // ------------------------------------------------------------------
+    public function test_transport_demand_warning_distinguishes_subscribed_assigned_unassigned_and_flags_shortfall(): void
+    {
+        $fee = \App\Models\Fee::create(['name_ru' => 'Трансфер', 'category' => \App\Models\Fee::CATEGORY_TRANSPORT, 'amount' => '0.00', 'is_active' => true]);
+
+        // Route A / Bus A: 12 real seats assigned, 3 more subscribed but
+        // NOT yet assigned -> 15 subscribed, 12 assigned, 3 unassigned;
+        // available capacity is only 14 - 12 = 2 -> a genuine shortfall of 1.
+        [$busA, $routeA] = $this->transport();
+        foreach (range(1, 12) as $n) {
+            $enrollment = $this->enrollment("A-Assigned-{$n}");
+            app(TransportAssignmentService::class)->assign($enrollment, $routeA, $busA, ['effective_from' => '2026-09-01'], $this->actor);
+            $this->subscribeTransport($enrollment, $fee, $routeA);
+        }
+        foreach (range(1, 3) as $n) {
+            $this->subscribeTransport($this->enrollment("A-Unassigned-{$n}"), $fee, $routeA);
+        }
+
+        // Route B / Bus B: 2 subscribed, both assigned -> 0 unassigned, no
+        // shortfall at all.
+        [$busB, $routeB] = $this->transport();
+        foreach (range(1, 2) as $n) {
+            $enrollment = $this->enrollment("B-Assigned-{$n}");
+            app(TransportAssignmentService::class)->assign($enrollment, $routeB, $busB, ['effective_from' => '2026-09-01'], $this->actor);
+            $this->subscribeTransport($enrollment, $fee, $routeB);
+        }
+
+        $html = $this->actingAs($this->actor)->get(route('dashboard.transport-management.index', ['date' => '2026-09-07']))
+            ->assertOk()->assertSee('Спрос на транспорт по маршрутам')->getContent();
+
+        // Route A: the three distinct counts must all appear (never
+        // collapsed into a single misleading "15 of 12" style figure), and
+        // the shortfall badge must call out exactly 1 missing seat.
+        $this->assertStringContainsString($routeA->name, $html);
+        $this->assertStringContainsString('Не хватает мест на 1 ученика', $html);
+
+        // Route B: fully assigned, no shortfall wording for it.
+        $this->assertStringContainsString($routeB->name, $html);
+        $this->assertStringContainsString('Все закреплены', $html);
+
+        // The panel is informational only — it must never appear as a form
+        // that could block/gate anything, and Quick Registration's own
+        // routes are untouched by this page.
+        $this->assertStringNotContainsString('name="block_registration"', $html);
+    }
+
+    private function subscribeTransport(Enrollment $enrollment, \App\Models\Fee $fee, TransportRoute $route): \App\Models\StudentServiceSubscription
+    {
+        return \App\Models\StudentServiceSubscription::create([
+            'enrollment_id' => $enrollment->id,
+            'fee_id' => $fee->id,
+            'start_date' => '2026-09-01',
+            'quantity' => 1,
+            'status' => \App\Models\StudentServiceSubscription::STATUS_ACTIVE,
+            'metadata' => [
+                'area' => $route->pricing_zone,
+                'route_id' => $route->id,
+                'route' => $route->name,
+            ],
+        ]);
+    }
+
     private function transport(): array
     {
         return [

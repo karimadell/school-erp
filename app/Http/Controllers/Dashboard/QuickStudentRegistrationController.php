@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Dashboard;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreQuickStudentRegistrationRequest;
 use App\Models\AcademicYear;
-use App\Models\Bus;
 use App\Models\CashAccount;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
@@ -125,19 +124,9 @@ class QuickStudentRegistrationController extends Controller
             'mealPlans' => $mealPlans,
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'transportRoutes' => DB::table('transport_routes')->where('is_active', true)->orderBy('name')->get(),
-            // Transport Management Phase C — canonical bus selection. Active
-            // buses only; occupied is a simple current-active-assignment
-            // count for display context (never the pricing/submission
-            // authority — TransportAssignmentService::assign() re-checks
-            // capacity under a row lock at submission time regardless).
-            'buses' => Bus::where('is_active', true)->orderBy('vehicle_code')->orderBy('id')->get()
-                ->map(fn (Bus $bus) => (object) [
-                    'id' => $bus->id,
-                    'label' => $bus->name ?: ($bus->vehicle_code ?: ('Микроавтобус #'.$bus->id)),
-                    'occupied' => \App\Models\StudentTransportAssignment::where('bus_id', $bus->id)->where('status', 'active')->count(),
-                    'capacity' => min(14, $bus->student_capacity),
-                ])
-                ->values(),
+            // Transport capacity decoupling: the bus/microbus selector was
+            // removed from this screen (final vehicle assignment is a later,
+            // separate Operations action) — no bus list needed here any more.
             'uniformProducts' => $uniformProducts,
             'paymentPlans' => PaymentPlan::active()->with('installments')->orderBy('sort_order')->get(),
             'registrationSuccess' => $this->registrationSuccessFromSession(),

@@ -7,7 +7,9 @@ use App\Http\Controllers\Controller;
 use App\Models\AcademicYear;
 use App\Models\Bus;
 use App\Models\Enrollment;
+use App\Models\Fee;
 use App\Models\StaffMember;
+use App\Models\StudentServiceSubscription;
 use App\Models\StudentTransportAssignment;
 use App\Models\TransportRoute;
 use App\Models\User;
@@ -84,14 +86,81 @@ class TransportManagementController extends Controller
             'full' => $activeBuses->filter(fn (Bus $bus) => (int) ($occupiedByBus[$bus->id] ?? 0) >= min(14, $bus->student_capacity))->count(),
         ];
 
+        $transportDemand = $this->transportDemandByRoute($yearId, $routes, $buses, $occupiedByBus, $currentByEnrollment);
+
         return view('dashboard.transport-management.index', compact(
             'date', 'academicYears', 'yearId', 'buses', 'routes', 'enrollments',
-            'currentByEnrollment', 'history', 'occupiedByBus', 'physicalByBus', 'kpis'
+            'currentByEnrollment', 'history', 'occupiedByBus', 'physicalByBus', 'kpis', 'transportDemand'
         ) + [
             'users' => User::query()->where('is_active', true)->orderBy('name')->get(),
             'staffMembers' => StaffMember::query()->where('is_active', true)->orderBy('display_name')->get(),
             'staffAssignments' => VehicleStaffAssignment::query()->with(['bus', 'user', 'staffMember', 'creator', 'endedBy'])->latest('effective_from')->get(),
         ]);
+    }
+
+    /**
+     * Transport capacity decoupling: a non-blocking demand/capacity view for
+     * Operations, grouped by route. Quick Registration no longer creates a
+     * StudentTransportAssignment (see QuickStudentRegistrationService), so a
+     * student can be billed for Transport with zero, one, or many teammates
+     * sharing a route still waiting on a real seat. This surfaces that gap
+     * as information, never as a blocker anywhere in registration/billing.
+     *
+     * Three numbers are kept deliberately distinct throughout (never
+     * collapsed into one "X of Y" figure that could misstate which students
+     * are actually seated):
+     *  - subscribed: enrollments with an active Transport
+     *    StudentServiceSubscription for this route (billed demand).
+     *  - assigned: the subset of those already holding a real, currently
+     *    active StudentTransportAssignment (an actually-seated student).
+     *  - unassigned: subscribed minus assigned — students still waiting on
+     *    a seat, regardless of whether capacity exists for them yet.
+     * available_capacity is computed independently, from active buses on
+     * this route only, and is never used to imply anything about how many
+     * students are assigned.
+     *
+     * @return \Illuminate\Support\Collection<int, array{route: ?TransportRoute, zone: ?string, subscribed: int, assigned: int, unassigned: int, available_capacity: int, shortfall: int}>
+     */
+    private function transportDemandByRoute(?int $yearId, \Illuminate\Support\Collection $routes, \Illuminate\Support\Collection $buses, \Illuminate\Support\Collection $occupiedByBus, \Illuminate\Support\Collection $currentByEnrollment): \Illuminate\Support\Collection
+    {
+        $subscriptions = StudentServiceSubscription::query()
+            ->whereHas('fee', fn ($query) => $query->where('category', Fee::CATEGORY_TRANSPORT))
+            ->where('status', StudentServiceSubscription::STATUS_ACTIVE)
+            ->when($yearId, fn ($query) => $query->whereHas('enrollment', fn ($enrollment) => $enrollment->where('academic_year_id', $yearId)))
+            ->get();
+
+        return $subscriptions
+            ->groupBy(fn (StudentServiceSubscription $subscription) => $subscription->metadata['route_id'] ?? 'unspecified')
+            ->map(function (\Illuminate\Support\Collection $group, $routeId) use ($routes, $buses, $occupiedByBus, $currentByEnrollment) {
+                $route = $routeId !== 'unspecified' ? $routes->firstWhere('id', (int) $routeId) : null;
+                $subscribedEnrollmentIds = $group->pluck('enrollment_id')->unique();
+                $assignedEnrollmentIds = $subscribedEnrollmentIds->filter(fn ($id) => $currentByEnrollment->has($id));
+                $unassigned = $subscribedEnrollmentIds->count() - $assignedEnrollmentIds->count();
+                // Which buses currently serve this route is derived from
+                // actually-active assignments (Bus.transport_route_id is not
+                // a live "serves this route" link — it is never set by any
+                // vehicle create/edit flow — matching the same empirical
+                // derivation the routes table above already uses).
+                $routeBusIds = $route
+                    ? $currentByEnrollment->filter(fn ($assignment) => $assignment->transport_route_id === $route->id)->pluck('bus_id')->unique()
+                    : collect();
+                $availableCapacity = $buses->whereIn('id', $routeBusIds)->where('is_active', true)->sum(
+                    fn (Bus $bus) => max(0, min(14, (int) $bus->student_capacity) - (int) ($occupiedByBus[$bus->id] ?? 0))
+                );
+
+                return [
+                    'route' => $route,
+                    'zone' => $route?->pricing_zone ?? ($group->first()->metadata['area'] ?? null),
+                    'subscribed' => $subscribedEnrollmentIds->count(),
+                    'assigned' => $assignedEnrollmentIds->count(),
+                    'unassigned' => $unassigned,
+                    'available_capacity' => $availableCapacity,
+                    'shortfall' => max(0, $unassigned - $availableCapacity),
+                ];
+            })
+            ->filter(fn (array $row) => $row['subscribed'] > 0)
+            ->sortByDesc('shortfall')
+            ->values();
     }
 
     public function storeVehicle(Request $request): RedirectResponse

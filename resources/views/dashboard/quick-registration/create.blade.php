@@ -200,12 +200,11 @@
                                     @endphp
                                     <div class="col-md-3"><label class="form-label">Зона тарифа *</label><select name="services[{{ $index }}][transport_area]" class="form-select price-option transport-zone" data-periods-by-zone="{{ $transportPeriodsByZone->toJson() }}"><option value="">Выберите зону</option>@foreach($fee->prices->where('option_type', 'zone')->pluck('option_value')->filter()->unique() as $zone)<option value="{{ $zone }}" @selected(($oldService['transport_area'] ?? null) === $zone)>{{ $zone }}</option>@endforeach</select></div>
                                     <div class="col-md-3"><label class="form-label">Маршрут *</label><select name="services[{{ $index }}][transport_route_id]" class="form-select"><option value="">Выберите маршрут</option>@foreach($transportRoutes as $route)<option value="{{ $route->id }}" @selected((string) ($oldService['transport_route_id'] ?? '') === (string) $route->id)>{{ $route->name }}</option>@endforeach</select></div>
-                                    {{-- Transport Management Phase C — canonical bus selection. Never
-                                         free text; only currently-active, non-full buses are offered.
-                                         TransportAssignmentService::assign() re-checks capacity under a
-                                         row lock at submission time regardless — this list is a UI
-                                         convenience only, never the capacity authority. --}}
-                                    <div class="col-md-3"><label class="form-label">Микроавтобус *</label><select name="services[{{ $index }}][bus_id]" class="form-select"><option value="">Выберите микроавтобус</option>@foreach($buses as $bus)<option value="{{ $bus->id }}" @selected((string) ($oldService['bus_id'] ?? '') === (string) $bus->id)>{{ $bus->label }} — {{ $bus->occupied }}/{{ $bus->capacity }}{{ $bus->occupied >= $bus->capacity ? ' (проверка мест на дату регистрации)' : '' }}</option>@endforeach</select></div>
+                                    {{-- Transport capacity decoupling: the bus/microbus selector was
+                                         removed from Quick Registration. Final vehicle assignment is a
+                                         later, separate Operations action (Transport Management) — this
+                                         screen only captures zone/route/stop demand and bills for it, and
+                                         must never block on vehicle capacity. --}}
                                     <div class="col-md-3"><label class="form-label">Период оплаты{{ $transportPeriodRequired ? ' *' : '' }}</label><select name="services[{{ $index }}][payment_period]" class="form-select price-option transport-period" data-old-value="{{ $oldService['payment_period'] ?? '' }}"><option value="">Выберите зону</option></select></div>
                                     <div class="col-md-3"><label class="form-label">Место посадки</label><input name="services[{{ $index }}][transport_stop]" value="{{ $oldService['transport_stop'] ?? '' }}" class="form-control"></div>
                                 @elseif($groupKey === 'food')

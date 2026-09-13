@@ -801,6 +801,8 @@ class InvoiceIssuanceService
         }
         $coverageStart = $schedule[0]['period_start'];
         $coverageEnd = end($schedule)['period_end'];
+        $allRows = [];
+        $now = Carbon::now();
 
         foreach ($invoiceFees as $fee) {
             QrTrace::log('coverage_batch:start', ['period_count' => count($schedule)]);
@@ -875,23 +877,119 @@ class InvoiceIssuanceService
             }
 
             $periodAmounts = $periodAmountsByFeeId[$fee->id] ?? null;
+            $seenPeriods = [];
             foreach ($schedule as $index => $period) {
-                InstallmentCoveragePeriod::create([
-                    'invoice_installment_id' => $period['installment']->id,
-                    'service_coverage_id' => $coverage->id,
-                    'period_start' => $period['period_start'],
-                    'period_end' => $period['period_end'],
-                    // Corrective pass #2 (P0 Blocker 2): this Fee's OWN
-                    // charge for this specific period — never the shared
-                    // installment total — so a later payment allocation
-                    // can be compared against the correct "full
-                    // settlement" figure for exactly this service/period.
-                    'amount' => $periodAmounts[$index] ?? null,
-                ]);
+                $allRows[] = $this->coveragePeriodRow(
+                    $coverage, $period['installment'], $item->invoice_id,
+                    $period['period_start'], $period['period_end'],
+                    $periodAmounts[$index] ?? null, $seenPeriods, $now,
+                );
             }
 
             QrTrace::log('coverage_batch:done', ['period_count' => count($schedule)]);
         }
+
+        // Perf (504 investigation, round 2 — 2026-09-13): each row above
+        // was previously written via its own InstallmentCoveragePeriod::
+        // create() call, which — because of that model's own `creating`
+        // hook (validateIntegrity()) — issued 3 EXTRA round trips per row
+        // (a ServiceCoverage::lockForUpdate()->findOrFail(), an
+        // InvoiceInstallment::findOrFail(), and an overlap exists() query)
+        // on top of the INSERT itself. Against the real UAT PostgreSQL
+        // connection (remote, network-latency-bound — this codebase's
+        // entire test suite runs on latency-free SQLite, which never
+        // surfaced this), QR_TRACE proved this alone cost ~16.4s for a
+        // single 9-period/1-fee coverage batch (~456ms per round trip).
+        // coveragePeriodRow() above already performs the SAME four
+        // invariants validateIntegrity() enforces (period_end>=
+        // period_start; period within the coverage's own bounds;
+        // installment belongs to the same invoice; no overlap among this
+        // coverage's own periods) — entirely in memory, against data this
+        // method already loaded/computed, never re-querying the DB. This
+        // is safe specifically because every $coverage here was JUST
+        // created earlier in this SAME still-open transaction (see
+        // ServiceCoverageService::record()/recordWithBasisPrice(), both
+        // always firstOrCreate() against a brand-new InvoiceItem's id) —
+        // no other transaction can reference it yet under MVCC, so it
+        // structurally cannot already have periods and cannot be raced.
+        // One bulk INSERT (bypassing Eloquent events/timestamps, which is
+        // why coveragePeriodRow() sets 'created_at' itself) replaces what
+        // was previously N individual creates — for a mixed invoice this
+        // combines every Fee's own periods into ONE statement, never one
+        // insert per Fee, since they share the same table and no rule
+        // requires them to be written separately.
+        if ($allRows !== []) {
+            InstallmentCoveragePeriod::insert($allRows);
+            QrTrace::log('coverage_periods_bulk_insert_done', ['period_count' => count($allRows)]);
+        }
+    }
+
+    /**
+     * Builds one installment_coverage_periods row, enforcing — in memory,
+     * with zero DB queries — the exact same invariants
+     * InstallmentCoveragePeriod::validateIntegrity() enforces per-row via
+     * its `creating` hook: period_end >= period_start, the period lies
+     * within $coverage's own coverage_start/coverage_end, the installment
+     * belongs to the same invoice as the coverage's own item, and no
+     * overlap with an earlier period already built for this SAME
+     * coverage in this same call (tracked via $seenPeriods, passed by
+     * reference and scoped by the caller to one coverage at a time — see
+     * createAutomaticCoverage()'s per-fee $seenPeriods reset and
+     * createFoodInstallmentAndCoverage()'s own single-row array).
+     *
+     * Never queries ServiceCoverage/InvoiceInstallment again — both are
+     * already loaded objects the caller has in memory — and never checks
+     * for PRE-EXISTING rows against this coverage, which is provably safe
+     * only because every caller passes a $coverage created earlier in
+     * this SAME transaction (see createAutomaticCoverage()'s own docblock
+     * note above); this method must never be reused for a coverage that
+     * could already have committed periods from a prior request.
+     *
+     * @param  array<int, array{0: \Illuminate\Support\Carbon, 1: \Illuminate\Support\Carbon}>  $seenPeriods
+     */
+    private function coveragePeriodRow(ServiceCoverage $coverage, InvoiceInstallment $installment, int $invoiceId, string $periodStart, string $periodEnd, ?string $amount, array &$seenPeriods, Carbon $now): array
+    {
+        $start = Carbon::parse($periodStart);
+        $end = Carbon::parse($periodEnd);
+        if ($end->lt($start)) {
+            throw ValidationException::withMessages(['period_end' => 'Окончание периода не может быть раньше его начала.']);
+        }
+        if ($start->lt($coverage->coverage_start) || $end->gt($coverage->coverage_end)) {
+            throw ValidationException::withMessages(['period_start' => 'Период выходит за границы покрытия услуги.']);
+        }
+        if ($installment->invoice_id !== $invoiceId) {
+            throw ValidationException::withMessages(['invoice_installment_id' => 'Этап оплаты принадлежит другому счёту, чем покрытие услуги.']);
+        }
+        foreach ($seenPeriods as [$seenStart, $seenEnd]) {
+            if ($start->lte($seenEnd) && $end->gte($seenStart)) {
+                throw ValidationException::withMessages(['period_start' => 'Период пересекается с уже существующим периодом этого покрытия.']);
+            }
+        }
+        $seenPeriods[] = [$start, $end];
+
+        return [
+            'invoice_installment_id' => $installment->id,
+            'service_coverage_id' => $coverage->id,
+            // Stored in the SAME format Eloquent's own 'date' cast already
+            // uses for every other date column this bulk insert bypasses
+            // (coverage_start/coverage_end included) — 'Y-m-d H:i:s', not
+            // a bare 'Y-m-d'. SQLite does not truncate a DATE column to
+            // date-only on write (unlike MySQL/PostgreSQL), so a shorter
+            // date-only string here would be a byte-for-byte MISMATCH
+            // against the datetime-formatted coverage_start/coverage_end
+            // already on disk — the DB integrity triggers compare these
+            // as raw text, and a same-day short/long string pair sorts as
+            // "before", not "equal", under plain string comparison.
+            'period_start' => $start->toDateTimeString(),
+            'period_end' => $end->toDateTimeString(),
+            // Corrective pass #2 (P0 Blocker 2): this Fee's OWN charge for
+            // this specific period — never the shared installment total —
+            // so a later payment allocation can be compared against the
+            // correct "full settlement" figure for exactly this
+            // service/period.
+            'amount' => $amount,
+            'created_at' => $now->toDateTimeString(),
+        ];
     }
 
     /**
@@ -953,12 +1051,16 @@ class InvoiceIssuanceService
             ],
         ], $actor);
 
-        InstallmentCoveragePeriod::create([
-            'invoice_installment_id' => $installment->id,
-            'service_coverage_id' => $coverage->id,
-            'period_start' => $coverageStart,
-            'period_end' => $coverageEnd,
-            'amount' => $item->amount,
+        // Perf (504 investigation, round 2): same bulk-write rationale as
+        // createAutomaticCoverage() above — $coverage was just created,
+        // in this same still-open transaction, so no per-row DB re-query
+        // is needed to prove the single period below is valid. Food only
+        // ever creates one period per call (never the N×M shape
+        // createAutomaticCoverage() has), but this still removes 3 extra
+        // round trips per Food Fee on the invoice.
+        $seenPeriods = [];
+        InstallmentCoveragePeriod::insert([
+            $this->coveragePeriodRow($coverage, $installment, $invoice->id, $coverageStart, $coverageEnd, (string) $item->amount, $seenPeriods, Carbon::now()),
         ]);
     }
 

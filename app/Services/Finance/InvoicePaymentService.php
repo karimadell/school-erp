@@ -14,6 +14,7 @@ use App\Models\PaymentAllocationCoveragePeriod;
 use App\Models\PaymentRefund;
 use App\Models\ServiceCoverage;
 use App\Models\User;
+use App\Support\QrTrace;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -85,6 +86,8 @@ class InvoicePaymentService
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         return DB::transaction(function () use ($invoiceId, $installmentId, $cashAccountId, $amount, $paymentMethod, $idempotencyKey, $actor, $reference, $notes, $hash, $legacyHash, $allocationMeaning, $allocations, $coveragePeriodAllocations) {
+            QrTrace::log('payment:start');
+
             $existing = InvoicePayment::query()->where('idempotency_key', $idempotencyKey)->first();
             if ($existing) {
                 return $this->replay($existing, $hash, $legacyHash, $allocationMeaning);
@@ -98,6 +101,8 @@ class InvoicePaymentService
             if ($invoice->status === Invoice::STATUS_CANCELLED) {
                 throw ValidationException::withMessages(['invoice_id' => 'Счёт аннулирован и не может быть оплачен.']);
             }
+
+            QrTrace::log('payment:invoice_lock_acquired');
 
             // Recheck after serializing on the invoice row so concurrent retries
             // cannot pass the first lookup together.
@@ -197,6 +202,9 @@ class InvoicePaymentService
                 }
             }
 
+            QrTrace::log('payment:installment_lock_acquired');
+
+            QrTrace::log('payment:before_cash_account_lock');
             $account = CashAccount::query()->lockForUpdate()->find($cashAccountId);
             if (! $account) {
                 throw ValidationException::withMessages(['cash_account_id' => 'Касса не найдена.']);
@@ -215,11 +223,14 @@ class InvoicePaymentService
                 throw ValidationException::withMessages(['cash_account_id' => 'Счёт владельца нельзя использовать для оплаты учеником.']);
             }
 
+            QrTrace::log('payment:cash_account_lock_acquired');
+
             // Phase 3 — strict cash-session rule: physical cash cannot enter a
             // drawer without an open shift. Non-cash methods (bank/card/transfer)
             // do not touch the physical drawer and keep their existing behaviour.
             $cashSessionId = null;
             if ($paymentMethod === CashTransaction::METHOD_CASH && $account->isCashDrawer()) {
+                QrTrace::log('payment:before_cash_session_lock');
                 $session = $this->sessions->activeFor($account, lock: true);
                 if (! $session) {
                     throw ValidationException::withMessages([
@@ -227,6 +238,7 @@ class InvoicePaymentService
                     ]);
                 }
                 $cashSessionId = $session->id;
+                QrTrace::log('payment:cash_session_lock_acquired');
             }
 
             $payment = InvoicePayment::create([
@@ -285,6 +297,8 @@ class InvoicePaymentService
                 }
             }
 
+            QrTrace::log('payment:allocations_done');
+
             CashTransaction::create([
                 'cash_account_id' => $account->id,
                 'cash_session_id' => $cashSessionId, // FK-at-creation; null for non-cash
@@ -295,6 +309,8 @@ class InvoicePaymentService
                 'category' => CashTransaction::CATEGORY_INCOME,
                 'description' => "Платёж {$payment->payment_number} по счёту {$invoice->display_number}",
             ]);
+
+            QrTrace::log('payment:cash_transaction_done');
 
             $newPaid = bcadd($paid, $amount, 2);
             $newRemaining = bcsub($this->money($invoice->total_amount), $newPaid, 2);
@@ -329,6 +345,8 @@ class InvoicePaymentService
                 'ip' => request()->ip(),
                 'user_agent' => request()->userAgent(),
             ]);
+
+            QrTrace::log('payment:completed');
 
             return $payment->fresh(['cashTransaction', 'allocations']);
         });

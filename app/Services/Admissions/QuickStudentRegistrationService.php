@@ -23,6 +23,7 @@ use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\AcademicStructureService;
 use App\Services\StudentServiceSubscriptionService;
+use App\Support\QrTrace;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -66,6 +67,15 @@ class QuickStudentRegistrationService
             : null;
         $payloadHash = $this->operationPayloadHash($data);
 
+        // Temporary QR_TRACE diagnostic instrumentation (UAT 504
+        // investigation, round 2) — trace_id is derived from the already-
+        // computed $operationKey (itself a hash of the client idempotency
+        // token), never the raw token. QrTrace::log() is a no-op until
+        // start() is called, so this never affects unrelated callers of
+        // the shared Finance services below.
+        QrTrace::start($operationKey);
+        QrTrace::log('start');
+
         // Checked before opening the transaction too — the overwhelming
         // common case (a genuine first submission) never even opens one
         // for this specific check.
@@ -77,7 +87,7 @@ class QuickStudentRegistrationService
         }
 
         try {
-            return DB::transaction(function () use ($data, $actor, $operationKey, $payloadHash, $outerToken) {
+            $result = DB::transaction(function () use ($data, $actor, $operationKey, $payloadHash, $outerToken) {
             // Re-checked once more, now inside the transaction — closes
             // the race window between the pre-transaction check above and
             // this transaction's own locks.
@@ -152,6 +162,8 @@ class QuickStudentRegistrationService
                 throw ValidationException::withMessages(['enrollment_mode_id' => 'Выбранная форма обучения больше не активна.']);
             }
 
+            QrTrace::log('reference_validation_done');
+
             $student = Student::create([
                 'last_name_ru' => $data['student_last_name_ru'],
                 'first_name_ru' => $data['student_first_name_ru'],
@@ -160,6 +172,8 @@ class QuickStudentRegistrationService
                 'class_id' => $class->id,
                 'status' => Student::STATUS_PRE_REGISTERED,
             ]);
+
+            QrTrace::log('student_created');
 
             $enrollment = Enrollment::create([
                 'student_id' => $student->id,
@@ -178,6 +192,8 @@ class QuickStudentRegistrationService
                     $data['notes'] ?? null,
                 ])->filter()->implode("\n"),
             ]);
+
+            QrTrace::log('enrollment_created');
 
             $feesById = [];
             $paymentType = $data['payment_type'] ?? 'one_time';
@@ -324,6 +340,8 @@ class QuickStudentRegistrationService
             })->values();
             $items = $normalizedServices->all();
 
+            QrTrace::log('services_normalized');
+
             // Food flexible-duration corrective pass: $items already
             // carries each Food service's own raw duration-mode fields
             // (food_duration_mode + whichever of food_date/food_week_start/
@@ -405,6 +423,8 @@ class QuickStudentRegistrationService
                 return $subscription->id;
             };
 
+            QrTrace::log('before_invoice_issue');
+
             $invoice = $this->issuer->issue($student, [
                 'student_id' => $student->id,
                 'academic_year_id' => $year->id,
@@ -415,6 +435,8 @@ class QuickStudentRegistrationService
                 'payment_plan_id' => $data['payment_plan_id'] ?? null,
                 'billing_period' => $data['billing_period'] ?? null,
             ], $actor, subscriptionResolver: $subscriptionResolver, origin: Invoice::ORIGIN_QUICK_REGISTRATION, idempotencyKey: $invoiceIdempotencyKey);
+
+            QrTrace::log('after_invoice_issue');
 
             // Quick Registration's own per-line concerns — the initial
             // paid/remaining split per service, the enriched description,
@@ -570,6 +592,7 @@ class QuickStudentRegistrationService
                     $onceAmount = collect($onceAllocations)->reduce(fn (string $sum, array $line) => bcadd($sum, $line['amount'], 2), '0.00');
                     if (bccomp($onceAmount, '0.00', 2) > 0) {
                         $onceInstallment = $invoice->installments()->where('name_ru', InvoiceIssuanceService::MIXED_ONCE_INSTALLMENT_NAME)->firstOrFail();
+                        QrTrace::log('before_payment:mixed_once');
                         $this->payments->record(
                             invoiceId: $invoice->id,
                             cashAccountId: $cashAccountId,
@@ -584,6 +607,7 @@ class QuickStudentRegistrationService
                             installmentId: $onceInstallment->id,
                             allocations: $onceAllocations,
                         );
+                        QrTrace::log('after_payment:mixed_once');
                     }
                     foreach ($onceItemIds as $id) {
                         unset($remainingByItem[$id]);
@@ -615,6 +639,7 @@ class QuickStudentRegistrationService
                         if (collect($remainingByItem)->contains(fn ($remaining) => bccomp((string) $remaining, '0.00', 2) !== 0)) {
                             throw ValidationException::withMessages(['services' => 'Оплату не удалось полностью распределить по выбранным периодам услуг.']);
                         }
+                        QrTrace::log('before_payment:mixed_periods', ['period_count' => count($periodAllocations)]);
                         $this->payments->record(
                             invoiceId: $invoice->id,
                             cashAccountId: $cashAccountId,
@@ -628,6 +653,7 @@ class QuickStudentRegistrationService
                             notes: $data['payment_note'] ?? null,
                             coveragePeriodAllocations: $periodAllocations,
                         );
+                        QrTrace::log('after_payment:mixed_periods');
                     }
                 } elseif (($data['payment_type'] ?? null) === 'calendar' && $foodService) {
                     $remainingByItem = collect($allocations)->mapWithKeys(fn (array $line) => [
@@ -661,6 +687,7 @@ class QuickStudentRegistrationService
                     $idempotencyKey = $outerToken
                         ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:calendar")
                         : (string) Str::uuid();
+                    QrTrace::log('before_payment:calendar', ['period_count' => count($periodAllocations)]);
                     $this->payments->record(
                         invoiceId: $invoice->id,
                         cashAccountId: $cashAccountId,
@@ -672,6 +699,7 @@ class QuickStudentRegistrationService
                         notes: $data['payment_note'] ?? null,
                         coveragePeriodAllocations: $periodAllocations,
                     );
+                    QrTrace::log('after_payment:calendar');
                 } else {
                 // Finance V2, Phase 2B (§4 of the approved design): a
                 // calendar/custom-plan schedule can now have more than one
@@ -761,6 +789,7 @@ class QuickStudentRegistrationService
                 // consumer) falls back to today's fresh-UUID-per-attempt
                 // behavior, unchanged (and to always-fresh invoice
                 // issuance, also unchanged).
+                QrTrace::log('before_payment:plan', ['period_count' => count($toRecord)]);
                 foreach ($toRecord as $index => [$installment, $amount]) {
                     $idempotencyKey = $outerToken
                         ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:{$index}")
@@ -796,6 +825,7 @@ class QuickStudentRegistrationService
                         allocations: (count($toRecord) === 1 && $index === 0) ? $allocations : null,
                     );
                 }
+                QrTrace::log('after_payment:plan');
                 }
             }
 
@@ -813,8 +843,14 @@ class QuickStudentRegistrationService
                 'completed_at' => now(),
             ]);
 
+            QrTrace::log('before_commit');
+
             return compact('student', 'enrollment', 'invoice');
             });
+
+            QrTrace::log('completed');
+
+            return $result;
         } catch (\Illuminate\Database\UniqueConstraintViolationException $exception) {
             // HIGH 1's same pattern, applied one level up: the
             // transaction above has already rolled back cleanly by the

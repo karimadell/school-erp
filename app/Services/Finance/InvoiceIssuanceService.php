@@ -16,6 +16,7 @@ use App\Models\PaymentPlan;
 use App\Models\ServiceCoverage;
 use App\Models\Student;
 use App\Models\User;
+use App\Support\QrTrace;
 use Closure;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Carbon;
@@ -144,6 +145,8 @@ class InvoiceIssuanceService
         // race; this only changes WHERE the recovery query runs.
         try {
             return DB::transaction(function () use ($data, $student, $actor, $ip, $userAgent, $subscriptionResolver, $origin, $idempotencyKey, $idempotencyHash) {
+            QrTrace::log('issuer:start');
+
             // Re-checked once more, now serialized by the student row lock
             // immediately below — closes the race window between the
             // pre-transaction check above and this transaction acquiring
@@ -162,6 +165,8 @@ class InvoiceIssuanceService
             if (! $year->is_active || ! $enrollment) {
                 throw ValidationException::withMessages(['academic_year_id' => 'Активное зачисление на выбранный учебный год не найдено.']);
             }
+
+            QrTrace::log('issuer:locks_acquired');
 
             $registrationFeeIds = Fee::whereIn('id', collect($data['items'])->pluck('fee_id'))->where('category', Fee::CATEGORY_REGISTRATION)->pluck('id');
             if ($registrationFeeIds->isNotEmpty() && InvoiceItem::whereHas('invoice', fn ($query) => $query->where('student_id', $student->id)->where('academic_year_id', $year->id))->whereIn('fee_id', $registrationFeeIds)->exists()) {
@@ -280,6 +285,9 @@ class InvoiceIssuanceService
                     $items, $data['discount_type'] ?? null, $data['discount_value'] ?? null, '0', $data['pricing_date'], $year->id,
                     $calendarBillingPeriod, $calendarEnd, $calendarStart,
                 );
+
+            QrTrace::log('issuer:calculation_done');
+
             $invoiceData = [
                 'student_id'=>$student->id, 'academic_year_id'=>$year->id, 'customer_name'=>$student->full_name,
                 'currency'=>'EGP', 'subtotal_amount'=>$calculation['subtotal'], 'total_amount'=>$calculation['total_amount'],
@@ -464,6 +472,13 @@ class InvoiceIssuanceService
                 $invoice->fees()->attach($feePivotRows);
             }
 
+            // subscription_resolver (if provided) is invoked once per line
+            // item inside the loop above — item creation and subscription
+            // creation are structurally fused in this code path, so both
+            // checkpoints fire together here, immediately after that loop.
+            QrTrace::log('issuer:invoice_items_done');
+            QrTrace::log('issuer:subscriptions_done');
+
             // Finance V2, Phase 2B: $feesById already holds exactly the Fees
             // on this invoice (resolved above from $data['items']) — used
             // below to validate the chosen billing option is one every one
@@ -478,6 +493,8 @@ class InvoiceIssuanceService
             // its resolved range happens to span several calendar months.
             $invoiceFees = $feesById->reject(fn (Fee $fee) => $fee->category === Fee::CATEGORY_FOOD);
             $foodFees = $feesById->filter(fn (Fee $fee) => $fee->category === Fee::CATEGORY_FOOD);
+
+            QrTrace::log('issuer:before_coverage');
 
             if ($invoiceFees->isNotEmpty()) {
                 if ($data['payment_type'] === 'plan') {
@@ -531,7 +548,11 @@ class InvoiceIssuanceService
                 $this->createFoodInstallmentAndCoverage($invoice, $itemsByFeeId[$fee->id], $actor);
             }
 
+            QrTrace::log('issuer:coverage_done');
+
             AuditLog::create(['user_id'=>$actor->id,'action'=>'created','model'=>'Invoice','model_id'=>$invoice->id,'new_values'=>['invoice_number'=>$invoice->invoice_number,'total_amount'=>$invoice->total_amount],'ip'=>$ip,'user_agent'=>$userAgent]);
+
+            QrTrace::log('issuer:completed');
 
             return $invoice;
             });
@@ -782,6 +803,8 @@ class InvoiceIssuanceService
         $coverageEnd = end($schedule)['period_end'];
 
         foreach ($invoiceFees as $fee) {
+            QrTrace::log('coverage_batch:start', ['period_count' => count($schedule)]);
+
             $item = $itemsByFeeId[$fee->id] ?? null;
             if (! $item) {
                 throw ValidationException::withMessages(['fees' => "Не удалось найти позицию счёта для услуги «{$fee->name_ru}» при создании покрытия."]);
@@ -866,6 +889,8 @@ class InvoiceIssuanceService
                     'amount' => $periodAmounts[$index] ?? null,
                 ]);
             }
+
+            QrTrace::log('coverage_batch:done', ['period_count' => count($schedule)]);
         }
     }
 

@@ -119,7 +119,12 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             // month-only coverage_start_month/coverage_end_month pair.
             // Exactly one mode's fields are required per Food line —
             // enforced in after() below, since which fields are required
-            // depends on food_duration_mode.
+            // depends on food_duration_mode. 'month' stays in this base
+            // enum (a still-parseable, historically-valid value — never
+            // rewriting FoodBillableDayCalculator's own contract) but is
+            // rejected for NEW submissions by the more specific,
+            // friendlier check in after() below (Food date-range UX
+            // corrective pass) — it is no longer offered in the UI.
             'services.*.food_duration_mode' => ['nullable', 'string', Rule::in(['day', 'school_week', 'teaching_days', 'month', 'custom_range'])],
             'services.*.food_date' => ['nullable', 'date_format:Y-m-d'],
             'services.*.food_week_start' => ['nullable', 'date_format:Y-m-d'],
@@ -329,12 +334,24 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                     $mode = $item['food_duration_mode'] ?? null;
                     if (! in_array($mode, ['day', 'school_week', 'teaching_days', 'month', 'custom_range'], true)) {
                         $validator->errors()->add("services.{$index}.food_duration_mode", 'Выберите режим периода питания.');
+                    } elseif ($mode === 'month') {
+                        // Food date-range UX corrective pass: month-from/
+                        // month-to remains a technically valid, parseable
+                        // duration mode (FoodBillableDayCalculator and every
+                        // historical invoice issued under it are untouched)
+                        // but is no longer an accountant-facing choice for
+                        // NEW Quick Registration Food purchases — reject it
+                        // here with a clear, actionable message rather than
+                        // a generic "invalid value" error.
+                        $validator->errors()->add("services.{$index}.food_duration_mode", 'Режим «Месяц(ы)» больше не используется для оформления питания. Укажите период датами «С даты» и «По дату».');
                     } else {
+                        // 'month' is deliberately absent here — it is
+                        // intercepted by the elseif above before reaching
+                        // this branch, for every NEW submission.
                         $requiredFields = match ($mode) {
                             'day' => ['food_date'],
                             'school_week' => ['food_week_start'],
                             'teaching_days' => ['food_start_date', 'food_day_count'],
-                            'month' => ['food_month'],
                             'custom_range' => ['food_range_start', 'food_range_end'],
                         };
                         foreach ($requiredFields as $field) {
@@ -345,16 +362,6 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                         if ($mode === 'custom_range' && filled($item['food_range_start'] ?? null) && filled($item['food_range_end'] ?? null)
                             && Carbon::parse($item['food_range_end'])->lt(Carbon::parse($item['food_range_start']))) {
                             $validator->errors()->add("services.{$index}.food_range_end", 'Дата окончания периода питания не может быть раньше даты начала.');
-                        }
-                        if ($mode === 'month' && $year && filled($item['food_month'] ?? null) && preg_match('/^\d{4}-\d{2}$/', (string) $item['food_month'])) {
-                            $endMonth = $item['food_end_month'] ?? $item['food_month'];
-                            if (preg_match('/^\d{4}-\d{2}$/', (string) $endMonth)) {
-                                $start = Carbon::createFromFormat('Y-m', $item['food_month'])->startOfMonth();
-                                $end = Carbon::createFromFormat('Y-m', $endMonth)->endOfMonth();
-                                if ($end->lt($start) || $start->lt($year->start_date) || $end->gt($year->end_date)) {
-                                    $validator->errors()->add("services.{$index}.food_end_month", 'Период питания должен находиться внутри выбранного учебного года.');
-                                }
-                            }
                         }
                     }
                 }

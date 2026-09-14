@@ -215,8 +215,7 @@
                                             <option value="day" @selected(($oldService['food_duration_mode'] ?? 'day') === 'day')>Один день</option>
                                             <option value="school_week" @selected(($oldService['food_duration_mode'] ?? '') === 'school_week')>Учебная неделя</option>
                                             <option value="teaching_days" @selected(($oldService['food_duration_mode'] ?? '') === 'teaching_days')>N учебных дней</option>
-                                            <option value="month" @selected(($oldService['food_duration_mode'] ?? '') === 'month')>Месяц(ы)</option>
-                                            <option value="custom_range" @selected(($oldService['food_duration_mode'] ?? '') === 'custom_range')>Произвольный период</option>
+                                            <option value="custom_range" @selected(($oldService['food_duration_mode'] ?? '') === 'custom_range')>Произвольный период (С даты — По дату)</option>
                                         </select>
                                     </div>
                                     <div class="col-md-5 food-duration-fields" data-mode="day">
@@ -231,13 +230,18 @@
                                         <div class="col-6"><label class="form-label">Начало *</label><input type="date" name="services[{{ $index }}][food_start_date]" value="{{ $oldService['food_start_date'] ?? '' }}" class="form-control price-option food-field" data-food-mode="teaching_days"></div>
                                         <div class="col-6"><label class="form-label">Кол-во учебных дней *</label><input type="number" min="1" name="services[{{ $index }}][food_day_count]" value="{{ $oldService['food_day_count'] ?? '' }}" class="form-control price-option food-field" data-food-mode="teaching_days"></div>
                                     </div>
-                                    <div class="col-md-5 food-duration-fields d-none row g-2" data-mode="month">
-                                        <div class="col-6"><label class="form-label">Первый месяц *</label><input type="month" name="services[{{ $index }}][food_month]" value="{{ $oldService['food_month'] ?? now()->format('Y-m') }}" class="form-control price-option food-field" data-food-mode="month"></div>
-                                        <div class="col-6"><label class="form-label">Последний месяц</label><input type="month" name="services[{{ $index }}][food_end_month]" value="{{ $oldService['food_end_month'] ?? '' }}" class="form-control price-option food-field" data-food-mode="month"></div>
-                                    </div>
+                                    {{-- Food date-range UX corrective pass: month-from/month-to
+                                         ("Месяц(ы)") removed from NEW Quick Registration Food
+                                         purchases per the confirmed business rule — an explicit
+                                         С даты/По дату range is the only ambiguous-free option
+                                         offered here. Historical invoices issued while month mode
+                                         was still offered keep their own persisted
+                                         food_duration_mode=month metadata untouched and still
+                                         render correctly wherever that metadata is displayed —
+                                         this view only controls what NEW submissions can choose. --}}
                                     <div class="col-md-5 food-duration-fields d-none row g-2" data-mode="custom_range">
-                                        <div class="col-6"><label class="form-label">Начало *</label><input type="date" name="services[{{ $index }}][food_range_start]" value="{{ $oldService['food_range_start'] ?? '' }}" class="form-control price-option food-field" data-food-mode="custom_range"></div>
-                                        <div class="col-6"><label class="form-label">Окончание *</label><input type="date" name="services[{{ $index }}][food_range_end]" value="{{ $oldService['food_range_end'] ?? '' }}" class="form-control price-option food-field" data-food-mode="custom_range"></div>
+                                        <div class="col-6"><label class="form-label">С даты *</label><input type="date" required name="services[{{ $index }}][food_range_start]" value="{{ $oldService['food_range_start'] ?? '' }}" class="form-control price-option food-field" data-food-mode="custom_range"></div>
+                                        <div class="col-6"><label class="form-label">По дату *</label><input type="date" required name="services[{{ $index }}][food_range_end]" value="{{ $oldService['food_range_end'] ?? '' }}" class="form-control price-option food-field" data-food-mode="custom_range"></div>
                                     </div>
                                 @elseif($groupKey === 'uniform')
                                     <div class="col-12">
@@ -309,7 +313,7 @@
                                 <div class="col-md-2"><label class="form-label">Стоимость</label><div class="resolved-total fw-semibold">0.00 EGP</div></div>
                                 <div class="col-md-2"><label class="form-label">Оплачено</label><input type="number" min="0" step="0.01" name="services[{{ $index }}][paid_now]" value="{{ $oldService['paid_now'] ?? '0.00' }}" class="form-control paid-now"><div class="invalid-feedback payment-overflow">Оплаченная сумма не может превышать стоимость услуги.</div></div>
                                 <div class="col-md-2"><label class="form-label">Остаток</label><div class="remaining fw-semibold">0.00 EGP</div></div>
-                                <div class="col-12 tariff-period small text-muted"></div>
+                                <div class="col-12 tariff-period small text-muted" style="white-space:pre-line"></div>
                             </div>
                         </div>
                     @empty
@@ -343,6 +347,24 @@
 <script>
 const cents = value => Math.round((Number(value || 0) + Number.EPSILON) * 100);
 const money = value => `${(cents(value) / 100).toFixed(2)} EGP`;
+// Food pricing transparency: formats an already-ISO (YYYY-MM-DD) date
+// string from price()'s own coverage_start/coverage_end response as
+// DD/MM/YYYY via plain string splitting — never via `new Date()`, which
+// would risk a timezone-driven off-by-one day against the backend's
+// authoritative, timezone-free date string.
+const formatDMY = value => {
+    if (!value) return '';
+    const [y, m, d] = value.split('-');
+    return `${d}/${m}/${y}`;
+};
+const foodDayWord = count => {
+    const mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return 'учебных дней';
+    const mod10 = count % 10;
+    if (mod10 === 1) return 'учебный день';
+    if (mod10 >= 2 && mod10 <= 4) return 'учебных дня';
+    return 'учебных дней';
+};
 const periodLabels = @json($periodLabels);
 // Finance V2 Phase 1 UI — the only genuine calendar-schedule periods;
 // every other payment_period value (once/daily/term/package, or blank) is
@@ -444,10 +466,11 @@ function syncTransportPeriods(row) {
     if (periods.includes(desired)) periodSelect.value = desired;
 }
 
-// Food flexible-duration corrective pass: shows only the input group for
+// Food date-range UX corrective pass: shows only the input group for
 // the currently selected duration mode (day/school_week/teaching_days/
-// month/custom_range) and disables the hidden groups' own inputs so they
-// never get submitted alongside the visible mode's fields.
+// custom_range — month-from/month-to was removed for NEW purchases) and
+// disables the hidden groups' own inputs so they never get submitted
+// alongside the visible mode's fields.
 function syncFoodDurationMode(row) {
     const modeSelect = row.querySelector('.food-duration-mode');
     if (!modeSelect) return;
@@ -602,8 +625,20 @@ async function updateRow(row) {
     let tariffPeriod = '';
     if (response.ok) {
         const result = await response.json(); unit = Number(result.unit_price); total = Number(result.amount);
-        const displayDate = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU') : null;
-        if (result.valid_from) tariffPeriod = `Действует с ${displayDate(result.valid_from)}${result.valid_to ? ` по ${displayDate(result.valid_to)}` : ''}`;
+        if (result.billable_day_count !== null && result.billable_day_count !== undefined) {
+            // Food pricing transparency (date-range UX corrective pass):
+            // the exact same billable_day_count/coverage_start/coverage_end
+            // final issuance will charge — never recomputed in JS, only
+            // formatted for display, so this can never drift from the
+            // server's own authoritative figure.
+            const days = result.billable_day_count;
+            tariffPeriod = `${days} ${foodDayWord(days)} × ${money(unit)}\n`
+                + `${formatDMY(result.coverage_start)} – ${formatDMY(result.coverage_end)}\n`
+                + `Итого: ${money(total)}`;
+        } else {
+            const displayDate = value => value ? new Date(`${value}T00:00:00`).toLocaleDateString('ru-RU') : null;
+            if (result.valid_from) tariffPeriod = `Действует с ${displayDate(result.valid_from)}${result.valid_to ? ` по ${displayDate(result.valid_to)}` : ''}`;
+        }
     } else if (response.status === 422) {
         // Surface InvoiceCalculationService's own validation message
         // (e.g. "Для услуги «Транспорт» выберите все параметры тарифа.")

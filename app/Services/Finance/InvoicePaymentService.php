@@ -323,7 +323,25 @@ class InvoicePaymentService
                 'cash_account_id' => $account->id,
             ])->save();
 
-            $installment?->refreshStatus();
+            // UAT #25 corrective pass — refreshStatus() sums InvoicePayment
+            // rows by their OWN invoice_installment_id FK, which only ever
+            // reflects payments recorded through THIS SAME
+            // installmentId-driven path. An installment that also has
+            // coverage periods can carry EARLIER settlement recorded
+            // through the coveragePeriodAllocations path instead (whose
+            // InvoicePayment rows carry no installment_id at all) —
+            // refreshStatus() would silently ignore that money and show a
+            // wrong, inflated remaining. Whenever this installment has any
+            // coverage periods, refreshCoverageStatus() (summing via
+            // InstallmentCoveragePeriod::netSettledAmount(), the same
+            // ledger linkAllocationToCoveragePeriod() itself maintains) is
+            // the only figure that stays consistent regardless of which
+            // path recorded which prior payment. An installment with no
+            // coverage periods at all (the once-bucket lump sum, or a
+            // plain non-calendar invoice) keeps refreshStatus(), unchanged.
+            if ($installment) {
+                $installment->coveragePeriods()->exists() ? $installment->refreshCoverageStatus() : $installment->refreshStatus();
+            }
             if ($coveragePeriodAllocations !== null) {
                 InstallmentCoveragePeriod::query()
                     ->whereIn('id', collect($coveragePeriodAllocations)->pluck('installment_coverage_period_id'))
@@ -772,6 +790,46 @@ class InvoicePaymentService
         return $items->mapWithKeys(fn ($item) => [
             $item->id => bcsub($this->money((string) $item->amount), $this->money((string) $netByItem->get($item->id, '0.00')), 2),
         ]);
+    }
+
+    /**
+     * UAT #25 corrective pass — remainingAllocatableByItem() above is a
+     * WHOLE-INVOICE figure (an item's total remaining across every
+     * installment it spans). A shared calendar installment (payment_type=
+     * mixed groups every Fee sharing one billing_period into ONE
+     * installment schedule — see InvoiceIssuanceService::
+     * issueMixedInstallmentsAndCoverage()) can bundle more than one item's
+     * own InstallmentCoveragePeriod under the same installment, each with
+     * its own, independently-settled capacity — exactly the figure
+     * linkAllocationToCoveragePeriod()'s own check A already enforces, but
+     * which the payment form previously never showed, letting an operator
+     * believe the WHOLE installment's remaining was available to a single
+     * service. This is that same authoritative figure, precomputed per
+     * installment so the form can display and cap each item's input
+     * correctly for whichever installment is currently selected.
+     *
+     * An item ABSENT from a given installment's inner map has no calendar
+     * coverage there at all (e.g. a once-bucket Fee such as Registration/
+     * Uniform, which never has a ServiceCoverage) — callers must keep
+     * using remainingAllocatableByItem()'s whole-invoice figure for it,
+     * unchanged; this method only ever narrows, never invents, a cap.
+     *
+     * @return Collection<int, Collection<int, string>> outer key =
+     *         invoice_installment_id, inner = invoice_item_id => remaining
+     *         amount string (period.amount - period.netSettledAmount()).
+     */
+    public function remainingByItemPerInstallment(Invoice $invoice): Collection
+    {
+        return InstallmentCoveragePeriod::query()
+            ->whereHas('installment', fn ($query) => $query->where('invoice_id', $invoice->id))
+            ->with('coverage')
+            ->get()
+            ->groupBy('invoice_installment_id')
+            ->map(fn (Collection $periods) => $periods->mapWithKeys(
+                fn (InstallmentCoveragePeriod $period) => [
+                    (int) $period->coverage->invoice_item_id => bcsub((string) $period->amount, $period->netSettledAmount(), 2),
+                ]
+            ));
     }
 
     /**

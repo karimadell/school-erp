@@ -225,6 +225,13 @@ class FinanceOperationsController extends Controller
         // behaviour instead (docs/finance-v2-architecture.md §19 Phase 1B).
         $allocationClean = $invoice->items->count() > 1 && $service->isAllocationClean($invoice);
         $remainingByItem = $allocationClean ? $service->remainingAllocatableByItem($invoice) : collect();
+        // UAT #25 corrective pass — per-installment, per-item TRUE
+        // remaining (see InvoicePaymentService::remainingByItemPerInstallment()'s
+        // own docblock), so this screen can show and cap each service's
+        // "Оплатить сейчас" input against the SAME figure
+        // linkAllocationToCoveragePeriod() already authoritatively
+        // enforces, instead of the coarser whole-installment total.
+        $remainingByItemPerInstallment = $allocationClean ? $service->remainingByItemPerInstallment($invoice) : collect();
 
         return view('dashboard.finance.payments.create', [
             'invoice' => $invoice,
@@ -232,6 +239,7 @@ class FinanceOperationsController extends Controller
             'idempotencyKey' => (string) Str::uuid(),
             'allocationClean' => $allocationClean,
             'remainingByItem' => $remainingByItem,
+            'remainingByItemPerInstallment' => $remainingByItemPerInstallment,
         ]);
     }
 

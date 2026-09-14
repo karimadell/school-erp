@@ -11,12 +11,19 @@
 {{--
     Student Payment Allocation UX corrective — Sections B/C/D.
 
-    No controller change: createPayment() already computes exactly the two
-    facts this view needs — $allocationClean (bool) and $remainingByItem
-    (Collection<invoice_item_id, string>, empty when not clean) — via
-    InvoicePaymentService::isAllocationClean()/remainingAllocatableByItem().
-    This view only decides which of three presentations to render from
-    those same two facts plus $invoice->items->count():
+    createPayment() computes three facts this view needs — $allocationClean
+    (bool), $remainingByItem (Collection<invoice_item_id, string>, an
+    item's WHOLE-INVOICE remaining), and $remainingByItemPerInstallment
+    (Collection<invoice_installment_id, Collection<invoice_item_id,
+    string>>, the same item's remaining WITHIN one specific installment —
+    UAT #25 corrective pass, added so a shared calendar installment's
+    per-service capacity is shown/enforced client-side, matching
+    InvoicePaymentService::linkAllocationToCoveragePeriod()'s own
+    authoritative check) — all via InvoicePaymentService's own
+    isAllocationClean()/remainingAllocatableByItem()/
+    remainingByItemPerInstallment(). This view only decides which of three
+    presentations to render from $allocationClean/$isAmbiguous plus
+    $invoice->items->count():
 
       1. Single item                       -> simple, no allocation UI.
       2. Multi-item, allocation-clean       -> editable per-item "pay now"
@@ -43,27 +50,50 @@
     <h2 class="h6 mb-3">Состав счёта</h2>
     @if($allocationClean ?? false)
         {{-- Multi-item, allocation-clean: editable per-item split. --}}
-        <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        @php
+            // UAT #25 corrective pass — the DEFAULT selected installment
+            // (mirrors the amount field's own default below: the first
+            // installment, unless a prior validation error re-selected
+            // one) drives each item's INITIAL cap, so the server-rendered
+            // page already matches what the installment dropdown shows;
+            // installment-select.js below keeps both in sync afterward.
+            $defaultInstallmentId = (int) (old('invoice_installment_id') ?: $invoice->installments->first()?->id);
+            $defaultInstallmentCoverage = $remainingByItemPerInstallment->get($defaultInstallmentId, collect());
+        @endphp
+        <div class="table-responsive"><table class="table table-sm align-middle mb-0" id="allocation-table"
+            data-coverage-remaining="{{ $remainingByItemPerInstallment->toJson() }}"
+            data-whole-invoice-remaining="{{ $remainingByItem->toJson() }}">
             <thead><tr><th>Услуга</th><th class="text-end">Сумма строки</th><th class="text-end">Уже оплачено</th><th class="text-end">Остаток</th><th class="text-end" style="min-width:140px">Оплатить сейчас</th></tr></thead>
             <tbody>
             @foreach($items as $item)
-                @php $remaining = (string) $remainingByItem->get($item->id, '0.00'); @endphp
+                @php
+                    $wholeInvoiceRemaining = (string) $remainingByItem->get($item->id, '0.00');
+                    $installmentCap = $defaultInstallmentCoverage->get($item->id);
+                    $effectiveRemaining = $installmentCap !== null
+                        ? (bccomp($installmentCap, $wholeInvoiceRemaining, 2) < 0 ? $installmentCap : $wholeInvoiceRemaining)
+                        : $wholeInvoiceRemaining;
+                @endphp
                 <tr>
                     <td>
                         {{ $item->fee?->name_ru ?? $item->description }}
                         @if($period = \App\Support\InvoiceItemPeriodLabel::forItem($item))
                             <div class="small text-muted">{{ $period }}</div>
                         @endif
+                        @if($remainingByItemPerInstallment->isNotEmpty())
+                            <div class="small text-muted">Доступно по выбранному этапу: <span class="installment-available-amount">{{ $effectiveRemaining }}</span> EGP</div>
+                        @endif
                     </td>
                     <td class="text-end">{{ $item->amount }} EGP</td>
-                    <td class="text-end">{{ bcsub((string) $item->amount, $remaining, 2) }} EGP</td>
-                    <td class="text-end fw-semibold">{{ $remaining }} EGP</td>
+                    <td class="text-end">{{ bcsub((string) $item->amount, $wholeInvoiceRemaining, 2) }} EGP</td>
+                    <td class="text-end fw-semibold">{{ $wholeInvoiceRemaining }} EGP</td>
                     <td class="text-end">
-                        <input type="number" step="0.01" min="0" max="{{ $remaining }}"
+                        <input type="number" step="0.01" min="0" max="{{ $effectiveRemaining }}"
                                name="allocations[{{ $item->id }}]"
                                value="{{ old('allocations.'.$item->id) }}"
                                class="form-control form-control-sm allocation-input text-end"
-                               data-remaining="{{ $remaining }}"
+                               data-remaining="{{ $wholeInvoiceRemaining }}"
+                               data-item-id="{{ $item->id }}"
+                               @disabled(bccomp($effectiveRemaining, '0.00', 2) <= 0)
                                form="payment-form">
                     </td>
                 </tr>
@@ -77,7 +107,7 @@
                 </tr>
             </tfoot>
         </table></div>
-        <div class="small text-muted mt-2">Сумма распределения по услугам должна совпадать с суммой платежа. Оставьте поле пустым или укажите 0, чтобы не оплачивать эту услугу сейчас.</div>
+        <div class="small text-muted mt-2">Сумма распределения по услугам должна совпадать с суммой платежа. Оставьте поле пустым или укажите 0, чтобы не оплачивать эту услугу сейчас. Для этапов рассрочки, разделяемых несколькими услугами, доступная сумма по каждой услуге ограничена её собственным остатком в рамках выбранного этапа.</div>
     @elseif($isAmbiguous)
         {{-- Multi-item, allocation-ambiguous: informational breakdown only, no selection UI. --}}
         <div class="table-responsive"><table class="table table-sm mb-2">
@@ -187,6 +217,43 @@
 
     inputs.forEach(input => input.addEventListener('input', recalculate));
     recalculate();
+
+    // UAT #25 corrective pass — when an installment (calendar period)
+    // bundles more than one service, each service's own remaining
+    // capacity WITHIN that installment can be smaller than the
+    // installment's own combined total (see InvoicePaymentService::
+    // remainingByItemPerInstallment()'s own docblock — this mirrors the
+    // exact same authoritative figure linkAllocationToCoveragePeriod()
+    // enforces server-side). Re-caps every "Оплатить сейчас" input, and
+    // the "Доступно по выбранному этапу" note next to it, whenever the
+    // selected installment changes — never a new source of truth, purely
+    // a display/UX sync so the operator is never guided toward an amount
+    // the backend will reject for one specific service.
+    const allocationTable = document.getElementById('allocation-table');
+    const installmentSelect = document.getElementById('installment');
+    if (allocationTable && installmentSelect) {
+        const coverageRemaining = JSON.parse(allocationTable.dataset.coverageRemaining || '{}');
+        const wholeInvoiceRemaining = JSON.parse(allocationTable.dataset.wholeInvoiceRemaining || '{}');
+
+        function syncInstallmentCaps() {
+            const perItem = coverageRemaining[installmentSelect.value] || null;
+            inputs.forEach(input => {
+                const itemId = input.dataset.itemId;
+                const whole = wholeInvoiceRemaining[itemId] ?? '0.00';
+                let cap = whole;
+                if (perItem && Object.prototype.hasOwnProperty.call(perItem, itemId)) {
+                    cap = parseFloat(perItem[itemId]) < parseFloat(whole) ? perItem[itemId] : whole;
+                }
+                input.max = cap;
+                input.disabled = parseFloat(cap) <= 0;
+                if (parseFloat(input.value) > parseFloat(cap)) input.value = cap;
+                const note = input.closest('tr')?.querySelector('.installment-available-amount');
+                if (note) note.textContent = cap;
+            });
+            recalculate();
+        }
+        installmentSelect.addEventListener('change', syncInstallmentCaps);
+    }
 })();
 </script>
 @endif

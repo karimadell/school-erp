@@ -331,6 +331,14 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
         $transportCoverage = ServiceCoverage::where('fee_id', $transport->id)->sole();
         $this->assertSame(3, InstallmentCoveragePeriod::where('service_coverage_id', $transportCoverage->id)->count());
 
+        // 8b: cash movement — one CashTransaction per payment() call (2:
+        // mixed_once, mixed_periods), summing to paid_now, and the cash
+        // account's own balance incremented by exactly that total.
+        $cashTransactions = \App\Models\CashTransaction::where('cash_account_id', $this->account->id)->get();
+        $this->assertSame(2, $cashTransactions->count());
+        $this->assertSame(0, bccomp((string) $cashTransactions->sum('amount'), $paidNow, 2));
+        $this->assertSame(0, bccomp((string) $this->account->fresh()->balance, $paidNow, 2));
+
         // Query-count protection: this exact scenario, end to end (student/
         // enrollment/invoice/items/subscriptions/coverage/installments/
         // payment), must stay within a documented ceiling — the important
@@ -338,8 +346,43 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
         // cost per registration, never an unbounded per-period/per-line
         // explosion (period_count no longer appears anywhere in this
         // count: 9+3 installments and 9+3+1 coverage periods are each
-        // written via ONE bulk statement, not one query per row).
-        $this->assertLessThanOrEqual(260, count($queries), 'a realistic 5-service Quick Registration must stay within a bounded query ceiling, not scale with period/installment count: ' . count($queries) . ' queries issued');
+        // written via ONE bulk statement, not one query per row). Measured
+        // at 238 for this exact scenario after the second optimization
+        // pass (down from 253 after the first pass, 286 at the PR #46
+        // baseline) — ceilinged with headroom above the measured value to
+        // avoid brittleness on unrelated schema/behavior changes.
+        $this->assertLessThanOrEqual(250, count($queries), 'a realistic 5-service Quick Registration must stay within a bounded query ceiling, not scale with period/installment count: ' . count($queries) . ' queries issued');
+    }
+
+    /** 10 (Transport): Operations' own capacity enforcement is untouched by any of this pass's changes. */
+    public function test_transport_capacity_validation_remains_intact(): void
+    {
+        $this->accountant->givePermissionTo(\App\Support\TransportPermissions::MANAGE_ASSIGNMENTS);
+        [, $routeId] = $this->transportFee('1500.00');
+        $route = \App\Models\TransportRoute::findOrFail($routeId);
+        $bus = \App\Models\Bus::create(['vehicle_code' => 'BUS-PERF-1', 'is_active' => true, 'student_capacity' => 1, 'passenger_capacity' => 1]);
+
+        $makeEnrollment = function (string $name): \App\Models\Enrollment {
+            $student = \App\Models\Student::create(['name' => $name, 'status' => \App\Models\Student::STATUS_ACTIVE]);
+
+            return \App\Models\Enrollment::create([
+                'student_id' => $student->id, 'academic_year_id' => $this->year->id, 'enrollment_mode_id' => $this->mode->id,
+                'stage_id' => $this->stage->id, 'grade_id' => $this->grade->id, 'class_id' => $this->class->id,
+                'enrolled_at' => '2026-08-01', 'status' => 'active', 'is_active' => true,
+            ]);
+        };
+
+        $enrollment = $makeEnrollment('Первый');
+        app(\App\Services\Transport\TransportAssignmentService::class)->assign($enrollment, $route, $bus, [
+            'effective_from' => '2026-08-01',
+        ], $this->accountant);
+
+        $secondEnrollment = $makeEnrollment('Второй');
+
+        $this->expectException(\App\Exceptions\TransportCapacityExceeded::class);
+        app(\App\Services\Transport\TransportAssignmentService::class)->assign($secondEnrollment, $route, $bus, [
+            'effective_from' => '2026-08-01',
+        ], $this->accountant);
     }
 
     public function test_failure_rolls_back_completely_with_no_partial_records(): void

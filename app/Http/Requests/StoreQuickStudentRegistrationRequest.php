@@ -11,6 +11,7 @@ use App\Models\Grade;
 use App\Models\SchoolClass;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -73,7 +74,15 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'enrollment_mode_id' => ['required', 'integer', 'exists:enrollment_modes,id'],
             'registration_date' => ['required', 'date'],
             'services' => ['required', 'array', 'min:1'],
-            'services.*.fee_id' => ['required', 'integer', 'distinct', 'exists:fees,id'],
+            // Perf (Quick Registration end-to-end investigation): the
+            // 'exists' rule on a wildcard field runs ONE query PER ARRAY
+            // ELEMENT (a well-known Laravel limitation — confirmed via
+            // query-count profiling: 5 separate `select count(*) from
+            // fees where id = ?` for a 5-service submission). Existence
+            // is now checked once, batched, in after() below (using the
+            // SAME Fee::whereIn() fetch already needed there for
+            // billing-period/category checks) instead.
+            'services.*.fee_id' => ['required', 'integer', 'distinct'],
             'services.*.quantity' => ['required', 'integer', 'min:1', 'max:100'],
             'services.*.paid_now' => ['required', 'decimal:0,2', 'min:0'],
             // Multi-item Uniform corrective pass — a Uniform service line no
@@ -85,7 +94,10 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             // — nothing submits them any more (see the blade's compact
             // per-item table).
             'services.*.uniform_items' => ['nullable', 'array'],
-            'services.*.uniform_items.*.uniform_product_id' => ['required', 'integer', 'distinct', 'exists:uniform_products,id'],
+            // Perf (Quick Registration end-to-end investigation): same
+            // per-element 'exists' cost as fee_id above — checked once,
+            // batched, in after() below instead.
+            'services.*.uniform_items.*.uniform_product_id' => ['required', 'integer', 'distinct'],
             'services.*.uniform_items.*.quantity' => ['required', 'integer', 'min:1', 'max:100'],
             'services.*.grade_group' => ['nullable', Rule::in(FeePrice::GRADE_GROUPS)],
             'services.*.payment_period' => ['nullable', Rule::in(['once', 'daily', 'monthly', 'quarterly', 'term', 'yearly', 'package'])],
@@ -212,6 +224,36 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             // allowedBillingPeriods() below, each of which queries
             // fee_billing_periods unless already eager-loaded.
             $fees = Fee::with('billingPeriods')->whereIn('id', $services->pluck('fee_id'))->get()->keyBy('id');
+            // Batched replacement for the removed per-element
+            // 'exists:fees,id' rule on services.*.fee_id — identical
+            // rejection (any submitted fee_id not found in $fees fails),
+            // now using the fetch already required above instead of its
+            // own per-line query.
+            foreach ($services as $index => $item) {
+                if (filled($item['fee_id'] ?? null) && ! $fees->has((int) $item['fee_id'])) {
+                    $validator->errors()->add("services.{$index}.fee_id", trans('validation.exists', ['attribute' => "services.{$index}.fee_id"]));
+                }
+            }
+            // Batched replacement for the removed per-element
+            // 'exists:uniform_products,id' rule on
+            // services.*.uniform_items.*.uniform_product_id — same
+            // rejection, one query for every submitted uniform_product_id
+            // across every service line instead of one query each.
+            $submittedUniformProductIds = $services->flatMap(fn ($item) => collect($item['uniform_items'] ?? [])->pluck('uniform_product_id'))->filter()->unique();
+            $existingUniformProductIds = $submittedUniformProductIds->isEmpty()
+                ? collect()
+                : DB::table('uniform_products')->whereIn('id', $submittedUniformProductIds)->pluck('id');
+            foreach ($services as $index => $item) {
+                foreach (($item['uniform_items'] ?? []) as $itemIndex => $uniformItem) {
+                    $productId = $uniformItem['uniform_product_id'] ?? null;
+                    if (filled($productId) && ! $existingUniformProductIds->contains((int) $productId)) {
+                        $validator->errors()->add(
+                            "services.{$index}.uniform_items.{$itemIndex}.uniform_product_id",
+                            trans('validation.exists', ['attribute' => "services.{$index}.uniform_items.{$itemIndex}.uniform_product_id"])
+                        );
+                    }
+                }
+            }
             if ($services->filter(fn ($item) => $fees->get((int) ($item['fee_id'] ?? 0))?->category === Fee::CATEGORY_REGISTRATION)->count() > 1) {
                 $validator->errors()->add('services', 'Регистрационный взнос можно добавить только один раз за учебный год.');
             }

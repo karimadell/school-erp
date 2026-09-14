@@ -781,10 +781,23 @@ class InvoiceIssuanceService
         $calendarFeeIds = collect($mixedGroups)->flatMap(fn (array $group) => $group['fee_ids'])->unique()->all();
         $onceFees = $invoiceFees->reject(fn (Fee $fee) => in_array($fee->id, $calendarFeeIds, true));
 
+        // Perf (Quick Registration end-to-end investigation): a single
+        // starting sequence, queried ONCE (still a real query — this
+        // method has no way to know for certain nothing else already
+        // touched this invoice's installments, so the defensive read
+        // stays), then tracked in memory for the rest of this method.
+        // Every installment-creating call below is made BY this same
+        // method, in this same still-open transaction — generateSingle()
+        // always creates exactly 1 row, and generateCalendarSchedule()'s
+        // own return value tells us exactly how many it just created — so
+        // re-querying MAX(sequence) after each one only ever re-confirms
+        // arithmetic this method already knows.
+        $nextSequence = ((int) $invoice->installments()->max('sequence')) + 1;
+
         if ($onceFees->isNotEmpty()) {
             $onceTotal = $onceFees->reduce(fn (string $sum, Fee $fee) => bcadd($sum, (string) $itemsByFeeId[$fee->id]->amount, 2), '0.00');
-            $sequence = ((int) $invoice->installments()->max('sequence')) + 1;
-            $this->plans->generateSingle($invoice, $data['due_date'], $onceTotal, $sequence, self::MIXED_ONCE_INSTALLMENT_NAME);
+            $this->plans->generateSingle($invoice, $data['due_date'], $onceTotal, $nextSequence, self::MIXED_ONCE_INSTALLMENT_NAME);
+            $nextSequence++;
             // Deliberately no ServiceCoverage for 'once' items — matches
             // generateSingle()'s existing behavior for a plain one_time
             // invoice today (no coverage is created there either).
@@ -801,13 +814,13 @@ class InvoiceIssuanceService
                     throw ValidationException::withMessages(['services' => "Услуга «{$fee->name_ru}» не поддерживает период оплаты «{$periodLabel}»."]);
                 }
             }
-            $startSequence = ((int) $invoice->installments()->max('sequence')) + 1;
             QrTrace::log('installments:start', ['billing_period' => $billingPeriod]);
             $schedule = $this->plans->generateCalendarSchedule(
                 $invoice, $billingPeriod, $group['calendar_start'], $group['calendar_end'],
-                $group['schedule_amounts'], $group['scheduleable_total'], $startSequence,
+                $group['schedule_amounts'], $group['scheduleable_total'], $nextSequence,
             );
             QrTrace::log('installments:done', ['billing_period' => $billingPeriod, 'installment_count' => count($schedule)]);
+            $nextSequence += count($schedule);
             $this->createAutomaticCoverage($invoice, $billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $groupFees, $actor, $academicYearId, $data['pricing_date']);
         }
     }

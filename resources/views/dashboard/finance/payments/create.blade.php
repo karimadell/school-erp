@@ -2,7 +2,11 @@
 @section('content')
 <div class="container py-4"><h1 class="h3 mb-4">Принять оплату</h1>
 @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
-<div class="card border-0 shadow-sm mb-4"><div class="card-body"><h2 class="h5">Счёт {{ $invoice->display_number }}</h2><div>{{ $invoice->student?->full_name }}</div><div class="row g-2 mt-3"><div class="col-md-4">Итого: <strong>{{ $invoice->total_amount }} EGP</strong></div><div class="col-md-4">Оплачено: <strong>{{ $invoice->paid_amount }} EGP</strong></div><div class="col-md-4">Остаток: <strong>{{ $invoice->remaining_amount }} EGP</strong></div></div></div></div>
+<div class="card border-0 shadow-sm mb-4"><div class="card-body"><h2 class="h5">Счёт {{ $invoice->display_number }}</h2><div>{{ $invoice->student?->full_name }}</div>
+@if(bccomp((string) $invoice->remaining_amount, '0.00', 2) > 0)
+    <div class="alert alert-warning mt-3 mb-0 py-2"><strong>Задолженность: {{ number_format((float) $invoice->remaining_amount, 2, '.', ' ') }} EGP</strong></div>
+@endif
+<div class="row g-2 mt-3"><div class="col-md-4">Итого: <strong>{{ $invoice->total_amount }} EGP</strong></div><div class="col-md-4">Оплачено: <strong>{{ $invoice->paid_amount }} EGP</strong></div><div class="col-md-4">Остаток: <strong>{{ $invoice->remaining_amount }} EGP</strong></div></div></div></div>
 
 {{--
     Student Payment Allocation UX corrective — Sections B/C/D.

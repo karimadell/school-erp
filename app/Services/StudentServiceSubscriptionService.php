@@ -21,6 +21,20 @@ use InvalidArgumentException;
  */
 class StudentServiceSubscriptionService
 {
+    /**
+     * Perf (Quick Registration end-to-end investigation): FinancePolicySetting
+     * is a single global settings row — invariant for the whole lifetime of
+     * this service instance (itself created fresh per request by Laravel's
+     * container; never bound as a singleton — see this class's own
+     * absence from any service provider binding). Memoized here rather
+     * than in the model itself, since this is the ONLY caller of
+     * FinancePolicySetting::current() in the codebase; a request that
+     * calls subscribe() once per Quick Registration service line (5+
+     * times for a multi-service registration) previously re-queried this
+     * identical row every single time.
+     */
+    private ?FinancePolicySetting $cachedSettings = null;
+
     public function __construct(
         protected StudentBalanceService $balanceService = new StudentBalanceService()
     ) {
@@ -84,7 +98,7 @@ class StudentServiceSubscriptionService
 
     protected function assertBalanceAllowsNewSubscription(Enrollment $enrollment): void
     {
-        $settings = FinancePolicySetting::current();
+        $settings = $this->cachedSettings ??= FinancePolicySetting::current();
 
         QrTrace::log('subscription:policy_loaded');
 

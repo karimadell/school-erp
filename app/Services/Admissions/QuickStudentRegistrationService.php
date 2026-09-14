@@ -195,9 +195,20 @@ class QuickStudentRegistrationService
 
             QrTrace::log('enrollment_created');
 
-            $feesById = [];
+            // Perf (Quick Registration end-to-end investigation): batched
+            // once for every service line up front — this used to be an
+            // individual Fee::findOrFail() per line inside the flatMap()
+            // closure below (still correctness-safe unlocked, per the
+            // lock-contention note preserved below, but a genuine N+1: one
+            // query per submitted service). billingPeriods is eager-loaded
+            // too, since allowedBillingPeriods()/allowsBillingPeriod() are
+            // called per mixed-strategy line just below and would otherwise
+            // each trigger their own fee_billing_periods query.
+            $feesById = Fee::with('billingPeriods')
+                ->whereIn('id', collect($data['services'])->pluck('fee_id')->unique())
+                ->get()->keyBy('id')->all();
             $paymentType = $data['payment_type'] ?? 'one_time';
-            $normalizedServices = collect($data['services'])->flatMap(function (array $service) use ($grade, $mode, &$feesById, $paymentType) {
+            $normalizedServices = collect($data['services'])->flatMap(function (array $service) use ($grade, $mode, $feesById, $paymentType) {
                 // Lock-contention corrective pass: this read is used only
                 // for category-branching and metadata (never for pricing),
                 // and Fee is never written by this transaction. Pricing
@@ -211,8 +222,8 @@ class QuickStudentRegistrationService
                 // holding a lock on it for this transaction's entire
                 // remaining duration serialized unrelated registrations
                 // against each other for no correctness benefit.
-                $fee = Fee::query()->findOrFail($service['fee_id']);
-                $feesById[$fee->id] = $fee;
+                $fee = $feesById[(int) $service['fee_id']]
+                    ?? throw (new \Illuminate\Database\Eloquent\ModelNotFoundException())->setModel(Fee::class, [$service['fee_id']]);
 
                 $common = [
                     '_fee_category' => $fee->category,

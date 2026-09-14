@@ -69,11 +69,33 @@ class QuickStudentRegistrationController extends Controller
             ->active()->orderBy('category')->orderBy('name_ru')->get();
         $fees->each(fn (Fee $fee) => $fee->setRelation('prices', $calculator->resolvableCandidates($fee->prices, $today)));
 
+        // Perf (Quick Registration end-to-end investigation): these three
+        // reference sets are needed BOTH by readiness computation below
+        // (which used to re-query each of them itself, via
+        // FinanceConfigurationReadinessService's own private helpers) AND
+        // by this screen's own dropdowns further down — fetched once here
+        // and shared, rather than queried twice for the identical
+        // is_active-filtered rows. transport_routes is deliberately NOT
+        // included in this sharing: hasUsableTransportRoute() checks for
+        // ANY row regardless of is_active (see that method's own docblock —
+        // transport_routes predates having an is_active column at all),
+        // while this screen's own dropdown is intentionally is_active-
+        // filtered — reusing one for the other would silently change
+        // readiness behavior for an inactive-routes-only catalog, so that
+        // one query is deliberately left separate and unchanged.
+        $uniformProductsAll = DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get();
+        $mealPlansAll = MealPlan::active()->orderBy('name_ru')->get();
+        $paymentPlans = PaymentPlan::active()->with('installments')->orderBy('sort_order')->get();
+
         // Phase 3: readiness is computed once here, against the screen's
         // primary active academic year, and handed to the view as data —
         // the blade no longer re-derives "is this fee sellable" itself.
         $primaryYear = $academicYears->first();
-        $serviceReadiness = $primaryYear ? $readiness->forFees($fees, $primaryYear) : collect();
+        $serviceReadiness = $primaryYear ? $readiness->forFees(
+            $fees, $primaryYear,
+            $mealPlansAll->pluck('id'),
+            $uniformProductsAll->map(fn ($product) => $product->name_ru.'|'.$product->size)->unique(),
+        ) : collect();
 
         // Phase 3, item 4: the uniform product catalog (a separate,
         // unmanaged table with no FK to fee_prices — see the Pricing Audit)
@@ -86,7 +108,7 @@ class QuickStudentRegistrationController extends Controller
             ->filter(fn (FeePrice $price) => filled($price->item) && filled($price->size))
             ->map(fn (FeePrice $price) => $price->item.'|'.$price->size)
             ->unique();
-        $uniformProducts = DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get()
+        $uniformProducts = $uniformProductsAll
             ->filter(fn ($product) => $sellableUniformCombinations->contains($product->name_ru.'|'.$product->size))
             ->values();
 
@@ -104,7 +126,7 @@ class QuickStudentRegistrationController extends Controller
             ->filter(fn ($value) => is_numeric($value))
             ->map(fn ($value) => (int) $value)
             ->unique();
-        $mealPlans = MealPlan::active()->orderBy('name_ru')->get()
+        $mealPlans = $mealPlansAll
             ->filter(fn (MealPlan $plan) => $sellableMealPlanIds->contains($plan->id))
             ->values();
 
@@ -120,7 +142,7 @@ class QuickStudentRegistrationController extends Controller
             'defaultEnrollmentModeId' => $modes->count() === 1 ? $modes->first()->id : null,
             'fees' => $fees,
             'serviceReadiness' => $serviceReadiness,
-            'installmentsReadiness' => $readiness->installments(),
+            'installmentsReadiness' => $readiness->installments($paymentPlans->isNotEmpty()),
             'mealPlans' => $mealPlans,
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'transportRoutes' => DB::table('transport_routes')->where('is_active', true)->orderBy('name')->get(),
@@ -128,7 +150,7 @@ class QuickStudentRegistrationController extends Controller
             // removed from this screen (final vehicle assignment is a later,
             // separate Operations action) — no bus list needed here any more.
             'uniformProducts' => $uniformProducts,
-            'paymentPlans' => PaymentPlan::active()->with('installments')->orderBy('sort_order')->get(),
+            'paymentPlans' => $paymentPlans,
             'registrationSuccess' => $this->registrationSuccessFromSession(),
         ]);
     }

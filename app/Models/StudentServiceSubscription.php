@@ -39,9 +39,27 @@ class StudentServiceSubscription extends Model implements ResolvesAcademicYear
         return $this->belongsTo(Enrollment::class);
     }
 
+    /**
+     * Perf (Quick Registration end-to-end investigation): a single Quick
+     * Registration submission triggers this once per service line (via
+     * AcademicYearLockObserver::creating(), fired for every
+     * StudentServiceSubscription::create() call) — the original
+     * Enrollment::find($this->enrollment_id)?->resolveAcademicYear() chain
+     * issued 2 fresh queries every time (an Enrollment fetch, then an
+     * AcademicYear fetch), even though every field either query could ever
+     * need is answerable from a single subquery. Still a genuinely FRESH,
+     * uncached read every call — the "never resurrected from a possibly
+     * stale relation" guarantee this method exists for (see Enrollment::
+     * resolveAcademicYear()'s own docblock) is completely unchanged; only
+     * the number of round trips to get that same fresh answer is reduced.
+     */
     public function resolveAcademicYear(): ?AcademicYear
     {
-        return Enrollment::find($this->enrollment_id)?->resolveAcademicYear();
+        return AcademicYear::query()
+            ->whereIn('id', function ($query) {
+                $query->select('academic_year_id')->from('enrollments')->where('id', $this->enrollment_id);
+            })
+            ->first();
     }
 
     public function fee()

@@ -63,10 +63,26 @@ class FinanceConfigurationReadinessService
     /**
      * Per-fee readiness for a set of fees in one academic year.
      *
+     * Perf (Quick Registration end-to-end investigation): $activeMealPlanIds/
+     * $activeUniformCombinations may be passed in by a caller that already
+     * loaded the same active MealPlan/uniform_products rows for its own
+     * purposes (e.g. QuickStudentRegistrationController::create(), which
+     * needs the full rows anyway to populate its own dropdowns) — avoids
+     * this method re-querying the identical is_active-filtered rows a
+     * second time. Both use the exact same filter this method's own
+     * private helpers apply (MealPlan::active()/uniform_products.is_active),
+     * so passing them in changes no readiness outcome, only which caller's
+     * query supplies the data. Null (the default) preserves the original
+     * behaviour of every existing caller (forAcademicYear(), the finance
+     * readiness audit command, TransportZoneOptionTypeNormalizationService)
+     * that has no such data already in hand.
+     *
      * @param  Collection<int, Fee>  $fees
+     * @param  ?Collection<int, int>  $activeMealPlanIds
+     * @param  ?Collection<int, string>  $activeUniformCombinations
      * @return Collection<int, array{ready: bool, reason: ?string}> keyed by fee id
      */
-    public function forFees(Collection $fees, AcademicYear $year): Collection
+    public function forFees(Collection $fees, AcademicYear $year, ?Collection $activeMealPlanIds = null, ?Collection $activeUniformCombinations = null): Collection
     {
         if ($fees->isEmpty()) {
             return collect();
@@ -79,9 +95,18 @@ class FinanceConfigurationReadinessService
             ->where('academic_year_id', $year->id)
             ->get()
             ->groupBy('fee_id');
-        $activeMealPlanIds = $this->activeMealPlanIds();
-        $activeUniformCombinations = $this->activeUniformCombinations();
+        $activeMealPlanIds ??= $this->activeMealPlanIds();
+        $activeUniformCombinations ??= $this->activeUniformCombinations();
         $hasUsableRoute = $this->hasUsableTransportRoute();
+        // Perf (Quick Registration end-to-end investigation): this is the
+        // SAME $year for every fee in this call — resolved once here,
+        // exactly like the three lookups above, instead of inside the
+        // mapWithKeys() closure below, where it re-ran once per fee (a
+        // genuine N+1: confirmed via query-count test, +1 query per extra
+        // Fee row). For a realistic multi-fee catalog this alone was a
+        // material fraction of the GET /dashboard/quick-registration query
+        // count.
+        $hasAcademicCalendar = $year->academicCalendar()->exists();
 
         return $fees->mapWithKeys(fn (Fee $fee) => [
             $fee->id => $this->assess(
@@ -90,7 +115,7 @@ class FinanceConfigurationReadinessService
                 $activeMealPlanIds,
                 $activeUniformCombinations,
                 $hasUsableRoute,
-                $year->academicCalendar()->exists(),
+                $hasAcademicCalendar,
             ),
         ]);
     }
@@ -170,10 +195,19 @@ class FinanceConfigurationReadinessService
         return $result;
     }
 
-    /** @return array{ready: bool, reason: ?string} */
-    public function installments(): array
+    /**
+     * Perf (Quick Registration end-to-end investigation): $hasActivePlans
+     * lets a caller that already loaded PaymentPlan::active() rows for its
+     * own dropdown (the same filter this method's own default query
+     * applies) pass that result in directly, instead of this method
+     * re-querying the identical rows. Null (the default) preserves the
+     * original behaviour of every other existing caller.
+     *
+     * @return array{ready: bool, reason: ?string}
+     */
+    public function installments(?bool $hasActivePlans = null): array
     {
-        $ready = PaymentPlan::active()->exists();
+        $ready = $hasActivePlans ?? PaymentPlan::active()->exists();
 
         return ['ready' => $ready, 'reason' => $ready ? null : 'Нет активных планов рассрочки.'];
     }

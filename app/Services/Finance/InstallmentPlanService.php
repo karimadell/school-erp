@@ -203,7 +203,9 @@ class InstallmentPlanService
         }
         $each = bcdiv($total, (string) $periodCount, 2);
         $allocated = '0.00';
-        $created = [];
+        $rows = [];
+        $periodsBySequence = [];
+        $now = Carbon::now();
 
         foreach ($resolved['periods'] as $i => $period) {
             if ($scheduleAmounts !== null) {
@@ -215,24 +217,56 @@ class InstallmentPlanService
             }
 
             $dueDate = $i === 0 ? $start->copy() : Carbon::parse($period['start']);
+            $sequence = $startSequence + $i;
 
-            $installment = InvoiceInstallment::create([
+            $rows[] = [
                 'invoice_id' => $invoice->id,
                 'name_ru' => 'Период '.($i + 1),
-                'sequence' => $startSequence + $i,
-                'due_date' => $dueDate,
+                'sequence' => $sequence,
+                'due_date' => $dueDate->toDateString(),
                 'amount' => $amount,
                 'paid_amount' => '0.00',
                 'remaining_amount' => $amount,
                 'status' => bccomp((string) $amount, '0.00', 2) <= 0
                     ? InvoiceInstallment::STATUS_PAID
                     : InvoiceInstallment::STATUS_PENDING,
-            ]);
+                'created_at' => $now->toDateTimeString(),
+                'updated_at' => $now->toDateTimeString(),
+            ];
+            $periodsBySequence[$sequence] = ['period_start' => $period['start'], 'period_end' => $period['end']];
+        }
 
+        if ($rows === []) {
+            return [];
+        }
+
+        // Perf (Quick Registration end-to-end investigation): the same
+        // bulk-write rationale already proven for
+        // InvoiceIssuanceService::coveragePeriodRow()/createAutomaticCoverage()
+        // — InvoiceInstallment has no `creating`/`saving` model hook (unlike
+        // InstallmentCoveragePeriod), so unlike that fix, no per-row
+        // validation is bypassed here at all; every value above is computed
+        // identically to the original per-row create() calls, just written
+        // in ONE statement instead of N. The DB's own UNIQUE(invoice_id,
+        // sequence) constraint remains the authority against a duplicate
+        // sequence, exactly as before. A fresh, ordered re-fetch (one more
+        // query, not N) restores genuine Eloquent model instances — every
+        // downstream caller (createAutomaticCoverage()'s coveragePeriodRow(),
+        // refreshStatus(), etc.) receives the exact same shape as before.
+        InvoiceInstallment::insert($rows);
+
+        $installments = InvoiceInstallment::where('invoice_id', $invoice->id)
+            ->whereIn('sequence', array_keys($periodsBySequence))
+            ->orderBy('sequence')
+            ->get()
+            ->keyBy('sequence');
+
+        $created = [];
+        foreach ($periodsBySequence as $sequence => $meta) {
             $created[] = [
-                'installment' => $installment,
-                'period_start' => $period['start'],
-                'period_end' => $period['end'],
+                'installment' => $installments->get($sequence),
+                'period_start' => $meta['period_start'],
+                'period_end' => $meta['period_end'],
             ];
         }
 

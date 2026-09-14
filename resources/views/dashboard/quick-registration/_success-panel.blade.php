@@ -22,6 +22,12 @@
 <div class="card shadow-sm border-{{ $successState['class'] }} mb-4">
     <div class="card-header bg-{{ $successState['class'] }} {{ $successState['class'] === 'warning' ? 'text-dark' : 'text-white' }} fw-bold">{{ __('quick_registration.success_header.'.$successState['key']) }}</div>
     <div class="card-body">
+        @if(bccomp((string) $invoice->remaining_amount, '0.00', 2) > 0)
+            <div class="alert alert-warning d-flex align-items-center gap-2 mb-3" role="alert">
+                <span class="fw-bold">Задолженность: {{ number_format((float) $invoice->remaining_amount, 2, '.', ' ') }} EGP</span>
+                <span class="text-muted small">— остаток по счёту {{ $invoice->invoice_number }}, подлежит оплате при следующем визите.</span>
+            </div>
+        @endif
         <div class="row g-3 mb-3">
             <div class="col-md-4"><div class="text-muted small">Ученик</div><div class="fw-bold">{{ $student->full_name }} (ID {{ $student->id }})</div></div>
             <div class="col-md-4"><div class="text-muted small">Номер счёта</div><div class="fw-bold">{{ $invoice->invoice_number }}</div></div>

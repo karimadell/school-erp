@@ -555,7 +555,7 @@ class InvoiceIssuanceService
                     // createFoodInstallmentAndCoverage() below instead.
                     $this->createAutomaticCoverage($invoice, $billingPeriod, $schedule, $itemsByFeeId, $periodAmountsByFeeId, $invoiceFees, $actor, $year->id, $data['pricing_date']);
                 } elseif ($data['payment_type'] === 'mixed') {
-                    $this->issueMixedInstallmentsAndCoverage($invoice, $calculation['_mixed_groups'] ?? [], $invoiceFees, $itemsByFeeId, $periodAmountsByFeeId, $actor, $year->id, $data);
+                    $this->issueMixedInstallmentsAndCoverage($invoice, $calculation['_mixed_groups'] ?? [], $invoiceFees, $itemsByFeeId, $periodAmountsByFeeId, $actor, $year->id, $data, $feePivotRows);
                 } else {
                     $this->plans->generateSingle($invoice, $data['due_date']);
                 }
@@ -775,8 +775,20 @@ class InvoiceIssuanceService
      * @param  array<string, array{schedule_amounts: ?array<int,string>, scheduleable_total: string, fee_ids: array<int,int>, calendar_start: string, calendar_end: string}>  $mixedGroups
      * @param  \Illuminate\Support\Collection<int, Fee>  $invoiceFees
      * @param  array<int, InvoiceItem>  $itemsByFeeId
+     * @param  array<int, array{amount: string, item: ?string, size: ?string, option_type: ?string, option_value: ?string}>  $feePivotRows
+     *         Correctness fix (Quick Registration mixed-billing + multi-item
+     *         Uniform): keyed by fee_id, ['amount'] is already the TRUE sum
+     *         of every InvoiceItem sharing that fee_id (see issue()'s own
+     *         item-creation loop, which bcadd()s sibling amounts into this
+     *         SAME array for the invoice_fee pivot) — unlike $itemsByFeeId,
+     *         which holds only ONE representative item per fee (the last
+     *         one created), silently understating the once-bucket total for
+     *         any fee_id, whenever a single service produces multiple
+     *         InvoiceItem rows (Uniform's multi-item selection is the one
+     *         case that does today). Reusing this existing, already-correct
+     *         in-memory aggregate costs zero extra queries.
      */
-    private function issueMixedInstallmentsAndCoverage(Invoice $invoice, array $mixedGroups, \Illuminate\Support\Collection $invoiceFees, array $itemsByFeeId, array $periodAmountsByFeeId, User $actor, int $academicYearId, array $data): void
+    private function issueMixedInstallmentsAndCoverage(Invoice $invoice, array $mixedGroups, \Illuminate\Support\Collection $invoiceFees, array $itemsByFeeId, array $periodAmountsByFeeId, User $actor, int $academicYearId, array $data, array $feePivotRows): void
     {
         $calendarFeeIds = collect($mixedGroups)->flatMap(fn (array $group) => $group['fee_ids'])->unique()->all();
         $onceFees = $invoiceFees->reject(fn (Fee $fee) => in_array($fee->id, $calendarFeeIds, true));
@@ -795,7 +807,17 @@ class InvoiceIssuanceService
         $nextSequence = ((int) $invoice->installments()->max('sequence')) + 1;
 
         if ($onceFees->isNotEmpty()) {
-            $onceTotal = $onceFees->reduce(fn (string $sum, Fee $fee) => bcadd($sum, (string) $itemsByFeeId[$fee->id]->amount, 2), '0.00');
+            // Correctness fix: sum from $feePivotRows (already the true
+            // per-fee total across every sibling InvoiceItem), NOT from
+            // $itemsByFeeId (a single representative item per fee_id — see
+            // this method's own docblock). A once-bucket Fee producing
+            // multiple InvoiceItem rows (Uniform's multi-item selection)
+            // used to have every item but the last silently excluded from
+            // $onceTotal, understating the once-bucket installment and
+            // causing a later, fully-legitimate payment for the whole
+            // selection to be rejected as "exceeding" that installment's
+            // own (wrongly small) remaining balance.
+            $onceTotal = $onceFees->reduce(fn (string $sum, Fee $fee) => bcadd($sum, (string) $feePivotRows[$fee->id]['amount'], 2), '0.00');
             $this->plans->generateSingle($invoice, $data['due_date'], $onceTotal, $nextSequence, self::MIXED_ONCE_INSTALLMENT_NAME);
             $nextSequence++;
             // Deliberately no ServiceCoverage for 'once' items — matches

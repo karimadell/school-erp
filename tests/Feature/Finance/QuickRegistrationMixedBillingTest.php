@@ -21,6 +21,7 @@ use App\Models\Student;
 use App\Models\User;
 use App\Services\Finance\CashSessionService;
 use App\Services\Finance\InvoiceIssuanceService;
+use App\Services\Finance\InvoicePaymentService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -155,6 +156,31 @@ class QuickRegistrationMixedBillingTest extends TestCase
         // basis price. Never used for the actual quarterly charge amount.
         FeePrice::create([
             'fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'amount' => bcdiv($quarterlyUnit, '3', 2), 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly',
+        ]);
+        $routeId = DB::table('transport_routes')->insertGetId(['name' => 'Маршрут 1', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+
+        return [$fee, $routeId];
+    }
+
+    /**
+     * UAT #25 corrective pass fixture — Transport configured to allow
+     * MONTHLY billing (unlike transportFee() above, which is quarterly)
+     * so it shares Tuition's own monthly installment group under
+     * payment_type=mixed (InvoiceIssuanceService::
+     * issueMixedInstallmentsAndCoverage() groups every Fee sharing one
+     * billing_period into ONE installment schedule — see
+     * $groupKey = 'calendar:'.$item['_billing_period']). Priced at
+     * $monthlyUnit/month (x9 over this fixture's year = the total).
+     * @return array{Fee, int} [fee, transport_route_id]
+     */
+    private function transportMonthlyFee(string $monthlyUnit = '1500.00'): array
+    {
+        $fee = Fee::create(['name_ru' => 'Трансфер', 'category' => Fee::CATEGORY_TRANSPORT, 'amount' => '0.00', 'is_active' => true]);
+        $fee->billingPeriods()->create(['billing_period' => 'monthly']);
+        FeePrice::create([
+            'fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'amount' => $monthlyUnit, 'currency' => 'EGP',
             'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
             'option_type' => 'zone', 'option_value' => 'Зона 1', 'payment_period' => 'monthly',
         ]);
@@ -714,5 +740,143 @@ class QuickRegistrationMixedBillingTest extends TestCase
         $this->assertSame('2', $rows['Майка|14'] ?? null, "expected exact-size row missing or wrong quantity in report output:\n{$output}");
         $this->assertArrayNotHasKey('Майка|6–10', $rows, 'mixed billing must never produce a legacy grouped-size row');
         $this->assertCount(1, $rows, "mixed billing must not fragment or duplicate the procurement report's per-size aggregation:\n{$output}");
+    }
+
+    // ------------------------------------------------------------------
+    // UAT #25 corrective pass — a shared monthly installment group
+    // (Tuition 4,500/mo + Transport 1,500/mo, both under payment_type=
+    // mixed) where the original Quick Registration payment settles each
+    // item's own period-2 coverage unevenly (Tuition: 4,500 fully, then
+    // only 3,500 of the next 4,500 period; Transport: exactly one whole
+    // period, none of the next) — reproducing UAT invoice #25 exactly:
+    // installment "Период 2" shows a combined 2,500 remaining (1,000
+    // Tuition + 1,500 Transport), but neither item alone can absorb the
+    // full 2,500.
+    // ------------------------------------------------------------------
+    private function issuePeriod2SharedInstallmentFixture(): Invoice
+    {
+        $this->openCashSession();
+        $tuition = $this->tuitionFee('4500.00');
+        [$transport, $routeId] = $this->transportMonthlyFee('1500.00');
+        $bus = \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true]);
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '8000.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
+            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '1500.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => $bus->id],
+        ], ['payment_method' => 'cash', 'cash_account_id' => $this->account->id]))->assertSessionHasNoErrors();
+
+        $invoice = Invoice::sole()->fresh();
+        // total = (4500x9=40500) + (1500x9=13500) = 54000; paid = 9500.
+        $this->assertSame('54000.00', $invoice->total_amount);
+        $this->assertSame('9500.00', $invoice->paid_amount);
+
+        return $invoice;
+    }
+
+    /** A: UI/service data exposes the correct per-item limits for the shared installment. */
+    public function test_shared_installment_exposes_correct_per_item_remaining(): void
+    {
+        $invoice = $this->issuePeriod2SharedInstallmentFixture();
+        $tuitionItem = InvoiceItem::where('invoice_id', $invoice->id)->where('amount', '40500.00')->sole();
+        $transportItem = InvoiceItem::where('invoice_id', $invoice->id)->where('amount', '13500.00')->sole();
+        $period2 = $invoice->installments()->orderBy('sequence')->get()->get(1);
+        $this->assertNotNull($period2, 'expected at least 2 installments in the shared monthly schedule');
+        // Installment-level (what the dropdown shows) — the same combined
+        // figure UAT reported.
+        $this->assertSame('2500.00', $period2->remaining_amount);
+
+        $perInstallment = app(InvoicePaymentService::class)->remainingByItemPerInstallment($invoice);
+        $perItem = $perInstallment->get($period2->id);
+        $this->assertNotNull($perItem);
+        $this->assertSame('1000.00', (string) $perItem->get($tuitionItem->id));
+        $this->assertSame('1500.00', (string) $perItem->get($transportItem->id));
+
+        // The payment screen itself renders these same figures.
+        $page = $this->actingAs($this->accountant)->get(route('dashboard.invoices.payments.create', $invoice))->assertOk();
+        $page->assertSee('Доступно по выбранному этапу');
+    }
+
+    /** B: a combined payment (1,000 Tuition + 1,500 Transport = 2,500) against Период 2 succeeds. */
+    public function test_valid_split_payment_across_shared_installment_succeeds(): void
+    {
+        $invoice = $this->issuePeriod2SharedInstallmentFixture();
+        $tuitionItem = InvoiceItem::where('invoice_id', $invoice->id)->where('amount', '40500.00')->sole();
+        $transportItem = InvoiceItem::where('invoice_id', $invoice->id)->where('amount', '13500.00')->sole();
+        $period2 = $invoice->installments()->orderBy('sequence')->get()->get(1);
+
+        $invoicesBefore = Invoice::count();
+        $studentsBefore = Student::count();
+        $paymentsBefore = InvoicePayment::where('invoice_id', $invoice->id)->count();
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.invoices.payments.store', $invoice), [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'invoice_installment_id' => $period2->id,
+            'amount' => '2500.00',
+            'payment_method' => 'cash',
+            'cash_account_id' => $this->account->id,
+            'allocations' => [$tuitionItem->id => '1000.00', $transportItem->id => '1500.00'],
+        ]);
+        $response->assertSessionHasNoErrors()->assertRedirect();
+
+        // D: same invoice, same student, exactly one new payment.
+        $this->assertSame($invoicesBefore, Invoice::count());
+        $this->assertSame($studentsBefore, Student::count());
+        $this->assertSame($paymentsBefore + 1, InvoicePayment::where('invoice_id', $invoice->id)->count());
+
+        // E: correct post-payment balances. InvoiceItem.paid_amount/
+        // remaining_amount are an issuance-time snapshot only (never
+        // updated by record() for a later payment, by this codebase's
+        // existing, unchanged design) — the live, authoritative per-item
+        // figure after any payment is remainingAllocatableByItem(), the
+        // same one this whole corrective pass is built on.
+        $invoice = $invoice->fresh();
+        $liveRemaining = app(InvoicePaymentService::class)->remainingAllocatableByItem($invoice);
+        $this->assertSame('31500.00', (string) $liveRemaining->get($tuitionItem->id), '40500 total - (8000 previously + 1000 now) = 31500');
+        $this->assertSame('10500.00', (string) $liveRemaining->get($transportItem->id), '13500 total - (1500 previously + 1500 now) = 10500');
+        $this->assertSame('12000.00', $invoice->paid_amount, '9500 previously + 2500 now = 12000');
+        $this->assertSame('42000.00', $invoice->remaining_amount, '54000 total - 12000 paid = 42000');
+        $this->assertTrue($period2->fresh()->status === InvoiceInstallment::STATUS_PAID, 'Период 2 must now be fully settled');
+    }
+
+    /** C: the full 2,500 allocated to Tuition alone is rejected — Tuition's own period-2 capacity is only 1,000. */
+    public function test_invalid_full_allocation_to_one_service_is_rejected(): void
+    {
+        $invoice = $this->issuePeriod2SharedInstallmentFixture();
+        $tuitionItem = InvoiceItem::where('invoice_id', $invoice->id)->where('amount', '40500.00')->sole();
+        $period2 = $invoice->installments()->orderBy('sequence')->get()->get(1);
+        $paymentsBefore = InvoicePayment::where('invoice_id', $invoice->id)->count();
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.invoices.payments.store', $invoice), [
+            'idempotency_key' => (string) \Illuminate\Support\Str::uuid(),
+            'invoice_installment_id' => $period2->id,
+            'amount' => '2500.00',
+            'payment_method' => 'cash',
+            'cash_account_id' => $this->account->id,
+            'allocations' => [$tuitionItem->id => '2500.00'],
+        ]);
+
+        $response->assertSessionHasErrors('allocations');
+        $this->assertSame($paymentsBefore, InvoicePayment::where('invoice_id', $invoice->id)->count(), 'the rejected attempt must create no payment at all');
+    }
+
+    /** F: switching to a later, untouched installment exposes that installment's own (full) per-item capacities. */
+    public function test_switching_installment_selection_reflects_that_installments_own_remaining(): void
+    {
+        $invoice = $this->issuePeriod2SharedInstallmentFixture();
+        $tuitionItem = InvoiceItem::where('invoice_id', $invoice->id)->where('amount', '40500.00')->sole();
+        $transportItem = InvoiceItem::where('invoice_id', $invoice->id)->where('amount', '13500.00')->sole();
+        $installments = $invoice->installments()->orderBy('sequence')->get();
+        $period1 = $installments->get(0);
+        $period3 = $installments->get(2);
+
+        $perInstallment = app(InvoicePaymentService::class)->remainingByItemPerInstallment($invoice);
+
+        // Период 1 was fully settled by the original registration payment.
+        $this->assertSame('0.00', (string) $perInstallment->get($period1->id)->get($tuitionItem->id));
+        $this->assertSame('0.00', (string) $perInstallment->get($period1->id)->get($transportItem->id));
+
+        // Период 3 was never touched — each item's own full monthly share is available.
+        $this->assertSame('4500.00', (string) $perInstallment->get($period3->id)->get($tuitionItem->id));
+        $this->assertSame('1500.00', (string) $perInstallment->get($period3->id)->get($transportItem->id));
     }
 }

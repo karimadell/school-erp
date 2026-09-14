@@ -168,10 +168,17 @@ class QuickStudentRegistrationController extends Controller
         // this same screen; create() below swaps the form for an inline
         // success panel built from the just-created invoice.
         return redirect()->route('dashboard.quick-registration.create')
-            ->with('registration_success_invoice_id', $result['invoice']->id);
+            ->with('registration_success_invoice_id', $result['invoice']->id)
+            // UAT display corrective pass — Issue 1: carries this exact
+            // submission's own paid total (already computed authoritatively
+            // by QuickStudentRegistrationService::register(), see its own
+            // docblock) through the redirect, so the success screen never
+            // has to guess which of possibly several InvoicePayment rows
+            // to show.
+            ->with('registration_success_paid_amount', $result['submission_paid_amount']);
     }
 
-    /** @return ?array{invoice: Invoice, student: \App\Models\Student, payment: ?\App\Models\InvoicePayment} */
+    /** @return ?array{invoice: Invoice, student: \App\Models\Student, payment: ?\App\Models\InvoicePayment, paid_amount: string} */
     private function registrationSuccessFromSession(): ?array
     {
         $invoiceId = session('registration_success_invoice_id');
@@ -184,10 +191,23 @@ class QuickStudentRegistrationController extends Controller
             return null;
         }
 
+        $lastPayment = $invoice->payments->sortByDesc('id')->first();
+
         return [
             'invoice' => $invoice,
             'student' => $invoice->student,
-            'payment' => $invoice->payments->sortByDesc('id')->first(),
+            // Still the most recent payment — used only for the receipt
+            // number/print-receipt link, which is inherently tied to one
+            // specific InvoicePayment/receipt document, never a sum.
+            'payment' => $lastPayment,
+            // UAT display corrective pass — Issue 1: the amount actually
+            // paid BY THIS SUBMISSION (flashed alongside the invoice id by
+            // store() above), not any single payment row's own amount.
+            // Falls back to the old (known-incomplete for a multi-payment
+            // mixed submission) behavior only if the session key is
+            // somehow absent, e.g. a session started before this fix
+            // deployed.
+            'paid_amount' => session('registration_success_paid_amount') ?? ($lastPayment?->amount ?? '0.00'),
         ];
     }
 

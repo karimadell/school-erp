@@ -2,6 +2,13 @@
     $invoice = $registrationSuccess['invoice'];
     $student = $registrationSuccess['student'];
     $payment = $registrationSuccess['payment'];
+    // UAT display corrective pass — Issue 1: the amount THIS submission
+    // paid, which can be the sum of more than one InvoicePayment row
+    // (e.g. a once-bucket payment + a separate Food/calendar-bucket
+    // payment under payment_type=mixed) — never a single payment row's
+    // own amount, which would silently under-report whenever more than
+    // one row was created.
+    $paidNow = $registrationSuccess['paid_amount'] ?? ($payment?->amount ?? '0.00');
     $paymentMethodLabel = match ($invoice->payment_method) {
         'cash' => 'Наличные', 'card' => 'Банковская карта', 'bank' => 'Банковский перевод',
         'transfer' => 'Перевод', 'instapay' => 'InstaPay', default => 'Без оплаты',
@@ -33,7 +40,7 @@
             <div class="col-md-4"><div class="text-muted small">Номер счёта</div><div class="fw-bold">{{ $invoice->invoice_number }}</div></div>
             <div class="col-md-4"><div class="text-muted small">Квитанция №</div><div class="fw-bold">{{ $payment?->payment_number ?? '—' }}</div></div>
             <div class="col-md-3"><div class="text-muted small">Итого по счёту</div><div class="fw-bold">{{ $invoice->total_amount }} EGP</div></div>
-            <div class="col-md-3"><div class="text-muted small">Оплачено сейчас</div><div class="fw-bold">{{ $payment?->amount ?? '0.00' }} EGP</div></div>
+            <div class="col-md-3"><div class="text-muted small">Оплачено сейчас</div><div class="fw-bold">{{ $paidNow }} EGP</div></div>
             <div class="col-md-3"><div class="text-muted small">Остаток</div><div class="fw-bold">{{ $invoice->remaining_amount }} EGP</div></div>
             <div class="col-md-3"><div class="text-muted small">Способ оплаты</div><div class="fw-bold">{{ $paymentMethodLabel }}</div></div>
             <div class="col-md-4"><div class="text-muted small">Касса / счёт</div><div class="fw-bold">{{ $invoice->cashAccount?->name ?? '—' }}</div></div>

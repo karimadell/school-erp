@@ -634,6 +634,46 @@ class QuickRegistrationMixedBillingTest extends TestCase
     }
 
     // ------------------------------------------------------------------
+    // UAT display corrective pass — Issue 1 regression. A submission that
+    // creates two InvoicePayment rows (once bucket + Food/calendar
+    // bucket) must show their SUM as "Оплачено сейчас" on the success
+    // screen, never just the last row's own amount — and invoice total
+    // minus that displayed paid figure must equal the displayed
+    // remaining/debt figure exactly (the real UAT report's arithmetic
+    // invariant: 67,210 - 22,710 = 44,500, reproduced here with the same
+    // once=9,300 / periods=13,410 split).
+    // ------------------------------------------------------------------
+    public function test_success_screen_shows_the_full_submission_total_across_two_payment_rows(): void
+    {
+        $this->openCashSession();
+        $registration = $this->registrationFee('9300.00');
+        $tuition = $this->tuitionFee('2000.00');
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '9300.00'],
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '13410.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
+        ], ['payment_method' => 'cash', 'cash_account_id' => $this->account->id]))->assertSessionHasNoErrors();
+
+        $invoice = Invoice::sole()->fresh();
+        $this->assertSame(2, InvoicePayment::where('invoice_id', $invoice->id)->count());
+        $this->assertSame('22710.00', $invoice->paid_amount);
+        // total = 9300 + (2000x9=18000) = 27300; remaining = 27300-22710=4590.
+        $this->assertSame('27300.00', $invoice->total_amount);
+        $this->assertSame('4590.00', $invoice->remaining_amount);
+
+        $page = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))->assertOk();
+
+        // A: the success screen shows the SUM (22,710.00), not either
+        // individual payment row's own amount in isolation.
+        $page->assertSee('22710.00 EGP', false)
+            ->assertDontSee('9300.00 EGP')
+            ->assertDontSee('13410.00 EGP');
+
+        // B: invoice total - displayed paid = displayed remaining.
+        $this->assertSame(0, bccomp(bcsub($invoice->total_amount, '22710.00', 2), $invoice->remaining_amount, 2));
+    }
+
+    // ------------------------------------------------------------------
     // R. Uniform procurement report is unaffected by mixed billing — the
     // report reads InvoiceItem.metadata['item']/['size'] directly and has
     // no knowledge of payment_type at all.

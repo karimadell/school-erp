@@ -857,4 +857,31 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         $this->assertSame('month', $item->metadata['food_duration_mode']);
         $this->assertNotNull(\App\Support\InvoiceItemPeriodLabel::forItem($item));
     }
+
+    /**
+     * UAT display corrective pass — Issue 2 regression. A Food invoice
+     * item's own food_tariff_segments metadata (an array of tariff-price
+     * segment arrays, written by InvoiceCalculationService::
+     * priceFoodDailyLine() whenever the billed range crosses a tariff
+     * change) previously crashed both the invoice show and print views
+     * with an HTTP 500 ("Array to string conversion") because their
+     * generic per-item metadata line blindly implode()d every metadata
+     * value, including this one array-valued key. A tariff change mid-
+     * range (see test_mid_month_tariff_change_prices_each_billable_date_
+     * and_records_segments above) is exactly what produces MORE than one
+     * segment — this asserts that specific, previously-crashing shape now
+     * renders successfully on both routes.
+     */
+    public function test_invoice_show_and_print_render_ok_with_multi_segment_food_tariff_segments(): void
+    {
+        $this->price('100.00', '2026-08-01', '2026-09-15');
+        $this->price('110.00', '2026-09-16', '2027-06-30');
+        $invoice = $this->issue('2026-09-01', '2026-09-30');
+
+        $item = $invoice->items()->sole();
+        $this->assertCount(2, $item->metadata['food_tariff_segments'], 'fixture must actually exercise the multi-segment (array-of-arrays) metadata shape');
+
+        $this->actingAs($this->accountant)->get(route('dashboard.invoices.show', $invoice))->assertOk();
+        $this->actingAs($this->accountant)->get(route('dashboard.invoices.print', $invoice))->assertOk();
+    }
 }

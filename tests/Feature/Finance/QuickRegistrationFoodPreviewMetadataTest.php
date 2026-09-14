@@ -108,22 +108,31 @@ class QuickRegistrationFoodPreviewMetadataTest extends QuickRegistrationUxTestCa
         $this->assertSame(5, $response->json('billable_day_count'));
     }
 
-    public function test_one_month(): void
+    /**
+     * Food date-range UX corrective pass: 'month' mode is no longer
+     * accepted by this preview endpoint for NEW Quick Registration Food
+     * purchases (see FoodDailyBillingTest::
+     * test_quick_registration_price_preview_rejects_month_duration_mode) —
+     * these two cases (a full month, several full months) are now
+     * expressed as an explicit custom_range instead, proving preview
+     * metadata stays identical either way.
+     */
+    public function test_one_month_via_custom_range(): void
     {
         $fee = $this->foodFee();
         $this->foodTariff($fee, '170.00');
 
-        $response = $this->preview($fee, ['food_duration_mode' => 'month', 'food_month' => '2026-09']);
+        $response = $this->preview($fee, ['food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-01', 'food_range_end' => '2026-09-30']);
 
         $this->assertConsistentFoodPreview($response, '170.00', '2026-09-01', '2026-09-30');
     }
 
-    public function test_multiple_months(): void
+    public function test_multiple_months_via_custom_range(): void
     {
         $fee = $this->foodFee();
         $this->foodTariff($fee, '170.00');
 
-        $response = $this->preview($fee, ['food_duration_mode' => 'month', 'food_month' => '2026-09', 'food_end_month' => '2026-10']);
+        $response = $this->preview($fee, ['food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-01', 'food_range_end' => '2026-10-31']);
 
         $this->assertConsistentFoodPreview($response, '170.00', '2026-09-01', '2026-10-31');
     }

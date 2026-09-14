@@ -22,6 +22,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class QuickStudentRegistrationController extends Controller
@@ -229,6 +230,20 @@ class QuickStudentRegistrationController extends Controller
             'food_range_end' => ['nullable', 'date_format:Y-m-d'],
         ]);
         $fee = Fee::findOrFail($data['fee_id']);
+        // Food date-range UX corrective pass: month-from/month-to is no
+        // longer offered to accountants for NEW Quick Registration Food
+        // purchases — reject it here too (this preview endpoint is only
+        // ever called from this same page's own JS) so a stale cached
+        // client can never silently preview a duration mode the store
+        // endpoint (StoreQuickStudentRegistrationRequest) would reject.
+        // Historical invoices already issued with food_duration_mode=month
+        // are entirely unaffected — this only guards the live preview
+        // request shape, never touches persisted data.
+        if ($fee->category === Fee::CATEGORY_FOOD && ($data['food_duration_mode'] ?? null) === 'month') {
+            throw ValidationException::withMessages([
+                'food_duration_mode' => 'Режим «Месяц(ы)» больше не используется для оформления питания. Укажите период датами «С даты» и «По дату».',
+            ]);
+        }
         $year = AcademicYear::findOrFail($data['academic_year_id']);
         $mode = EnrollmentMode::active()->findOrFail($data['enrollment_mode_id']);
         $pricingDate = isset($data['pricing_date']) || isset($data['registration_date'])

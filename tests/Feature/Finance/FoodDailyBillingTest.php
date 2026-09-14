@@ -78,6 +78,14 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         ], $this->accountant, idempotencyKey: $key);
     }
 
+    /**
+     * Food date-range UX corrective pass: 'month' mode is no longer offered
+     * (or accepted) for NEW Quick Registration Food purchases, so this
+     * default payload uses the equivalent explicit custom_range span
+     * (2026-09-01..2026-12-31, the exact bounds 'month'=2026-09..2026-12
+     * used to resolve to) — every test relying on the default keeps the
+     * same expected totals without change.
+     */
     private function quickPayload(array $foodOverrides = [], string $paid = '0.00', ?string $token = null): array
     {
         return [
@@ -91,8 +99,8 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
             'services' => [array_merge([
                 'fee_id' => $this->food->id, 'quantity' => 1, 'paid_now' => $paid,
                 'meal_plan_id' => $this->mealPlan->id,
-                'food_duration_mode' => 'month',
-                'food_month' => '2026-09', 'food_end_month' => '2026-12',
+                'food_duration_mode' => 'custom_range',
+                'food_range_start' => '2026-09-01', 'food_range_end' => '2026-12-31',
             ], $foodOverrides)],
         ];
     }
@@ -751,7 +759,7 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         $this->price();
         $payload = $this->quickPayload();
         $payload['billing_period'] = 'yearly';
-        unset($payload['services'][0]['food_duration_mode'], $payload['services'][0]['food_month'], $payload['services'][0]['food_end_month']);
+        unset($payload['services'][0]['food_duration_mode'], $payload['services'][0]['food_range_start'], $payload['services'][0]['food_range_end']);
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $payload)
             ->assertSessionHasErrors('services.0.food_duration_mode');
         $this->assertSame(1, \App\Models\Student::count());
@@ -772,7 +780,7 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->quickPayload(token: $token))->assertSessionHasNoErrors();
         $this->assertSame(1, Invoice::count());
 
-        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->quickPayload(['food_end_month' => '2027-01'], token: $token))
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->quickPayload(['food_range_end' => '2027-01-31'], token: $token))
             ->assertSessionHasErrors('idempotency_key');
         $otherPlan = MealPlan::create(['name_ru' => 'Другой рацион', 'meal_type' => 'lunch', 'period' => 'daily', 'price' => '90.00', 'is_active' => true]);
         $changedPlan = $this->quickPayload(token: $token);
@@ -795,5 +803,58 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
             'food_duration_mode' => 'teaching_days', 'food_start_date' => '2026-09-01', 'food_day_count' => 12,
         ], token: $token))->assertSessionHasErrors();
         $this->assertSame(1, Invoice::count());
+    }
+
+    /**
+     * Food date-range UX corrective pass: 'month' is no longer an
+     * accountant-facing choice for NEW Quick Registration Food purchases —
+     * both the store request and the live-price preview must reject it
+     * with a friendly, actionable Russian message (not a generic invalid-
+     * value error, and never a 500), while leaving FoodBillableDayCalculator
+     * itself (and every historical invoice built on 'month') untouched.
+     */
+    public function test_quick_registration_rejects_month_duration_mode_for_new_food_purchase(): void
+    {
+        $this->price();
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->quickPayload([
+            'food_duration_mode' => 'month', 'food_month' => '2026-09', 'food_end_month' => '2026-12',
+        ]))->assertSessionHasErrors('services.0.food_duration_mode');
+
+        $this->assertSame(0, Invoice::count());
+        $this->assertSame(1, \App\Models\Student::count());
+    }
+
+    public function test_quick_registration_price_preview_rejects_month_duration_mode(): void
+    {
+        $this->price();
+
+        $response = $this->actingAs($this->accountant)->postJson(route('dashboard.quick-registration.price'), [
+            'fee_id' => $this->food->id, 'quantity' => 1,
+            'academic_year_id' => $this->year->id, 'enrollment_mode_id' => $this->enrollment->enrollment_mode_id,
+            'meal_plan_id' => $this->mealPlan->id, 'registration_date' => '2026-09-01',
+            'food_duration_mode' => 'month', 'food_month' => '2026-09', 'food_end_month' => '2026-12',
+        ]);
+
+        $response->assertStatus(422)->assertJsonValidationErrors('food_duration_mode');
+    }
+
+    /**
+     * The corrective pass only narrows what StoreQuickStudentRegistrationRequest
+     * and the price() preview accept from NEW submissions — it must never
+     * touch FoodBillableDayCalculator/InvoiceIssuanceService. A 'month'-mode
+     * invoice issued through any other path (direct service call, an
+     * already-issued historical Quick Registration invoice) must keep
+     * issuing, keep its persisted metadata, and keep rendering via the
+     * same InvoiceItemPeriodLabel every payment/invoice view already uses.
+     */
+    public function test_historical_month_mode_food_invoice_still_issues_and_displays(): void
+    {
+        $this->price();
+        $invoice = $this->issue(itemOverrides: ['food_duration_mode' => 'month', 'food_month' => '2026-09', 'food_end_month' => '2026-12']);
+
+        $item = $invoice->items()->sole()->fresh();
+        $this->assertSame('month', $item->metadata['food_duration_mode']);
+        $this->assertNotNull(\App\Support\InvoiceItemPeriodLabel::forItem($item));
     }
 }

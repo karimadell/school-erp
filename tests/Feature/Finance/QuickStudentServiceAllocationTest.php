@@ -152,7 +152,7 @@ class QuickStudentServiceAllocationTest extends TestCase
         $this->actingAs($this->user)->post(route('dashboard.quick-registration.store'), $this->base + [
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
             'services' => [
-                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'month', 'food_month' => '2026-09'],
+                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => '0.00', 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-01', 'food_range_end' => '2026-09-30'],
                 ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00', 'payment_period' => 'monthly'],
             ],
         ])->assertSessionHasNoErrors();
@@ -215,11 +215,7 @@ class QuickStudentServiceAllocationTest extends TestCase
         // Food's own [start,end] resolution is entirely independent of
         // registration_date (see FoodDailyBillingTest's own docblock:
         // priceFoodDailyLine() never consults the invoice's pricing date at
-        // all) — May is used here purely to steer clear of an unrelated,
-        // pre-existing off-by-time edge in the request-level food_end_month
-        // check (endOfMonth() carries a time component that can compare as
-        // "after" a date-only academic-year end_date when the two land on
-        // the exact same calendar day), which is out of scope for this gap.
+        // all) — May is used here purely as an arbitrary later month.
         $year = AcademicYear::findOrFail($this->base['academic_year_id']);
         $foodDays = app(FoodBillableDayCalculator::class)->calculate($year, '2027-05-01', '2027-05-31')['billable_day_count'];
         $foodTotal = bcmul((string) $foodDays, '250.00', 2);
@@ -231,7 +227,7 @@ class QuickStudentServiceAllocationTest extends TestCase
             'payment_type' => 'calendar', 'billing_period' => 'monthly',
             'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
             'services' => [
-                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => $foodTotal, 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'month', 'food_month' => '2027-05'],
+                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => $foodTotal, 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'custom_range', 'food_range_start' => '2027-05-01', 'food_range_end' => '2027-05-31'],
                 ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => $tuitionTotal, 'payment_period' => 'monthly'],
             ],
         ]);
@@ -440,7 +436,7 @@ class QuickStudentServiceAllocationTest extends TestCase
             'payment_type' => 'calendar',
             'cash_account_id' => $this->account->id, 'payment_method' => 'cash',
             'services' => [
-                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => $overpaid, 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'month', 'food_month' => '2026-09'],
+                ['fee_id' => $meal->id, 'quantity' => 1, 'paid_now' => $overpaid, 'meal_plan_id' => $plan->id, 'food_duration_mode' => 'custom_range', 'food_range_start' => '2026-09-01', 'food_range_end' => '2026-09-30'],
             ],
         ]);
 

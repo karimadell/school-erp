@@ -10,6 +10,7 @@ use App\Models\Fee;
 use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\InvoicePayment;
 use App\Models\MealPlan;
 use App\Models\MealSubscription;
 use App\Models\QuickRegistrationOperation;
@@ -43,7 +44,7 @@ class QuickStudentRegistrationService
     }
 
     /**
-     * @return array{student: Student, enrollment: Enrollment, invoice: Invoice}
+     * @return array{student: Student, enrollment: Enrollment, invoice: Invoice, submission_paid_amount: string}
      *
      * Corrective pass #2 (HIGH 2 — Quick Registration operation-level
      * idempotency). Pass #1's invoice-level idempotency is too late: it
@@ -856,7 +857,20 @@ class QuickStudentRegistrationService
 
             QrTrace::log('before_commit');
 
-            return compact('student', 'enrollment', 'invoice');
+            // UAT display corrective pass — Issue 1: this submission's own
+            // $paidNow (summed above from every service's paid_now field,
+            // line ~375) is the ONLY authoritative "paid by THIS
+            // registration" figure — it's already guaranteed to equal the
+            // full sum of whichever InvoicePayment row(s) the once/periods/
+            // calendar/else branches above just created (each branch fails
+            // closed rather than leaving any of $paidNow unallocated).
+            // $invoice is brand new in this same request, so it cannot yet
+            // carry any OTHER, later-added payment — unlike
+            // $invoice->payments->sum('amount'), which would silently
+            // include a follow-up payment collected long after this
+            // registration if this same result were ever reused. Never
+            // touches payment creation/allocation — display data only.
+            return compact('student', 'enrollment', 'invoice') + ['submission_paid_amount' => $paidNow];
             });
 
             QrTrace::log('completed');
@@ -892,11 +906,49 @@ class QuickStudentRegistrationService
             throw ValidationException::withMessages(['idempotency_key' => 'Регистрация с этим ключом ещё обрабатывается — повторите попытку позже.']);
         }
 
+        $invoice = Invoice::findOrFail($operation->invoice_id);
+
         return [
             'student' => Student::findOrFail($operation->student_id),
             'enrollment' => Enrollment::findOrFail($operation->enrollment_id),
-            'invoice' => Invoice::findOrFail($operation->invoice_id),
+            'invoice' => $invoice,
+            // UAT display corrective pass — Issue 1, replay case: unlike
+            // the fresh path above, $invoice here is NOT necessarily new —
+            // it may since have received an unrelated, later payment
+            // (e.g. debt collected on a follow-up visit), so
+            // $invoice->payments->sum('amount') would wrongly attribute
+            // that money to THIS original registration. Reconstructed
+            // instead via the same deterministic per-bucket idempotency
+            // keys every payment: record() call above already derives
+            // from $outerToken (mixed-once/mixed-periods/calendar/each
+            // installment index) — isolating exactly the payment(s) this
+            // one operation created, never anything recorded later under
+            // a fresh, unrelated idempotency key.
+            'submission_paid_amount' => $this->submissionPaidAmount($invoice, $operation->idempotency_key),
         ];
+    }
+
+    /**
+     * Deterministically reconstructs the total this ONE Quick Registration
+     * operation paid, from the same idempotency-key derivation every
+     * record() call in register() above already uses — never a fresh
+     * query on "all payments this invoice currently has", which could
+     * include money collected in a completely separate, later payment.
+     */
+    private function submissionPaidAmount(Invoice $invoice, string $outerToken): string
+    {
+        $installmentCount = $invoice->installments()->count();
+        $suffixes = collect(['mixed-once', 'mixed-periods', 'calendar'])
+            ->merge($installmentCount > 0 ? range(0, $installmentCount - 1) : []);
+
+        $keys = $suffixes
+            ->map(fn ($suffix) => (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:{$suffix}"))
+            ->all();
+
+        return (string) InvoicePayment::query()
+            ->where('invoice_id', $invoice->id)
+            ->whereIn('idempotency_key', $keys)
+            ->sum('amount');
     }
 
     /**

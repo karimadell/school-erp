@@ -18,7 +18,6 @@ return [
     'total_balance' => 'Общий остаток',
 
     // Primary actions.
-    'new_student' => 'Новый ученик',
     'add_income' => 'Приход',
     'add_expense' => 'Расход',
 

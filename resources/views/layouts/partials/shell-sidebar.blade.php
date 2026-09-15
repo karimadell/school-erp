@@ -101,13 +101,16 @@
             // FinanceOperationsController::operationalSummary() for the
             // Приход/summary-card side of this corrective.
             'items' => [
-                // Finance Workspace corrective PR #2 — Quick Registration
-                // (the correct "new student" business workflow) previously
-                // had no top-level navigation entry point at all; gated on
-                // the exact permission its own controller requires
-                // (QuickStudentRegistrationController::__construct()), so a
-                // role that would 403 on the route never sees the link.
-                ['label' => __('finance_workspace.new_student'), 'icon' => 'user_plus', 'route' => auth()->user()?->can('manage invoices') ? 'dashboard.quick-registration.create' : null, 'active' => 'dashboard.quick-registration.*'],
+                // Finance Workspace navigation corrective — the standalone
+                // "Новый ученик" shortcut PR #2 added here was removed:
+                // having Quick Registration as its own top-level Finance
+                // sidebar entry made it look like a separate module rather
+                // than the first-registration step of the Income workflow
+                // it actually is. Quick Registration itself (route,
+                // controller, permissions, and its existing "Новый ученик /
+                // Регистрация" card inside Приход) is completely unchanged
+                // and still reachable exactly as before — only this
+                // redundant shortcut link is gone.
                 ['label' => __('finance_uat.student_finance'), 'icon' => 'landmark', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.workspace' : null, 'active' => 'dashboard.finance.workspace'],
                 ['label' => __('finance_workspace.add_income'), 'icon' => 'payments', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.income.index' : null, 'active' => 'dashboard.finance.income.*'],
                 ['label' => __('finance_workspace.add_expense'), 'icon' => 'trending_down', 'route' => auth()->user()?->can('manage expenses') ? 'dashboard.finance.expenses.index' : null, 'active' => ['dashboard.finance.expenses.*', 'dashboard.finance.expense-categories.*', 'dashboard.finance.payees.*']],

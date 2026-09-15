@@ -171,11 +171,37 @@ class FinanceOperationsController extends Controller
             ->get();
     }
 
-    public function student(Student $student, ServiceCoverageService $coverageService): View
+    public function student(Request $request, Student $student, ServiceCoverageService $coverageService): View
     {
         $student->load(['currentEnrollment.academicYear', 'currentEnrollment.stage', 'currentEnrollment.grade', 'currentEnrollment.schoolClass', 'invoices.academicYear', 'invoices.items.fee', 'invoices.installments.payments', 'invoices.payments.cashAccount', 'invoices.payments.creator', 'enrollments.serviceSubscriptions.fee', 'enrollments.serviceSubscriptions.invoiceItems']);
         $summary = $this->summaries->summarize($student);
         $subscriptions = $student->enrollments->flatMap->serviceSubscriptions->sortByDesc('created_at')->values();
+
+        // Finance Workspace corrective PR #4 — academic-year context. Purely
+        // a read-only display filter: ?academic_year_id is NEVER trusted
+        // blindly — it is only ever accepted when it matches one of THIS
+        // student's own years (in_array below), otherwise the safe default
+        // is used instead. Nothing here can influence which academic year
+        // a new invoice/charge is issued against — chargeCreate()/
+        // StudentInvoiceController::create() both independently derive
+        // their own year from $student->currentEnrollment->academicYear,
+        // completely unrelated to this page's selected-year state.
+        $yearSummary = $this->summaries->summarizeByYear($student);
+        $years = $yearSummary['years'];
+        $selectedYearId = $request->integer('academic_year_id') ?: null;
+        if ($selectedYearId === null || ! $years->contains('id', $selectedYearId)) {
+            $selectedYearId = $yearSummary['defaultYearId'];
+        }
+        $selectedYearSummary = $selectedYearId !== null ? $yearSummary['byYear'][$selectedYearId] : null;
+        // Другие годы с непогашенной задолженностью — never merged into the
+        // selected year's own debt figure, only surfaced as a separate,
+        // informational total plus a safe (same-page, read-only) link to
+        // view each one directly.
+        $otherYearsDebt = $years
+            ->reject(fn (AcademicYear $year) => $year->id === $selectedYearId)
+            ->map(fn (AcademicYear $year) => ['year' => $year, 'debt' => $yearSummary['byYear'][$year->id]['net_outstanding']])
+            ->filter(fn (array $row) => bccomp($row['debt'], '0.00', 2) > 0)
+            ->values();
         $coverages = ServiceCoverage::with(['fee', 'feePrice', 'invoiceItem.invoice'])
             ->where('student_id', $student->id)->latest()->get();
         $coveragePrices = FeePrice::active()->whereIn('fee_id', $coverages->pluck('fee_id'))
@@ -198,7 +224,7 @@ class FinanceOperationsController extends Controller
             ->concat($summary['promises']->map(fn ($promise) => ['at' => $promise->created_at, 'label' => 'Обещание оплаты', 'text' => $promise->promised_amount.' EGP · '.$promise->status]))
             ->sortByDesc('at')->values();
 
-        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'coverages', 'coveragePrices', 'coverageSources', 'history'));
+        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'coverages', 'coveragePrices', 'coverageSources', 'history', 'years', 'selectedYearId', 'selectedYearSummary', 'otherYearsDebt'));
     }
 
     public function statement(Student $student): View

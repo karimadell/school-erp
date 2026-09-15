@@ -71,6 +71,7 @@ class InvoiceIssuanceParityTest extends MassBillingTestCase
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'pricing_date' => '2026-09-01',
             'fees' => [$registration->id], 'payment_type' => 'one_time',
+            'idempotency_key' => (string) Str::uuid(),
         ]);
         $response->assertSessionHasNoErrors();
 
@@ -78,10 +79,13 @@ class InvoiceIssuanceParityTest extends MassBillingTestCase
         $this->assertSame('500.00', $invoice->total_amount);
         $this->assertNormalIssuanceInvariants($invoice);
 
+        // A genuinely new key — proves the registration-duplicate guard
+        // fires on its own, not merely because the key repeated.
         $second = $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store', $student), [
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'pricing_date' => '2026-09-01',
             'fees' => [$registration->id], 'payment_type' => 'one_time',
+            'idempotency_key' => (string) Str::uuid(),
         ]);
         $second->assertSessionHasErrors('fees');
         $this->assertSame(1, Invoice::count());

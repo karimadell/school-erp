@@ -6,6 +6,7 @@ use App\Models\Fee;
 use App\Models\FeeBillingPeriod;
 use App\Models\Invoice;
 use App\Models\PaymentPlan;
+use Illuminate\Support\Str;
 
 /**
  * Finance V2, Phase 2B corrective pass (review finding M2).
@@ -50,7 +51,7 @@ class StudentInvoicePaymentPlanScopingTest extends FinanceOperationsTestCase
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
             'pricing_date' => '2026-09-01', 'due_date' => '2027-01-01',
             'payment_type' => 'plan', 'payment_plan_id' => $unassigned->id,
-            'fees' => [$this->fee->id],
+            'fees' => [$this->fee->id], 'idempotency_key' => (string) Str::uuid(),
         ]);
 
         $response->assertSessionHasErrors('payment_plan_id');
@@ -70,7 +71,7 @@ class StudentInvoicePaymentPlanScopingTest extends FinanceOperationsTestCase
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
             'pricing_date' => '2026-09-01', 'due_date' => '2027-01-01',
             'payment_type' => 'plan', 'payment_plan_id' => $assigned->id,
-            'fees' => [$this->fee->id],
+            'fees' => [$this->fee->id], 'idempotency_key' => (string) Str::uuid(),
         ]);
 
         $response->assertSessionHasNoErrors()->assertRedirect();

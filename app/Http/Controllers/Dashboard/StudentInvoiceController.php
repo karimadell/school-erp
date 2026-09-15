@@ -9,6 +9,7 @@ use App\Models\PaymentPlan;
 use App\Models\Student;
 use App\Services\Finance\InvoiceIssuanceService;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class StudentInvoiceController extends Controller
@@ -40,12 +41,21 @@ class StudentInvoiceController extends Controller
         $feePlanMap = Fee::with('assignedPaymentPlans:id')->get(['id'])
             ->mapWithKeys(fn (Fee $fee) => [$fee->id => $fee->assignedPaymentPlans->pluck('id')->all()]);
 
-        return view('dashboard.finance.invoices.create', compact('student', 'year', 'fees', 'paymentPlans', 'feePlanMap'));
+        $idempotencyKey = (string) Str::uuid();
+
+        return view('dashboard.finance.invoices.create', compact('student', 'year', 'fees', 'paymentPlans', 'feePlanMap', 'idempotencyKey'));
     }
 
     public function store(StoreInvoiceRequest $request, Student $student, InvoiceIssuanceService $issuer): RedirectResponse
     {
-        $invoice = $issuer->issue($student, $request->validated(), $request->user(), $request->ip(), $request->userAgent());
+        $invoice = $issuer->issue(
+            $student,
+            $request->validated(),
+            $request->user(),
+            $request->ip(),
+            $request->userAgent(),
+            idempotencyKey: (string) $request->input('idempotency_key'),
+        );
 
         return redirect()->route('dashboard.invoices.show', $invoice)->with('success', 'Счёт успешно создан.');
     }

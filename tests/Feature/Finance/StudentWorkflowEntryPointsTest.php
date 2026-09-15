@@ -10,10 +10,14 @@ use App\Models\Student;
  * Finance Workspace corrective PR #2 — navigation/entry-point discoverability
  * only. Both workflows reuse existing, unchanged engines:
  *
- * - "Новый ученик" is a new sidebar link straight into the existing Quick
- *   Registration create route, gated on the exact permission
+ * - Quick Registration's create route, gated on the exact permission
  *   (QuickStudentRegistrationController::__construct()) that route already
- *   requires.
+ *   requires. (The standalone "Новый ученик" sidebar shortcut this PR
+ *   originally added here was later removed by a navigation corrective as
+ *   redundant — Quick Registration's own Приход card, route, controller and
+ *   permissions are unaffected; see
+ *   FinanceNavigationNewStudentShortcutTest for that corrective's own
+ *   coverage.)
  * - "Зачислить на новый учебный год" is a new button on the Student
  *   Financial Account page straight into the existing
  *   EnrollmentController::create()/store() flow, gated on the exact
@@ -26,32 +30,23 @@ use App\Models\Student;
  */
 class StudentWorkflowEntryPointsTest extends FinanceOperationsTestCase
 {
-    public function test_manage_invoices_role_sees_and_can_use_the_new_student_entry_point(): void
+    public function test_manage_invoices_role_can_use_the_quick_registration_route(): void
     {
         // $this->accountant has 'manage invoices' (RolesAndPermissionsSeeder).
-        $response = $this->actingAs($this->accountant)->get(route('dashboard.students.finance', $this->student));
-
-        $response->assertOk();
-        $response->assertSee('Новый ученик');
-        $response->assertSee(route('dashboard.quick-registration.create'), false);
+        $this->actingAs($this->accountant)->get(route('dashboard.students.finance', $this->student))->assertOk();
 
         $this->get(route('dashboard.quick-registration.create'))->assertOk();
     }
 
-    public function test_role_without_manage_invoices_does_not_receive_a_dead_new_student_link(): void
+    public function test_role_without_manage_invoices_is_forbidden_from_the_quick_registration_route(): void
     {
         // Reception has 'view invoices' (reaches the dashboard shell/Финансы
         // pages) but not 'manage invoices' (which QuickStudentRegistrationController
         // requires for every action, including create()).
         $reception = $this->user('reception');
 
-        $response = $this->actingAs($reception)->get(route('dashboard.students.finance', $this->student));
-        $response->assertOk();
-        $response->assertDontSee('Новый ученик');
-        $response->assertDontSee(route('dashboard.quick-registration.create'), false);
+        $this->actingAs($reception)->get(route('dashboard.students.finance', $this->student))->assertOk();
 
-        // Confirms the link would have been a dead end had it been shown —
-        // proves the gate matches the real backend requirement, not just UI.
         $this->get(route('dashboard.quick-registration.create'))->assertForbidden();
     }
 

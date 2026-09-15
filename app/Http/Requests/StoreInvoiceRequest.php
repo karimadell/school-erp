@@ -82,6 +82,13 @@ class StoreInvoiceRequest extends FormRequest
             // for where 'calendar' is accepted.
             'payment_type' => ['required', 'in:one_time,plan'],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
+            // Finance Workspace corrective PR #1: this FormRequest is shared
+            // with the legacy InvoiceController::store() (route
+            // dashboard.invoices.store), whose own create form has no
+            // idempotency field and is out of this pass's scope — the
+            // required key applies only to the Classic Student Invoice
+            // route (dashboard.students.invoices.store) it was added for.
+            'idempotency_key' => [$this->routeIs('dashboard.students.invoices.store') ? 'required' : 'nullable', 'uuid'],
             'subtotal' => ['prohibited'],
             'total_amount' => ['prohibited'],
             'paid_amount' => ['prohibited'],
@@ -192,6 +199,8 @@ class StoreInvoiceRequest extends FormRequest
             'payment_method.in' => 'Выбран недопустимый способ оплаты.',
             'cash_account_id.exists' => 'Выбранная касса не найдена.',
             'payment_plan_id.required_if' => 'Выберите план оплаты.',
+            'idempotency_key.required' => 'Обновите страницу и попробуйте снова.',
+            'idempotency_key.uuid' => 'Не удалось подтвердить уникальность счёта. Обновите страницу.',
             '*.prohibited' => 'Вычисляемые финансовые поля нельзя передавать вручную.',
         ];
     }

@@ -33,6 +33,7 @@
             <input type="hidden" name="student_id" value="{{ $student->id }}">
             <input type="hidden" name="academic_year_id" value="{{ $year->id }}">
             <input type="hidden" name="initial_payment_amount" value="0">
+            <input type="hidden" name="idempotency_key" value="{{ $idempotencyKey }}">
 
             <div class="card border-0 shadow-sm mb-4"><div class="card-body row g-3">
                 <div class="col-md-3"><label class="form-label">Учебный год</label><input class="form-control" value="{{ $year->name }}" readonly></div>

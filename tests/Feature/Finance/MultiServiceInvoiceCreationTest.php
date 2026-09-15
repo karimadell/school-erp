@@ -38,6 +38,10 @@ class MultiServiceInvoiceCreationTest extends FinanceOperationsTestCase
             'payment_type' => 'one_time',
             'fees' => collect($fees)->pluck('id')->all(),
             'fee_price_id' => collect($prices)->mapWithKeys(fn ($price) => [$price->fee_id => $price->id])->all(),
+            // Each call mints its own fresh key by default — a test that
+            // deliberately wants to exercise replay behaviour overrides it
+            // explicitly via $extra.
+            'idempotency_key' => (string) Str::uuid(),
         ], $extra);
     }
 

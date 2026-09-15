@@ -21,6 +21,7 @@ class NonRefundableRegistrationFeeTest extends FinanceOperationsTestCase
         $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store',$this->student), [
             'student_id'=>$this->student->id,'academic_year_id'=>$this->year->id,'pricing_date'=>'2026-08-01',
             'due_date'=>'2027-06-30','fees'=>[$fee->id],'notes'=>'Комментарий сотрудника',
+            'idempotency_key'=>(string) Str::uuid(),
         ])->assertSessionHasNoErrors()->assertRedirect();
 
         $item = InvoiceItem::sole();

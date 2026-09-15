@@ -10,6 +10,7 @@ use App\Models\Invoice;
 use App\Models\SchoolClass;
 use App\Models\Student;
 use App\Services\Finance\InvoiceCalculationService;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class DateBasedTariffSelectionTest extends QuickRegistrationUxTestCase
@@ -86,6 +87,7 @@ class DateBasedTariffSelectionTest extends QuickRegistrationUxTestCase
         $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store',$student), [
             'student_id'=>$student->id,'academic_year_id'=>$year->id,'pricing_date'=>'2026-05-15',
             'due_date'=>'2027-06-30','fees'=>[$fee->id], 'payment_period'=>[$fee->id=>'yearly'],
+            'idempotency_key'=>(string) Str::uuid(),
         ])->assertSessionHasNoErrors()->assertRedirect();
 
         $invoice = Invoice::sole();

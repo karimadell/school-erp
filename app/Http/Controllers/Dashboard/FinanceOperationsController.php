@@ -202,6 +202,20 @@ class FinanceOperationsController extends Controller
             ->map(fn (AcademicYear $year) => ['year' => $year, 'debt' => $yearSummary['byYear'][$year->id]['net_outstanding']])
             ->filter(fn (array $row) => bccomp($row['debt'], '0.00', 2) > 0)
             ->values();
+
+        // Finance Workspace corrective PR #5 — returning-student handoff.
+        // $student->currentEnrollment is already scoped to "the Enrollment
+        // whose AcademicYear has is_active = true" (see Student model), so
+        // a non-null value here means, by construction, an Enrollment for
+        // the active year specifically — never merely "has some Enrollment
+        // somewhere". This is the exact same signal
+        // InvoiceIssuanceService::issue() itself requires before it will
+        // create any invoice, so "Добавить услугу" is gated on the same
+        // real invariant new-service issuance already enforces server-side
+        // — not a new, separate rule invented for the UI.
+        $activeYear = AcademicYear::where('is_active', true)->first();
+        $hasActiveYearEnrollment = $student->currentEnrollment !== null;
+
         $coverages = ServiceCoverage::with(['fee', 'feePrice', 'invoiceItem.invoice'])
             ->where('student_id', $student->id)->latest()->get();
         $coveragePrices = FeePrice::active()->whereIn('fee_id', $coverages->pluck('fee_id'))
@@ -224,7 +238,7 @@ class FinanceOperationsController extends Controller
             ->concat($summary['promises']->map(fn ($promise) => ['at' => $promise->created_at, 'label' => 'Обещание оплаты', 'text' => $promise->promised_amount.' EGP · '.$promise->status]))
             ->sortByDesc('at')->values();
 
-        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'coverages', 'coveragePrices', 'coverageSources', 'history', 'years', 'selectedYearId', 'selectedYearSummary', 'otherYearsDebt'));
+        return view('dashboard.finance.student', compact('student', 'summary', 'subscriptions', 'coverages', 'coveragePrices', 'coverageSources', 'history', 'years', 'selectedYearId', 'selectedYearSummary', 'otherYearsDebt', 'activeYear', 'hasActiveYearEnrollment'));
     }
 
     public function statement(Student $student): View
@@ -350,9 +364,30 @@ class FinanceOperationsController extends Controller
      * single-service/one-time-only, so it cannot safely absorb them
      * without a real feature regression). Never a third issuance engine.
      */
-    public function addServiceSelect(Student $student): View
+    public function addServiceSelect(Student $student): View|RedirectResponse
     {
-        return view('dashboard.finance.add-service', ['student' => $student]);
+        // Finance Workspace corrective PR #5 — the same active-year-
+        // Enrollment invariant student()'s banner is built from (see that
+        // method's own comment), enforced server-side here too: hiding the
+        // "Добавить услугу" button is not sufficient on its own, a direct
+        // URL visit must fail exactly the same way. Redirects back to
+        // Финансы ученика, which renders this same guidance as a banner —
+        // never a bare error page — matching the established
+        // redirect()->with('error', ...) pattern already used elsewhere in
+        // this controller/app (e.g. CashOperationsController::create()).
+        $activeYear = AcademicYear::where('is_active', true)->first();
+        if (! $activeYear) {
+            return redirect()->route('dashboard.students.finance', $student)
+                ->with('error', __('finance_uat.no_active_academic_year'));
+        }
+
+        $student->loadMissing('currentEnrollment');
+        if ($student->currentEnrollment === null) {
+            return redirect()->route('dashboard.students.finance', $student)
+                ->with('error', __('finance_uat.enrollment_required_for_active_year', ['year' => $activeYear->name]));
+        }
+
+        return view('dashboard.finance.add-service', ['student' => $student, 'activeYear' => $activeYear]);
     }
 
     public function chargeCreate(Student $student): View

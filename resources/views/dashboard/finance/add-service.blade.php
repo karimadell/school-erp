@@ -5,6 +5,13 @@
     <div class="mb-4">
         <h1 class="h3 mb-1">{{ __('finance_workspace.add_service_title') }}</h1>
         <p class="text-muted mb-0">{{ $student->full_name }} · {{ __('finance_workspace.add_service_hint') }}</p>
+        {{-- Finance Workspace corrective PR #5 — makes the destination year
+             explicit at the exact point a new service is initiated, so
+             viewing a historical year on Финансы ученика beforehand can
+             never be mistaken for the year a new service will post to.
+             $activeYear is always set here: addServiceSelect() already
+             redirects away before this view ever renders otherwise. --}}
+        <div class="small text-primary mt-1">{{ __('finance_uat.add_service_active_year_subtitle', ['year' => $activeYear->name]) }}</div>
     </div>
 
     <div class="row g-3">

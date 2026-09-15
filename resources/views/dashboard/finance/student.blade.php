@@ -6,7 +6,29 @@
      underlying routes/controllers are unchanged and remain directly
      reachable for compatibility, just no longer surfaced as two separate
      buttons on this page. Gated on the same 'manage invoices' both
-     destinations already require, so this can never lead to a 403. --}}@can('manage invoices')<a class="btn btn-primary" href="{{ route('dashboard.students.add-service',$student) }}">{{ __('finance_uat.add_service') }}</a>@endcan {{-- Finance Workspace corrective PR #2: existing Enrollment create/store flow, reused unchanged — gated on the exact permission EnrollmentController::create/store already require, never a hard-coded role list. --}}@can('create enrollments')<a class="btn btn-outline-primary" href="{{ route('dashboard.enrollments.create',$student) }}">{{ __('finance_uat.enroll_new_academic_year') }}</a>@endcan</div></div></div>
+     destinations already require, so this can never lead to a 403.
+     Finance Workspace corrective PR #5: also gated on
+     $hasActiveYearEnrollment — hiding this alongside the equivalent
+     server-side guard in addServiceSelect() itself, never relying on the
+     Blade check alone. --}}@can('manage invoices')@if($hasActiveYearEnrollment)<a class="btn btn-primary" href="{{ route('dashboard.students.add-service',$student) }}">{{ __('finance_uat.add_service') }}</a>@endif@endcan {{-- Finance Workspace corrective PR #2: existing Enrollment create/store flow, reused unchanged — gated on the exact permission EnrollmentController::create/store already require, never a hard-coded role list. --}}@can('create enrollments')<a class="btn btn-outline-primary" href="{{ route('dashboard.enrollments.create',$student) }}">{{ __('finance_uat.enroll_new_academic_year') }}</a>@endcan</div></div></div>
+
+{{-- Finance Workspace corrective PR #5 — returning-student handoff status.
+     Reads $activeYear/$hasActiveYearEnrollment computed in
+     FinanceOperationsController::student(); never infers this from role
+     names, only from the same Enrollment/AcademicYear state new-service
+     issuance itself relies on. --}}
+@if(!$activeYear)
+<div class="alert alert-warning mb-4">{{ __('finance_uat.no_active_academic_year') }}</div>
+@elseif(!$hasActiveYearEnrollment)
+<div class="alert alert-warning mb-4">
+    {{ __('finance_uat.enrollment_required_for_active_year', ['year' => $activeYear->name]) }}
+    @cannot('create enrollments')
+        {{ __('finance_uat.enrollment_required_contact_operations') }}
+    @endcannot
+</div>
+@elseif($selectedYearId !== $activeYear->id)
+<div class="alert alert-info mb-4">{{ __('finance_uat.new_service_targets_active_year', ['year' => $activeYear->name]) }}</div>
+@endif
 
 {{-- Finance Workspace corrective PR #4 — academic-year context. Purely a
      read-only display filter over StudentFinanceSummaryService::summarizeByYear();

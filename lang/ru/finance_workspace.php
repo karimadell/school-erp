@@ -43,4 +43,22 @@ return [
     'income_placeholder_title' => 'Раздел скоро будет доступен',
     'income_placeholder_body' => 'Учёт прочих поступлений (не связанных напрямую с учеником) переносится в отдельный модуль учёта доходов, который проходит финальную проверку перед подключением к рабочей системе. Пока этот раздел недоступен, обратитесь к администратору.',
     'income_placeholder_back' => 'Назад к выбору типа поступления',
+
+    // Finance Workspace corrective PR #3 — unified "Добавить услугу" service picker.
+    'add_service_title' => 'Добавить услугу',
+    'add_service_hint' => 'Выберите услугу, которую нужно начислить ученику — форма подберётся автоматически.',
+    'add_service_tuition' => 'Обучение',
+    'add_service_tuition_hint' => 'Плата за обучение.',
+    'add_service_transport' => 'Трансфер',
+    'add_service_transport_hint' => 'Школьный транспорт.',
+    'add_service_food' => 'Питание',
+    'add_service_food_hint' => 'Разовое, недельное или произвольное питание с учётом учебного календаря.',
+    'add_service_uniform' => 'Школьная форма',
+    'add_service_uniform_hint' => 'Предметы школьной формы.',
+    'add_service_extra_classes' => 'Дополнительные занятия',
+    'add_service_extra_classes_hint' => 'Кружки и дополнительные занятия.',
+    'add_service_activity' => 'Мероприятия и поездки',
+    'add_service_activity_hint' => 'Экскурсии, мероприятия и поездки.',
+    'add_service_other' => 'Прочие услуги',
+    'add_service_other_hint' => 'Учебные материалы и другие услуги ученику.',
 ];

@@ -529,6 +529,10 @@ Route::middleware(['auth', 'administrative'])
         Route::get('students/{student}/invoices/create', [StudentInvoiceController::class, 'create'])->name('students.invoices.create');
         Route::post('students/{student}/invoices', [StudentInvoiceController::class, 'store'])->name('students.invoices.store');
 
+        // Finance Workspace corrective PR #3 — unified "Добавить услугу"
+        // entry point; a pure picker, routes into the two routes below.
+        Route::get('students/{student}/add-service', [FinanceOperationsController::class, 'addServiceSelect'])->name('students.add-service');
+
         // Phase 2 — cashier charge & collect (issue a charge and take payment in
         // one atomic action; permission-gated in FinanceOperationsController).
         Route::get('students/{student}/charge', [FinanceOperationsController::class, 'chargeCreate'])->name('students.charge.create');

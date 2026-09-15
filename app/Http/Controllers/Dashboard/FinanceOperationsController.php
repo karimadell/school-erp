@@ -36,7 +36,7 @@ class FinanceOperationsController extends Controller
     public function __construct(private StudentFinanceSummaryService $summaries)
     {
         $this->middleware('permission:view invoices')->only(['workspace', 'students', 'student', 'statement', 'statementPdf', 'receipt', 'receiptPdf', 'refundReceipt']);
-        $this->middleware('permission:manage invoices')->only(['createPayment', 'storePayment', 'chargeCreate', 'chargeStore']);
+        $this->middleware('permission:manage invoices')->only(['createPayment', 'storePayment', 'chargeCreate', 'chargeStore', 'addServiceSelect']);
         $this->middleware('permission:void invoices')->only(['voidInvoice']);
         $this->middleware('permission:refund payments')->only(['createRefund', 'storeRefund']);
     }
@@ -309,6 +309,24 @@ class FinanceOperationsController extends Controller
 
         return Pdf::loadView('dashboard.finance.payments.receipt-pdf', $data)
             ->setPaper('a4')->download(($invoicePayment->payment_number ?: 'payment').'.pdf');
+    }
+
+    /**
+     * Finance Workspace corrective PR #3 — the single "Добавить услугу"
+     * entry point an accountant reaches from the Student Financial Account
+     * page. Purely a business-service picker: it records/mutates nothing
+     * and issues no invoice itself. Every tile routes into an already-
+     * canonical, unchanged issuance flow — Food into chargeCreate()/
+     * ChargeAndCollectService (the only engine that supports it), every
+     * other category into StudentInvoiceController's Classic Invoice
+     * (which alone still supports payment plans, discounts and
+     * multi-service invoicing — ChargeAndCollectService's non-Food path is
+     * single-service/one-time-only, so it cannot safely absorb them
+     * without a real feature regression). Never a third issuance engine.
+     */
+    public function addServiceSelect(Student $student): View
+    {
+        return view('dashboard.finance.add-service', ['student' => $student]);
     }
 
     public function chargeCreate(Student $student): View

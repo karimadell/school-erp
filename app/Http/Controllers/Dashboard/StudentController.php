@@ -38,11 +38,41 @@ class StudentController extends Controller
             ->when($request->filled('gender'), function ($query) use ($request) {
                 $query->where('gender', $request->gender);
             })
+            // Students List UI corrective — the SAME class relation the
+            // table's own "Класс" column already displays ($student->class,
+            // Student.class_id), never the Enrollment-based "current
+            // academic year" class used elsewhere in Finance — that is a
+            // different concept and filtering on it here would silently
+            // disagree with what the column itself shows.
+            ->when($request->filled('class_id'), function ($query) use ($request) {
+                $query->where('class_id', $request->integer('class_id'));
+            })
             ->latest()
             ->paginate(10)
             ->withQueryString();
 
-        return view('dashboard.students.index', compact('students'));
+        // Students List UI corrective — plain, cheap COUNT queries against
+        // the whole Student table (never every row's PHP-side tally), and
+        // never scoped to the current filter/page: these are the school's
+        // overall totals, the same figures regardless of what the operator
+        // just searched for.
+        $studentSummary = [
+            'total' => Student::count(),
+            'male' => Student::where('gender', 'male')->count(),
+            'female' => Student::where('gender', 'female')->count(),
+        ];
+
+        $classes = SchoolClass::query()
+            ->select('classes.*')
+            ->join('grades', 'grades.id', '=', 'classes.grade_id')
+            ->orderByRaw('CASE WHEN grades.level IS NULL THEN 1 ELSE 0 END')
+            ->orderBy('grades.level')
+            ->orderBy('grades.id')
+            ->orderBy('classes.code')
+            ->orderBy('classes.id')
+            ->get();
+
+        return view('dashboard.students.index', compact('students', 'studentSummary', 'classes'));
     }
 
     public function create()

@@ -2,6 +2,7 @@
 
 namespace App\Services\Finance;
 
+use App\Models\AcademicYear;
 use App\Models\Invoice;
 use App\Models\PromiseToPay;
 use App\Models\Student;
@@ -16,6 +17,77 @@ class StudentFinanceSummaryService
     public function summarize(Student $student): array
     {
         return $this->summarizeMany(new EloquentCollection([$student]))->get($student->id);
+    }
+
+    /**
+     * Finance Workspace corrective PR #4 — the SAME canonical calculate()
+     * every other summary uses, partitioned per academic year instead of
+     * flattened across all of them. Every input collection is anchored to
+     * a year through Invoice.academic_year_id (the only Finance record
+     * that carries the column directly):
+     *
+     * - invoices: their own academic_year_id.
+     * - adjustments: their postingInvoice's year (a STATUS_POSTED
+     *   adjustment always has one — that's what "posted" means here).
+     * - promises / credit applications: their linked invoice's year, when
+     *   they have one; an unattached promise (invoice_id is nullable —
+     *   see the "Без привязки к счёту" option on the promise form) belongs
+     *   to no single year and is intentionally left out of every
+     *   per-year bucket (it still appears in the flat, all-time summarize()
+     *   this method never replaces).
+     * - StudentCredit is a student-level wallet, never invoice- or
+     *   year-anchored, and is deliberately NOT partitioned — passing an
+     *   empty credits collection into each year's calculate() call is
+     *   correct, not a gap: available_credit/net_student_balance are
+     *   flat-only concepts, sourced from summarize() where a caller needs
+     *   them, never duplicated here.
+     *
+     * @return array{years: Collection<int, AcademicYear>, byYear: array<int, array<string, mixed>>, defaultYearId: ?int}
+     */
+    public function summarizeByYear(Student $student): array
+    {
+        $student->loadMissing(['invoices.payments', 'enrollments']);
+
+        $invoicesByYear = $student->invoices->groupBy('academic_year_id');
+        $yearIds = $student->invoices->pluck('academic_year_id')
+            ->merge($student->enrollments->pluck('academic_year_id'))
+            ->filter()
+            ->unique()
+            ->values();
+
+        $years = AcademicYear::whereIn('id', $yearIds)->orderByDesc('start_date')->get();
+
+        $studentId = $student->id;
+        $adjustments = TariffAdjustment::with(['fee', 'segments', 'postingInvoice'])
+            ->where('student_id', $studentId)
+            ->where('status', TariffAdjustment::STATUS_POSTED)
+            ->latest('approved_at')
+            ->get();
+        $promises = PromiseToPay::with(['invoice', 'payment'])
+            ->where('student_id', $studentId)
+            ->latest()
+            ->get();
+        $applications = StudentCreditApplication::with('invoice')
+            ->where('student_id', $studentId)
+            ->get();
+
+        $byYear = [];
+        foreach ($years as $year) {
+            $byYear[$year->id] = $this->calculate(
+                $invoicesByYear->get($year->id, collect()),
+                $adjustments->filter(fn (TariffAdjustment $adjustment) => $adjustment->postingInvoice?->academic_year_id === $year->id)->values(),
+                $promises->filter(fn (PromiseToPay $promise) => $promise->invoice?->academic_year_id === $year->id)->values(),
+                collect(),
+                $applications->filter(fn (StudentCreditApplication $application) => $application->invoice?->academic_year_id === $year->id)->values(),
+            );
+        }
+
+        $defaultYearId = $student->currentEnrollment?->academic_year_id;
+        if ($defaultYearId === null || ! $years->contains('id', $defaultYearId)) {
+            $defaultYearId = $years->first()?->id;
+        }
+
+        return ['years' => $years, 'byYear' => $byYear, 'defaultYearId' => $defaultYearId];
     }
 
     /**

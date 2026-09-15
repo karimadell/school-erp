@@ -13,6 +13,7 @@ use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
+use App\Models\MealPlan;
 use App\Models\PaymentRefund;
 use App\Models\SchoolSetting;
 use App\Models\ServiceCoverage;
@@ -314,11 +315,26 @@ class FinanceOperationsController extends Controller
     {
         $student->load(['currentEnrollment.academicYear']);
         $year = $student->currentEnrollment?->academicYear;
+        $fees = Fee::active()->with('prices')->orderBy('category')->orderBy('name_ru')->get();
+
+        // Existing-student Food purchase corrective pass: mirrors
+        // QuickStudentRegistrationController::create()'s own sellable-plan
+        // filter exactly — a MealPlan is only offered here when a resolved
+        // Food tariff's option_value is its exact numeric id, so the
+        // dropdown can never offer a plan with no configured price.
+        $sellableMealPlanIds = $fees->where('category', Fee::CATEGORY_FOOD)
+            ->flatMap(fn (Fee $fee) => $fee->prices)
+            ->where('payment_period', Fee::PERIOD_DAILY)
+            ->pluck('option_value')
+            ->filter(fn ($value) => is_numeric($value))
+            ->map(fn ($value) => (int) $value)
+            ->unique();
 
         return view('dashboard.finance.charge.create', [
             'student' => $student,
             'year' => $year,
-            'fees' => Fee::active()->with('prices')->orderBy('category')->orderBy('name_ru')->get(),
+            'fees' => $fees,
+            'mealPlans' => MealPlan::active()->whereIn('id', $sellableMealPlanIds)->orderBy('name_ru')->get(),
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'idempotencyKey' => (string) Str::uuid(),
         ]);

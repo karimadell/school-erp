@@ -2,6 +2,7 @@
 
 return [
     'issue_invoice' => 'Выставить счёт',
+    'enroll_new_academic_year' => 'Зачислить на новый учебный год',
     'student_account' => 'Финансовый счёт ученика',
     'payment_purpose' => 'Назначение платежа',
     'purpose_explanation' => 'Счёт выставлен за следующие услуги:',

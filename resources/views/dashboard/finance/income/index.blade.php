@@ -8,6 +8,12 @@
     </div>
 
     <div class="row g-3">
+        {{-- Finance Workspace corrective PR #2 — this card previously had no
+             permission gate at all, even though QuickStudentRegistrationController
+             (and its create() GET action) requires 'manage invoices' — a
+             view-invoices-only role (e.g. reception) could reach Приход and
+             click straight into a 403. Gated to match. --}}
+        @can('manage invoices')
         <div class="col-md-6 col-xl-4">
             <a href="{{ route('dashboard.quick-registration.create') }}" class="text-decoration-none">
                 <div class="card border-0 shadow-sm h-100 income-type-card">
@@ -18,6 +24,7 @@
                 </div>
             </a>
         </div>
+        @endcan
 
         @can('manage invoices')
             <div class="col-md-6 col-xl-4">

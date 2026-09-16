@@ -791,9 +791,60 @@ class QuickRegistrationMixedBillingTest extends TestCase
         $this->assertSame('1000.00', (string) $perItem->get($tuitionItem->id));
         $this->assertSame('1500.00', (string) $perItem->get($transportItem->id));
 
-        // The payment screen itself renders these same figures.
+        // Payment collection UX corrective — with more than one installment,
+        // nothing is pre-selected (the accountant must consciously choose a
+        // period), so the per-item note shows the neutral prompt on load,
+        // not a number. The exact same figures the service layer proved
+        // above are embedded in the page's own data attribute for the
+        // existing JS to apply once a period is actually chosen — this is
+        // the same authoritative InvoicePaymentService figure, just
+        // delivered via JSON instead of a server-rendered "Доступно по
+        // выбранному этапу: ..." string, since there is no default period
+        // any more for that string to describe.
         $page = $this->actingAs($this->accountant)->get(route('dashboard.invoices.payments.create', $invoice))->assertOk();
-        $page->assertSee('Доступно по выбранному этапу');
+        $page->assertSee('Выберите период оплаты');
+        $page->assertSee('&quot;'.$period2->id.'&quot;:{&quot;'.$tuitionItem->id.'&quot;:&quot;1000.00&quot;', false);
+        $page->assertSee('&quot;'.$transportItem->id.'&quot;:&quot;1500.00&quot;', false);
+    }
+
+    /**
+     * Payment collection UX corrective — the payment form's per-item
+     * "items with coverage" data must correctly separate once-bucket
+     * items (Registration: no ServiceCoverage anywhere, payable through
+     * the Разовые услуги installment) from calendar items (Tuition/
+     * Transport: coverage under the SHARED monthly schedule only) — this
+     * is what lets the form's JS disable Tuition/Transport when the
+     * once-bucket installment is selected instead of incorrectly
+     * offering their whole-invoice remaining under the wrong period.
+     */
+    public function test_once_bucket_and_calendar_items_are_correctly_distinguished_for_coverage_eligibility(): void
+    {
+        $this->openCashSession();
+        $registration = $this->registrationFee('7000.00');
+        $tuition = $this->tuitionFee('2000.00');
+        [$transport, $routeId] = $this->transportMonthlyFee('1500.00');
+        $bus = \App\Models\Bus::create(['vehicle_code' => uniqid('BUS-'), 'is_active' => true]);
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload([
+            ['fee_id' => $registration->id, 'quantity' => 1, 'paid_now' => '0.00'],
+            ['fee_id' => $tuition->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'grade_group' => '1–4 классы'],
+            ['fee_id' => $transport->id, 'quantity' => 1, 'paid_now' => '0.00', 'billing_strategy' => 'calendar', 'payment_period' => 'monthly', 'transport_area' => 'Зона 1', 'transport_route_id' => $routeId, 'bus_id' => $bus->id],
+        ], ['payment_method' => 'cash', 'cash_account_id' => $this->account->id]))->assertSessionHasNoErrors();
+
+        $invoice = Invoice::sole()->fresh();
+        $registrationItem = InvoiceItem::where('invoice_id', $invoice->id)->where('fee_id', $registration->id)->sole();
+        $tuitionItem = InvoiceItem::where('invoice_id', $invoice->id)->where('fee_id', $tuition->id)->sole();
+        $transportItem = InvoiceItem::where('invoice_id', $invoice->id)->where('fee_id', $transport->id)->sole();
+
+        $page = $this->actingAs($this->accountant)->get(route('dashboard.invoices.payments.create', $invoice))->assertOk();
+        $html = $page->getContent();
+        preg_match('/data-items-with-coverage="([^"]*)"/', $html, $matches);
+        $this->assertNotEmpty($matches, 'data-items-with-coverage attribute not found');
+        $coveredIds = json_decode(html_entity_decode($matches[1]), true);
+
+        $this->assertContains($tuitionItem->id, $coveredIds, 'Tuition has calendar coverage and must be listed');
+        $this->assertContains($transportItem->id, $coveredIds, 'Transport has calendar coverage and must be listed');
+        $this->assertNotContains($registrationItem->id, $coveredIds, 'Registration (once-bucket) has no coverage anywhere and must not be listed');
     }
 
     /** B: a combined payment (1,000 Tuition + 1,500 Transport = 2,500) against Период 2 succeeds. */

@@ -23,6 +23,7 @@ use App\Http\Controllers\Dashboard\StudentProfileController;
 use App\Http\Controllers\Dashboard\EnrollmentController;
 use App\Http\Controllers\Dashboard\InvoiceController;
 use App\Http\Controllers\Dashboard\QuickStudentRegistrationController;
+use App\Http\Controllers\Dashboard\UnifiedCollectionController;
 use App\Http\Controllers\Dashboard\FeeController;
 use App\Http\Controllers\Dashboard\FeePriceController;
 use App\Http\Controllers\Dashboard\ClassController;
@@ -548,6 +549,13 @@ Route::middleware(['auth', 'administrative'])
         Route::get('payments/{invoicePayment}/refund', [FinanceOperationsController::class, 'createRefund'])->name('payments.refund.create');
         Route::post('payments/{invoicePayment}/refund', [FinanceOperationsController::class, 'storeRefund'])->name('payments.refund.store');
         Route::get('refunds/{paymentRefund}/receipt', [FinanceOperationsController::class, 'refundReceipt'])->name('refunds.receipt');
+
+        // Unified Cashier Workspace (PR C1) — permission-gated inside
+        // UnifiedCollectionController itself (manage invoices), not here.
+        Route::get('students/{student}/unified-collection', [UnifiedCollectionController::class, 'create'])
+            ->name('students.unified-collection.create');
+        Route::post('students/{student}/unified-collection', [UnifiedCollectionController::class, 'store'])
+            ->name('students.unified-collection.store');
 
         Route::get('quick-registration', [QuickStudentRegistrationController::class, 'create'])
             ->name('quick-registration.create');

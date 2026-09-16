@@ -116,11 +116,11 @@ class StudentPaymentAllocationUxTest extends MassBillingTestCase
     // 1. Search/UX corrective — full invoice/service detail no longer
     // renders inline on the student search results; it remains on the
     // Financial Account page (dashboard.students.finance) exactly as
-    // before. With exactly one payable invoice, the search result still
-    // exposes a direct canonical "Принять оплату" link into it — no new
-    // payment route, the same dashboard.invoices.payments.create used
-    // everywhere else.
-    public function test_student_search_omits_invoice_detail_and_links_the_single_payable_invoice_directly(): void
+    // before. Unified Cashier Workspace (PR C1) corrective — the search
+    // result's "Принять оплату" link now opens the Unified Collection
+    // workspace (which itself lists every outstanding obligation) instead
+    // of linking directly into the single-invoice payment page.
+    public function test_student_search_omits_invoice_detail_and_links_to_the_unified_collection_workspace(): void
     {
         [$invoice] = $this->issueMixedInvoice('SearchBreakdown');
 
@@ -131,7 +131,7 @@ class StudentPaymentAllocationUxTest extends MassBillingTestCase
         $response->assertDontSee('Книги');
         $response->assertDontSee($invoice->display_number);
         $response->assertSee('Принять оплату');
-        $response->assertSee(route('dashboard.invoices.payments.create', $invoice), false);
+        $response->assertSee(route('dashboard.students.unified-collection.create', $invoice->student), false);
 
         // The invoice itself is untouched by rendering the search page.
         $this->assertSame('1950.00', $invoice->fresh()->total_amount);

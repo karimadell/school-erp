@@ -198,6 +198,20 @@ class Fee extends Model
         return $query->where('is_active', true);
     }
 
+    /**
+     * Excludes UAT/test fixture Fees (e.g. flagged by finance:mark-test-fees)
+     * from any screen an accountant uses to browse the real service
+     * catalog. Purely a display-scope filter — never deletes/deactivates
+     * the row, and never a substitute for active(): a real, currently
+     * inactive Fee must remain visible in a management catalog, only a
+     * test-flagged one should disappear. Same convention as
+     * PaymentPlan::scopeNonTest().
+     */
+    public function scopeNonTest($query)
+    {
+        return $query->where('is_test_data', false);
+    }
+
     public function getNameAttribute()
     {
         return $this->name_ru;

@@ -20,7 +20,7 @@ class FinanceServiceController extends Controller
         return view('dashboard.finance.services.index', compact('services'));
     }
 
-    public function create(): View { return view('dashboard.finance.services.create', ['paymentPlans' => PaymentPlan::active()->orderBy('sort_order')->get()]); }
+    public function create(): View { return view('dashboard.finance.services.create', ['paymentPlans' => PaymentPlan::operational()->orderBy('sort_order')->get()]); }
 
     public function store(StoreFinanceServiceRequest $request): RedirectResponse
     {
@@ -38,7 +38,7 @@ class FinanceServiceController extends Controller
     public function edit(Fee $fee): View
     {
         $fee->load(['billingPeriods', 'assignedPaymentPlans']);
-        return view('dashboard.finance.services.edit', ['fee' => $fee, 'paymentPlans' => PaymentPlan::active()->orderBy('sort_order')->get()]);
+        return view('dashboard.finance.services.edit', ['fee' => $fee, 'paymentPlans' => PaymentPlan::operational()->orderBy('sort_order')->get()]);
     }
 
     public function update(UpdateFinanceServiceRequest $request, Fee $fee): RedirectResponse
@@ -52,6 +52,14 @@ class FinanceServiceController extends Controller
      * Finance V2, Phase 2B — replace this Fee's allowed billing periods and
      * assigned custom PaymentPlan(s) with exactly what was submitted
      * (unchecked = removed, matching an ordinary form checkbox group).
+     *
+     * Payment Plan operational cleanup: payment_plan_ids is only ever
+     * meaningful when 'custom_plan' is itself among the submitted billing
+     * periods — the assigned-plan UI is hidden unless that box is checked
+     * (see _form.blade.php), and this must hold server-side too, even
+     * against a crafted request that submits payment_plan_ids without
+     * custom_plan. When custom_plan is absent, sync([]) so any stale
+     * assignment is detached exactly like an unchecked billing period.
      */
     private function syncBillingOptions(Fee $fee, StoreFinanceServiceRequest $request): void
     {
@@ -61,6 +69,9 @@ class FinanceServiceController extends Controller
             $fee->billingPeriods()->create(['billing_period' => $period]);
         }
 
-        $fee->assignedPaymentPlans()->sync($request->safe()->input('payment_plan_ids', []) ?? []);
+        $planIds = in_array('custom_plan', $periods, true)
+            ? ($request->safe()->input('payment_plan_ids', []) ?? [])
+            : [];
+        $fee->assignedPaymentPlans()->sync($planIds);
     }
 }

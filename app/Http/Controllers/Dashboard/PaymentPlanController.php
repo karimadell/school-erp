@@ -13,7 +13,12 @@ use Illuminate\View\View;
 class PaymentPlanController extends Controller
 {
     public function __construct() { $this->middleware('permission:manage invoices'); }
-    public function index(): View { return view('dashboard.finance.payment-plans.index',['plans'=>PaymentPlan::withCount('installments')->orderBy('sort_order')->get()]); }
+    // Payment Plan operational cleanup: this management list shows both
+    // active and inactive real plans on purpose (that is what the
+    // Активен/Неактивен column is for) — only UAT/test fixture plans
+    // (e.g. "UAT — 2 платежа 50/50") are excluded, via nonTest(), never
+    // is_active.
+    public function index(): View { return view('dashboard.finance.payment-plans.index',['plans'=>PaymentPlan::nonTest()->withCount('installments')->orderBy('sort_order')->get()]); }
     public function create(): View { return view('dashboard.finance.payment-plans.form',['plan'=>new PaymentPlan]); }
     public function store(StorePaymentPlanRequest $request): RedirectResponse { $plan=$this->save(new PaymentPlan,$request->validated()); return redirect()->route('dashboard.finance.payment-plans.edit',$plan)->with('success','План оплаты создан.'); }
     public function edit(PaymentPlan $paymentPlan): View { return view('dashboard.finance.payment-plans.form',['plan'=>$paymentPlan->load('installments')]); }

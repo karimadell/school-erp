@@ -27,7 +27,7 @@ class StudentInvoiceController extends Controller
             ->when($year, fn ($query) => $query->where('academic_year_id', $year->id))
             ->where('is_active', true)->orderByDesc('start_date')])->orderBy('category')->orderBy('name_ru')->get();
 
-        $paymentPlans = PaymentPlan::active()->with('installments')->orderBy('sort_order')->get();
+        $paymentPlans = PaymentPlan::operational()->with('installments')->orderBy('sort_order')->get();
         // Finance V2, Phase 2B corrective pass (review finding M2): a
         // PaymentPlan is only ever valid for a Fee it's explicitly assigned
         // to (Phase 2B's own rule) — the dropdown must not show every

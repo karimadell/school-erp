@@ -86,7 +86,7 @@ class QuickStudentRegistrationController extends Controller
         // one query is deliberately left separate and unchanged.
         $uniformProductsAll = DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get();
         $mealPlansAll = MealPlan::active()->orderBy('name_ru')->get();
-        $paymentPlans = PaymentPlan::active()->with('installments')->orderBy('sort_order')->get();
+        $paymentPlans = PaymentPlan::operational()->with('installments')->orderBy('sort_order')->get();
 
         // Phase 3: readiness is computed once here, against the screen's
         // primary active academic year, and handed to the view as data —

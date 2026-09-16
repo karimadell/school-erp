@@ -22,7 +22,7 @@
      </div>
    @endforeach
  </div>
- <div class="col-12">
+ <div class="col-12 @if(!in_array('custom_plan',$selectedPeriods,true)) d-none @endif" id="assigned-payment-plans-section">
    <label class="form-label">Назначенные планы рассрочки (только если отмечен «Индивидуальный план»)</label>
    <select class="form-select" name="payment_plan_ids[]" multiple size="4">
      @foreach($paymentPlans as $plan)
@@ -31,3 +31,13 @@
    </select>
  </div>
 </div>
+<script>
+  (function () {
+    var toggle = document.getElementById('billing-period-custom_plan');
+    var section = document.getElementById('assigned-payment-plans-section');
+    if (!toggle || !section) return;
+    var sync = function () { section.classList.toggle('d-none', !toggle.checked); };
+    toggle.addEventListener('change', sync);
+    sync();
+  })();
+</script>

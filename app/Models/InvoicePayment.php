@@ -11,6 +11,7 @@ class InvoicePayment extends Model
     use HasFactory;
 
     protected $fillable = [
+        'finance_collection_id',
         'invoice_id',
         'invoice_installment_id',
         'cash_account_id',
@@ -41,6 +42,23 @@ class InvoicePayment extends Model
                     }
                 }
             }
+
+            // Unified Collection foundation (PR B corrective pass) — same
+            // write-once semantics as Invoice::finance_collection_id (see
+            // that model's own comment): null -> a collection id is the
+            // one legitimate transition (FinanceCollectionService, right
+            // after record() returns, still inside its own outer
+            // transaction); re-saving the same value is a harmless no-op;
+            // reassigning to a different collection or detaching back to
+            // null is rejected. Checked unconditionally (not only once
+            // payment_number is set) since linking always happens after
+            // record() has already assigned one anyway.
+            if (
+                $payment->isDirty('finance_collection_id')
+                && $payment->getOriginal('finance_collection_id') !== null
+            ) {
+                throw new LogicException('Привязку платежа к сбору оплаты нельзя изменить после установки.');
+            }
         });
         static::deleting(fn () => throw new LogicException('Проведённый платёж нельзя удалить.'));
     }
@@ -58,6 +76,12 @@ class InvoicePayment extends Model
     public function invoice()
     {
         return $this->belongsTo(Invoice::class);
+    }
+
+    /** Unified Collection foundation (PR B) — nullable; only set for payments recorded through FinanceCollectionService. */
+    public function financeCollection()
+    {
+        return $this->belongsTo(FinanceCollection::class);
     }
 
     public function installment()

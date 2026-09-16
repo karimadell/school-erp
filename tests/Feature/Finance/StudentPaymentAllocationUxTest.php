@@ -234,8 +234,16 @@ class StudentPaymentAllocationUxTest extends MassBillingTestCase
         $this->assertSame(0, PaymentAllocation::count());
     }
 
-    // 7. Single-item invoice remains auto-allocated correctly.
-    public function test_single_item_invoice_still_auto_allocates_with_no_ui_allocation_inputs(): void
+    // 7. Single-item invoice remains auto-allocated correctly. Payment
+    // collection UX corrective: the form now renders a unified per-service
+    // "Оплатить сейчас" input even for a single item (consistent with the
+    // multi-item itemized layout) — this is presentation only. The
+    // controller's own allocations[] handling is still keyed off
+    // items->count() > 1, so a single item's allocations[id] field is
+    // never read server-side; the amount still flows through the
+    // top-level `amount` field and InvoicePaymentService still
+    // auto-allocates it to the sole item, exactly as before.
+    public function test_single_item_invoice_still_auto_allocates_via_the_unified_service_input(): void
     {
         $student = $this->enrolledStudent(suffix: 'SingleItem');
         $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
@@ -243,10 +251,15 @@ class StudentPaymentAllocationUxTest extends MassBillingTestCase
             'due_date' => '2027-01-01', 'fees' => [$this->tuition->id],
         ])->assertSessionHasNoErrors();
         $invoice = Invoice::where('student_id', $student->id)->sole();
+        $item = $invoice->items->first();
 
         $formResponse = $this->actingAs($this->accountant)->get(route('dashboard.invoices.payments.create', $invoice));
         $formResponse->assertOk();
-        $formResponse->assertDontSee('name="allocations[', false);
+        $formResponse->assertSee('name="allocations['.$item->id.']"', false);
+        // The invoice-level amount field is a readonly mirror in the
+        // itemized layout — it is never itself a second, independent
+        // place to type the amount.
+        $formResponse->assertSee('id="payment-amount"', false);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.invoices.payments.store', $invoice), [
             'amount' => '1200.00', 'payment_method' => 'cash',
@@ -256,7 +269,7 @@ class StudentPaymentAllocationUxTest extends MassBillingTestCase
 
         $response->assertSessionHasNoErrors();
         $this->assertSame(1, PaymentAllocation::count());
-        $this->assertSame($invoice->items->first()->id, PaymentAllocation::sole()->invoice_item_id);
+        $this->assertSame($item->id, PaymentAllocation::sole()->invoice_item_id);
     }
 
     // 8. Ambiguous invoice does NOT expose misleading service-selection UX.

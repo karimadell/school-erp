@@ -43,6 +43,10 @@ return [
     'income_placeholder_body' => 'Учёт прочих поступлений (не связанных напрямую с учеником) переносится в отдельный модуль учёта доходов, который проходит финальную проверку перед подключением к рабочей системе. Пока этот раздел недоступен, обратитесь к администратору.',
     'income_placeholder_back' => 'Назад к выбору типа поступления',
 
+    // Приход — bottom utility link into the existing service/fee catalog
+    // (dashboard.finance.services.index), never a new pricing engine.
+    'income_service_settings' => 'Настройка услуг и сборов',
+
     // Finance Workspace corrective PR #3 — unified "Добавить услугу" service picker.
     'add_service_title' => 'Добавить услугу',
     'add_service_hint' => 'Выберите услугу, которую нужно начислить ученику — форма подберётся автоматически.',

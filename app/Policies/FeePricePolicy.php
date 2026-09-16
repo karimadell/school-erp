@@ -24,7 +24,10 @@ class FeePricePolicy
 
     public function update(User $user, FeePrice $feePrice): bool
     {
-        return $user->can('manage fee prices');
+        // P1 accounting integrity: FeePrice rows are append-only history —
+        // a new version is created through the tariff workflow instead of
+        // editing an existing price in place.
+        return false;
     }
 
     public function delete(User $user, FeePrice $feePrice): bool

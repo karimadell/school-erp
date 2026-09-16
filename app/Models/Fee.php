@@ -3,10 +3,32 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use LogicException;
 
 class Fee extends Model
 {
     protected $attributes = ['is_non_refundable' => false];
+
+    /**
+     * P1 accounting integrity defense-in-depth (controller/policy layers
+     * already block user-facing deletion): a Fee that has ever
+     * participated in financial history — an InvoiceItem line or a
+     * FeePrice version — must never be physically deleted. InvoiceItem has
+     * no inverse relation on Fee, so its fee_id column is queried
+     * directly rather than inventing one.
+     */
+    protected static function booted(): void
+    {
+        static::deleting(function (self $fee) {
+            if (InvoiceItem::where('fee_id', $fee->getKey())->exists()) {
+                throw new LogicException('Услугу с историей начислений нельзя удалить.');
+            }
+
+            if ($fee->prices()->exists()) {
+                throw new LogicException('Услугу с историей цен нельзя удалить.');
+            }
+        });
+    }
 
     public const CATEGORY_TUITION = 'tuition';
     public const CATEGORY_TUITION_REGULAR = 'tuition_regular';

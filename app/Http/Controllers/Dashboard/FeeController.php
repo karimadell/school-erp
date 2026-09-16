@@ -101,9 +101,7 @@ class FeeController extends Controller
 
     public function destroy(Fee $fee)
     {
-        $fee->delete();
-
-        return back()->with('success', 'تم حذف الخدمة');
+        abort(403, 'Услуги с финансовой историей нельзя удалять. Чтобы вывести услугу из оборота, отключите её (is_active) в разделе «Цены на услуги».');
     }
 
     public function toggle(Fee $fee)

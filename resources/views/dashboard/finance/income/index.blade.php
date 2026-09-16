@@ -78,6 +78,14 @@
         @can('manage revenues')
             <a href="{{ route('dashboard.finance.income.revenue.index') }}" class="btn btn-outline-secondary">{{ __('revenues.page_title') }}</a>
         @endcan
+        {{-- Finance UX corrective — thin entry point into the EXISTING
+             canonical service/fee catalog (FinanceServiceController), never
+             a new pricing engine or CRUD. Gated on the exact permission
+             that catalog already requires, so this can never lead to a
+             403. --}}
+        @can('manage fees')
+            <a href="{{ route('dashboard.finance.services.index') }}" class="btn btn-outline-secondary">{{ __('finance_workspace.income_service_settings') }}</a>
+        @endcan
     </div>
 </div>
 

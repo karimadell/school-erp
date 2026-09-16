@@ -242,6 +242,52 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
             ->assertSee(route('dashboard.finance.income.students'), false);
     }
 
+    // Finance UX corrective — Приход gains a thin, permission-gated entry
+    // point into the EXISTING canonical service/fee catalog
+    // (dashboard.finance.services.index, FinanceServiceController). No new
+    // pricing engine, route, controller, or permission — 'manage fees'
+    // already existed and already gates that catalog itself.
+    public function test_manage_fees_user_sees_the_service_settings_entry_and_it_targets_the_canonical_catalog(): void
+    {
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.index'));
+
+        $response->assertOk();
+        $response->assertSee(route('dashboard.finance.services.index'), false);
+        $response->assertSee(__('finance_workspace.income_service_settings'));
+
+        $this->get(route('dashboard.finance.services.index'))
+            ->assertOk()
+            ->assertViewIs('dashboard.finance.services.index');
+    }
+
+    public function test_user_without_manage_fees_does_not_see_the_service_settings_entry(): void
+    {
+        $reception = $this->user('reception');
+        $reception->givePermissionTo('view invoices');
+        $this->assertFalse($reception->can('manage fees'));
+
+        $response = $this->actingAs($reception)->get(route('dashboard.finance.income.index'));
+
+        $response->assertOk();
+        $response->assertDontSee(route('dashboard.finance.services.index'), false);
+
+        // Confirms the gate matches the real backend requirement, not just
+        // UI — the link would have been a dead end had it been shown.
+        $this->get(route('dashboard.finance.services.index'))->assertForbidden();
+    }
+
+    public function test_opening_the_income_page_or_the_service_catalog_creates_no_fee_or_price_records(): void
+    {
+        $feesBefore = \App\Models\Fee::query()->count();
+        $pricesBefore = \App\Models\FeePrice::query()->count();
+
+        $this->actingAs($this->accountant)->get(route('dashboard.finance.income.index'))->assertOk();
+        $this->get(route('dashboard.finance.services.index'))->assertOk();
+
+        $this->assertSame($feesBefore, \App\Models\Fee::query()->count());
+        $this->assertSame($pricesBefore, \App\Models\FeePrice::query()->count());
+    }
+
     // 16. No duplicate revenue implementation — merely landing on/redirecting
     // through the Приход type screen never writes any record of its own;
     // only an explicit RevenueEntryController::store() call does, and it

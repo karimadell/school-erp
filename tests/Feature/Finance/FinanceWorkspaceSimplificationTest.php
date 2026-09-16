@@ -31,6 +31,40 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
             ->assertSee(__('finance_workspace.total_balance'));
     }
 
+    // Finance workspace navigation corrective — the workspace's own
+    // "+ Приход" action button (a pure duplicate of the sidebar's Приход
+    // entry: same route, same controller, same permission) is removed.
+    // The workspace page still contains the global sidebar, which renders
+    // its own href to the exact same route — so a plain assertDontSee on
+    // the bare URL would be wrong (it's still legitimately present, via
+    // the sidebar). This asserts absence of the specific REMOVED button
+    // markup (its distinctive btn-success class combination, only ever
+    // used by that one button on this page) rather than the URL alone,
+    // and separately confirms the sidebar's own link and the underlying
+    // route both remain fully intact.
+    public function test_workspace_no_longer_renders_the_duplicate_add_income_button_but_sidebar_and_route_remain(): void
+    {
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.workspace'));
+
+        $response->assertOk();
+
+        // The removed workspace button's exact markup is gone — reconstructs
+        // the specific anchor this test is protecting against reappearing,
+        // not merely the bare income URL (which the sidebar link below
+        // legitimately still renders on this same page).
+        $response->assertDontSee(
+            'href="'.route('dashboard.finance.income.index').'" class="btn btn-success',
+            false,
+        );
+
+        // The sidebar's own Приход entry is untouched.
+        $response->assertSee(route('dashboard.finance.income.index'), false);
+        $response->assertSee(__('finance_workspace.add_income'));
+
+        // The underlying Income route/controller remains fully functional.
+        $this->get(route('dashboard.finance.income.index'))->assertOk();
+    }
+
     // 5. + Расход reaches the canonical Expense create flow.
     public function test_add_expense_button_reaches_canonical_expense_create_flow(): void
     {

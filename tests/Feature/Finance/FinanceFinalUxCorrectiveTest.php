@@ -23,14 +23,14 @@ class FinanceFinalUxCorrectiveTest extends FinanceOperationsTestCase
     // A. Faster student payment flow
     // ----------------------------------------------------------------
 
-    // 1. Search/UX corrective — with more than one payable invoice for the
-    // same student, "Принять оплату" no longer links either invoice's
-    // payment route directly (there is no single correct target); it
-    // sends the accountant to the existing canonical Financial Account
-    // page (dashboard.students.finance) instead, where each invoice
-    // already has its own "Принять оплату" link. No new route. Financial
-    // data itself is completely untouched by rendering the search page.
-    public function test_income_students_page_routes_multiple_payable_invoices_through_the_financial_account(): void
+    // 1. Search/UX corrective, superseded by the Unified Cashier Workspace
+    // (PR C1) — with more than one payable invoice for the same student,
+    // "Принять оплату" no longer needs to pick a single invoice route at
+    // all: it now opens the Unified Collection workspace, which itself
+    // lists every outstanding obligation across every invoice on one
+    // screen. Financial data itself is completely untouched by rendering
+    // the search page.
+    public function test_income_students_page_routes_multiple_payable_invoices_through_the_unified_collection_workspace(): void
     {
         $second = Invoice::create([
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
@@ -56,10 +56,11 @@ class FinanceFinalUxCorrectiveTest extends FinanceOperationsTestCase
         $response->assertDontSee(route('dashboard.invoices.payments.create', $first), false);
         $response->assertDontSee(route('dashboard.invoices.payments.create', $second), false);
 
-        // Both "Финансовый счёт" and "Принять оплату" point at the same
-        // Financial Account route in the multi-invoice case.
-        $financeUrl = route('dashboard.students.finance', $this->student);
-        $this->assertSame(2, substr_count($response->getContent(), $financeUrl));
+        // "Финансовый счёт" still points at the Financial Account route;
+        // "Принять оплату" now points at the Unified Collection workspace
+        // instead — two distinct destinations, not the same one.
+        $response->assertSee(route('dashboard.students.finance', $this->student), false);
+        $response->assertSee(route('dashboard.students.unified-collection.create', $this->student), false);
 
         $this->assertSame('1200.00', $first->fresh()->remaining_amount);
         $this->assertSame('300.00', $second->fresh()->remaining_amount);

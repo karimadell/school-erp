@@ -87,7 +87,6 @@
                         @php
                             $student = $row['student'];
                             $summary = $row['summary'];
-                            $payableInvoices = $summary['invoices']->whereIn('status', ['unpaid', 'partial']);
                             $overdueAmount = (float) $summary['overdue'];
                         @endphp
                         <tr>
@@ -115,9 +114,12 @@
                                     @endcan
                                     <a class="btn btn-sm btn-outline-primary" href="{{ route('dashboard.students.finance', $student) }}">{{ __('finance_uat.student_account') }}</a>
                                     @can('manage invoices')
-                                        @if($payableInvoices->isNotEmpty())
-                                            <a class="btn btn-sm btn-success" href="{{ $payableInvoices->count() === 1 ? route('dashboard.invoices.payments.create', $payableInvoices->first()) : route('dashboard.students.finance', $student) }}">Принять оплату</a>
-                                        @endif
+                                        {{-- Unified Cashier Workspace (PR C1) — replaces the old
+                                             conditional single-invoice/finance-page fallback: the
+                                             workspace already shows every outstanding obligation
+                                             plus lets the operator add a new service, so it fully
+                                             subsumes both previous destinations. --}}
+                                        <a class="btn btn-sm btn-success" href="{{ route('dashboard.students.unified-collection.create', $student) }}">Принять оплату</a>
                                     @endcan
                                 </div>
                             </td>

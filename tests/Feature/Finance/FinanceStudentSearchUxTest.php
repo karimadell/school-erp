@@ -71,7 +71,14 @@ class FinanceStudentSearchUxTest extends FinanceOperationsTestCase
         $response->assertSee(route('dashboard.students.finance', $this->student), false);
     }
 
-    public function test_accept_payment_links_directly_when_exactly_one_payable_invoice(): void
+    /**
+     * Unified Cashier Workspace (PR C1) corrective — "Принять оплату" now
+     * opens the Unified Collection workspace (which itself lists every
+     * outstanding obligation, however many invoices they span) instead of
+     * the old conditional single-invoice/finance-page fallback. Intentional
+     * behavior change, approved as part of PR C1's own scope.
+     */
+    public function test_accept_payment_links_to_the_unified_collection_workspace(): void
     {
         $invoice = $this->invoice('1200.00');
 
@@ -79,15 +86,23 @@ class FinanceStudentSearchUxTest extends FinanceOperationsTestCase
 
         $response->assertOk();
         $response->assertSee('Принять оплату');
-        $response->assertSee(route('dashboard.invoices.payments.create', $invoice), false);
+        $response->assertSee(route('dashboard.students.unified-collection.create', $this->student), false);
     }
 
-    public function test_accept_payment_action_is_absent_when_nothing_is_payable(): void
+    /**
+     * Unified Cashier Workspace (PR C1) corrective — "Принять оплату" is
+     * now shown for any manage-invoices actor regardless of whether an
+     * existing payable invoice currently exists: the workspace is also
+     * how a new service gets charged+collected, not only how existing
+     * debt gets paid.
+     */
+    public function test_accept_payment_action_is_present_even_when_nothing_is_currently_payable(): void
     {
         $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.students'));
 
         $response->assertOk();
-        $response->assertDontSee('Принять оплату');
+        $response->assertSee('Принять оплату');
+        $response->assertSee(route('dashboard.students.unified-collection.create', $this->student), false);
     }
 
     public function test_open_profile_and_legacy_issue_invoice_actions_are_absent(): void

@@ -74,6 +74,26 @@ class Invoice extends Model
             ) {
                 throw new LogicException('Номер счёта нельзя изменить после присвоения.');
             }
+
+            // Unified Collection foundation (PR B corrective pass) —
+            // finance_collection_id is historical accounting linkage
+            // (which receipt this invoice was issued through), not a
+            // freely-reassignable tag. Exactly one legitimate transition
+            // exists: null -> a collection id, set once by
+            // FinanceCollectionService immediately after issuance, still
+            // inside its own outer transaction. Re-saving the SAME value
+            // is a harmless no-op (isDirty() is false). Any other
+            // transition — reassigning to a different collection, or
+            // detaching back to null — would silently corrupt that
+            // collection's own receivedTotal()/linkedInvoices() views
+            // with no audit trail (Invoice has no AuditObserver), so it
+            // fails closed here instead.
+            if (
+                $invoice->isDirty('finance_collection_id')
+                && $invoice->getOriginal('finance_collection_id') !== null
+            ) {
+                throw new LogicException('Привязку счёта к сбору оплаты нельзя изменить после установки.');
+            }
         });
     }
 

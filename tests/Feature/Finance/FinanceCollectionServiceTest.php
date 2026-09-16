@@ -2,12 +2,15 @@
 
 namespace Tests\Feature\Finance;
 
+use App\Models\CashAccount;
+use App\Models\CashTransaction;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FinanceCollection;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\User;
+use App\Services\Finance\CashSessionService;
 use App\Services\Finance\FinanceCollectionService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
@@ -62,17 +65,23 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
 
     public function test_collection_number_is_generated_uniquely_and_stably(): void
     {
+        // A fully empty collection (no obligations, no new services) is
+        // now rejected outright (corrective pass §3A) — a zero-amount new
+        // service (charge created, nothing collected yet, still a valid
+        // scenario) keeps this test focused on collection_number alone.
+        $feeA = $this->booksFee('100.00');
         $a = $this->service()->collect([
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
             'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
-            'existing_obligations' => [], 'new_services' => [],
+            'new_services' => [['fee_id' => $feeA->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
         ], $this->accountant);
 
         $studentB = $this->makeAnotherStudent();
+        $feeB = $this->booksFee('100.00');
         $b = $this->service()->collect([
             'student_id' => $studentB->id, 'academic_year_id' => $this->year->id,
             'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
-            'existing_obligations' => [], 'new_services' => [],
+            'new_services' => [['fee_id' => $feeB->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
         ], $this->accountant);
 
         $this->assertNotSame($a->collection_number, $b->collection_number);
@@ -329,6 +338,69 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
         $this->assertSame(0, FinanceCollection::query()->count());
     }
 
+    /**
+     * Test hardening (corrective pass §6) — a richer scenario exercising
+     * EVERY category the outer transaction must roll back together: a
+     * brand-new Enrollment established via annual_registration for a
+     * not-yet-enrolled year, a new-charge Invoice/Item/Installment/
+     * Payment/PaymentAllocation/CashTransaction that all succeed, and a
+     * final existing-obligation line — referencing an invoice from a
+     * DIFFERENT academic year, so it is rejected — that fails AFTER
+     * everything else already succeeded, proving nothing from any of the
+     * earlier, individually-successful steps survives.
+     */
+    public function test_failure_after_new_enrollment_and_new_charge_still_rolls_back_everything(): void
+    {
+        // Issued BEFORE $newYear is activated — activating an
+        // AcademicYear deactivates every other active one
+        // (AcademicYear::save()'s own invariant), so $this->year must
+        // still be active when this invoice is issued against it.
+        $wrongYearInvoice = $this->issueSimpleInvoice('1000.00');
+        $newYear = \App\Models\AcademicYear::create(['name' => '2027/2028', 'start_date' => '2027-08-01', 'end_date' => '2028-06-30', 'is_active' => false]);
+        $newYear->forceFill(['is_active' => true])->save();
+        $this->year->refresh();
+        $newServiceFee = $this->booksFee('300.00');
+
+        $enrollmentCountBefore = Enrollment::query()->count();
+        $invoiceCountBefore = Invoice::query()->count();
+        $paymentCountBefore = InvoicePayment::query()->count();
+        $allocationCountBefore = \App\Models\PaymentAllocation::query()->count();
+        $cashTransactionCountBefore = \App\Models\CashTransaction::query()->count();
+        $installmentCountBefore = \App\Models\InvoiceInstallment::query()->count();
+
+        try {
+            $this->service()->collect([
+                'student_id' => $this->student->id, 'academic_year_id' => $newYear->id,
+                'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+                'annual_registration' => [
+                    'enrollment_mode_id' => $this->enrollment->enrollment_mode_id,
+                    'stage_id' => $this->enrollment->stage_id,
+                    'grade_id' => $this->enrollment->grade_id,
+                    'class_id' => $this->enrollment->class_id,
+                ],
+                'new_services' => [
+                    ['fee_id' => $newServiceFee->id, 'quantity' => 1, 'receive_now_amount' => '300.00'],
+                ],
+                'existing_obligations' => [
+                    ['invoice_id' => $wrongYearInvoice->id, 'receive_now_amount' => '10.00'],
+                ],
+            ], $this->accountant);
+            $this->fail('Expected a ValidationException.');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        $this->assertSame(0, FinanceCollection::query()->count());
+        $this->assertSame($enrollmentCountBefore, Enrollment::query()->count());
+        $this->assertSame($invoiceCountBefore, Invoice::query()->count());
+        $this->assertSame($paymentCountBefore, InvoicePayment::query()->count());
+        $this->assertSame($allocationCountBefore, \App\Models\PaymentAllocation::query()->count());
+        $this->assertSame($cashTransactionCountBefore, \App\Models\CashTransaction::query()->count());
+        $this->assertSame($installmentCountBefore, \App\Models\InvoiceInstallment::query()->count());
+        $this->assertSame(0, \App\Models\InvoiceItem::query()->where('fee_id', $newServiceFee->id)->count());
+        $this->assertDatabaseMissing('enrollments', ['student_id' => $this->student->id, 'academic_year_id' => $newYear->id]);
+    }
+
     // ----- N/O. idempotency -----
 
     public function test_retry_with_the_same_idempotency_token_does_not_duplicate_money(): void
@@ -403,6 +475,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
         $newYear->forceFill(['is_active' => true])->save();
         $this->year->refresh();
 
+        $fee = $this->booksFee('100.00');
         $collection = $this->service()->collect([
             'student_id' => $newStudent->id, 'academic_year_id' => $newYear->id,
             'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
@@ -412,6 +485,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
                 'grade_id' => $this->enrollment->grade_id,
                 'class_id' => $this->enrollment->class_id,
             ],
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
         ], $this->accountant);
 
         $this->assertTrue($collection->exists);
@@ -428,6 +502,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
         $newYear = \App\Models\AcademicYear::create(['name' => '2027/2028', 'start_date' => '2027-08-01', 'end_date' => '2028-06-30', 'is_active' => false]);
         $newYear->forceFill(['is_active' => true])->save();
         $this->year->refresh();
+        $fee = $this->booksFee('100.00');
 
         $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
         $this->service()->collect([
@@ -439,6 +514,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
                 'grade_id' => $this->enrollment->grade_id,
                 'class_id' => $this->enrollment->class_id,
             ],
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
         ], $reception);
     }
 
@@ -464,6 +540,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
         $newYear->forceFill(['is_active' => true])->save();
         $this->year->refresh();
         $oldGradeId = $this->enrollment->grade_id;
+        $fee = $this->booksFee('100.00');
 
         $this->service()->collect([
             'student_id' => $this->student->id, 'academic_year_id' => $newYear->id,
@@ -474,6 +551,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
                 'grade_id' => $this->enrollment->grade_id,
                 'class_id' => $this->enrollment->class_id,
             ],
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
         ], $this->accountant);
 
         $this->enrollment->refresh();
@@ -527,6 +605,410 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
         $item = $collection->linkedInvoices()->sole()->items->sole();
         $this->assertSame('77.00', (string) $item->amount);
         $this->assertSame('77.00', $collection->receivedTotal());
+    }
+
+    // ----- §1. Canonical cash-account resolution (corrective pass) -----
+
+    public function test_cash_payment_cannot_be_redirected_to_a_non_canonical_account(): void
+    {
+        $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
+        app(CashSessionService::class)->open($decoy, $this->accountant);
+        $invoice = $this->issueSimpleInvoice('1000.00');
+
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
+        ], $this->accountant);
+
+        $payment = $collection->invoicePayments->sole();
+        $this->assertSame($this->cash->id, $payment->cash_account_id);
+        $this->assertNotSame($decoy->id, $payment->cash_account_id);
+    }
+
+    public function test_collection_cash_account_id_equals_the_canonical_resolved_account(): void
+    {
+        $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
+        $invoice = $this->issueSimpleInvoice('1000.00');
+
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
+        ], $this->accountant);
+
+        $this->assertSame($this->cash->id, $collection->cash_account_id);
+    }
+
+    public function test_all_linked_payments_use_the_same_resolved_cash_account(): void
+    {
+        $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
+        $existingInvoice = $this->issueSimpleInvoice('1000.00');
+        $fee = $this->booksFee('200.00');
+
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+            'existing_obligations' => [['invoice_id' => $existingInvoice->id, 'receive_now_amount' => '100.00']],
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '200.00']],
+        ], $this->accountant);
+
+        $this->assertCount(2, $collection->invoicePayments);
+        foreach ($collection->invoicePayments as $payment) {
+            $this->assertSame($this->cash->id, $payment->cash_account_id);
+        }
+    }
+
+    public function test_resulting_cash_transaction_uses_the_canonical_account(): void
+    {
+        $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
+        app(CashSessionService::class)->open($decoy, $this->accountant);
+        $invoice = $this->issueSimpleInvoice('1000.00');
+
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
+        ], $this->accountant);
+
+        $payment = $collection->invoicePayments->sole();
+        $transaction = $payment->cashTransaction;
+        $this->assertNotNull($transaction);
+        $this->assertSame($this->cash->id, $transaction->cash_account_id);
+    }
+
+    public function test_a_closed_cash_session_on_the_canonical_account_still_fails_through_the_existing_engine(): void
+    {
+        $this->closeCashSession();
+        $invoice = $this->issueSimpleInvoice('1000.00');
+
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
+        ], $this->accountant);
+    }
+
+    public function test_failure_after_a_partial_cash_collection_rolls_back_that_cash_transaction_too(): void
+    {
+        // Two existing obligations sharing the same cash-session-backed
+        // account: the first succeeds (would post a CashTransaction), the
+        // second overpays and fails — proving the whole attempt, cash
+        // effects included, is atomic.
+        $invoiceA = $this->issueSimpleInvoice('500.00');
+        $invoiceB = $this->issueSimpleInvoice('100.00');
+        $cashTransactionCountBefore = CashTransaction::query()->count();
+
+        try {
+            $this->service()->collect([
+                'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+                'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+                'existing_obligations' => [
+                    ['invoice_id' => $invoiceA->id, 'receive_now_amount' => '500.00'],
+                    ['invoice_id' => $invoiceB->id, 'receive_now_amount' => '9999.00'],
+                ],
+            ], $this->accountant);
+            $this->fail('Expected a ValidationException.');
+        } catch (ValidationException) {
+            // expected
+        }
+
+        $this->assertSame($cashTransactionCountBefore, CashTransaction::query()->count());
+        $invoiceA->refresh();
+        $this->assertSame('0.00', (string) $invoiceA->paid_amount);
+    }
+
+    // ----- §3. Small domain validation corrections -----
+
+    public function test_a_fully_empty_collection_request_is_rejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+        ], $this->accountant);
+    }
+
+    public function test_an_invalid_payment_method_is_rejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'bitcoin', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $this->booksFee()->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+    }
+
+    public function test_negative_receive_now_amount_is_rejected_for_existing_obligations(): void
+    {
+        $invoice = $this->issueSimpleInvoice('1000.00');
+
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '-1.00']],
+        ], $this->accountant);
+    }
+
+    public function test_negative_receive_now_amount_is_rejected_for_new_services(): void
+    {
+        $fee = $this->booksFee('500.00');
+
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '-1.00']],
+        ], $this->accountant);
+    }
+
+    public function test_missing_receive_now_amount_on_an_existing_obligation_does_not_warn_and_is_treated_as_zero(): void
+    {
+        $invoice = $this->issueSimpleInvoice('1000.00');
+
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id]],
+        ], $this->accountant);
+
+        $this->assertCount(0, $collection->invoicePayments);
+        $invoice->refresh();
+        $this->assertSame('0.00', (string) $invoice->paid_amount);
+    }
+
+    public function test_zero_receive_now_amount_on_an_existing_obligation_creates_no_meaningless_payment(): void
+    {
+        $invoice = $this->issueSimpleInvoice('1000.00');
+
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+
+        $this->assertCount(0, $collection->invoicePayments);
+        $this->assertSame(0, InvoicePayment::query()->where('invoice_id', $invoice->id)->count());
+    }
+
+    public function test_zero_receive_now_amount_on_a_new_service_still_creates_the_charge_without_a_payment(): void
+    {
+        $fee = $this->booksFee('500.00');
+
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+
+        $item = $collection->linkedInvoices()->sole()->items->sole();
+        $this->assertSame('500.00', (string) $item->amount);
+        $this->assertCount(0, $collection->invoicePayments);
+    }
+
+    public function test_missing_student_id_fails_cleanly(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $this->booksFee()->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+    }
+
+    public function test_missing_academic_year_id_fails_cleanly(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'student_id' => $this->student->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $this->booksFee()->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+    }
+
+    // ----- §4. Idempotency hash hardening -----
+
+    public function test_receive_now_amount_300_vs_300_00_replays_the_same_collection(): void
+    {
+        $invoice = $this->issueSimpleInvoice('1000.00');
+        $token = 'hash-hardening-numeric-format';
+
+        $first = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '300.00']],
+        ], $this->accountant);
+
+        $second = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '300']],
+        ], $this->accountant);
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertCount(1, $first->invoicePayments);
+    }
+
+    public function test_reordered_associative_keys_in_a_line_replay_the_same_collection(): void
+    {
+        $invoice = $this->issueSimpleInvoice('1000.00');
+        $token = 'hash-hardening-key-order';
+
+        $first = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '300.00']],
+        ], $this->accountant);
+
+        $second = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['receive_now_amount' => '300.00', 'invoice_id' => $invoice->id]],
+        ], $this->accountant);
+
+        $this->assertSame($first->id, $second->id);
+    }
+
+    public function test_reordered_equivalent_selected_lines_replay_the_same_collection(): void
+    {
+        $invoiceA = $this->issueSimpleInvoice('500.00');
+        $invoiceB = $this->issueSimpleInvoice('300.00');
+        $token = 'hash-hardening-line-order';
+
+        $first = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [
+                ['invoice_id' => $invoiceA->id, 'receive_now_amount' => '100.00'],
+                ['invoice_id' => $invoiceB->id, 'receive_now_amount' => '50.00'],
+            ],
+        ], $this->accountant);
+
+        $second = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [
+                ['invoice_id' => $invoiceB->id, 'receive_now_amount' => '50.00'],
+                ['invoice_id' => $invoiceA->id, 'receive_now_amount' => '100.00'],
+            ],
+        ], $this->accountant);
+
+        $this->assertSame($first->id, $second->id);
+    }
+
+    public function test_an_irrelevant_extra_key_does_not_cause_a_false_conflict(): void
+    {
+        $fee = $this->booksFee('500.00');
+        $token = 'hash-hardening-decoy-key';
+
+        $first = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '300.00', 'price' => '1.00']],
+        ], $this->accountant);
+
+        $second = $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '300.00', 'price' => '999.00']],
+        ], $this->accountant);
+
+        $this->assertSame($first->id, $second->id);
+    }
+
+    public function test_changing_the_actual_receive_now_amount_does_conflict(): void
+    {
+        $invoice = $this->issueSimpleInvoice('1000.00');
+        $token = 'hash-hardening-real-amount-change';
+
+        $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '300.00']],
+        ], $this->accountant);
+
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '301.00']],
+        ], $this->accountant);
+    }
+
+    public function test_changing_the_new_service_quantity_does_conflict(): void
+    {
+        $fee = $this->booksFee('50.00');
+        $token = 'hash-hardening-quantity-change';
+
+        $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 2, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+    }
+
+    public function test_changing_student_does_conflict(): void
+    {
+        $otherStudent = $this->makeAnotherStudent();
+        $fee = $this->booksFee('100.00');
+        $token = 'hash-hardening-student-change';
+
+        $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+
+        $this->expectException(ValidationException::class);
+        $this->service()->collect([
+            'idempotency_token' => $token,
+            'student_id' => $otherStudent->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '0.00']],
+        ], $this->accountant);
+    }
+
+    // ----- §5. Refund / gross received total semantics -----
+
+    public function test_gross_received_total_is_unaffected_by_a_subsequent_refund(): void
+    {
+        $invoice = $this->issueSimpleInvoice('1000.00');
+        $collection = $this->service()->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
+        ], $this->accountant);
+
+        $payment = $collection->invoicePayments->sole();
+        app(InvoiceRefundService::class)->refund(
+            invoicePaymentId: $payment->id, amount: '150.00', reason: 'Возврат части оплаты',
+            idempotencyKey: (string) Str::uuid(), actor: $this->accountant, cashAccountId: $this->cash->id,
+        );
+
+        $this->assertSame('400.00', $collection->fresh()->receivedTotal());
+        $this->assertSame('400.00', $collection->fresh()->grossReceivedTotal());
     }
 
     // ----- helpers -----

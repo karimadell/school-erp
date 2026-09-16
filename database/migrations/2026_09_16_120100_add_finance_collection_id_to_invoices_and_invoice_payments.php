@@ -50,14 +50,26 @@ return new class extends Migration
             $this->dropSqliteTriggers();
         }
 
+        // Explicit secondary index (corrective pass) — MySQL's InnoDB
+        // auto-indexes an FK column, but PostgreSQL does not; the
+        // "linked invoice/payment lookup" access pattern
+        // (FinanceCollection::invoices()/invoicePayments()/linkedInvoices())
+        // needs this regardless of which engine is actually running.
+        // Added as a separate $table->index() statement, NOT chained
+        // after ->nullOnDelete() — chaining ->index() onto the
+        // ForeignKeyDefinition object nullOnDelete() returns silently
+        // corrupts the FK constraint's own auto-generated name instead of
+        // adding an index (confirmed via `migrate --pretend`).
         Schema::table('invoices', function (Blueprint $table) {
             $table->foreignId('finance_collection_id')->nullable()->after('id')
                 ->constrained('finance_collections')->nullOnDelete();
+            $table->index('finance_collection_id');
         });
 
         Schema::table('invoice_payments', function (Blueprint $table) {
             $table->foreignId('finance_collection_id')->nullable()->after('id')
                 ->constrained('finance_collections')->nullOnDelete();
+            $table->index('finance_collection_id');
         });
 
         if ($isSqlite) {

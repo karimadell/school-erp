@@ -3,6 +3,7 @@
 namespace App\Services\Finance;
 
 use App\Models\AcademicYear;
+use App\Models\CashAccount;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FinanceCollection;
@@ -36,6 +37,12 @@ use Illuminate\Validation\ValidationException;
  *    charges, exactly the same "N once-strategy lines, each with its own
  *    explicit paid-now amount, settled in one record() call" shape Quick
  *    Registration's own 'mixed' payment_type already proved correct.
+ *  - CashAccount::resolvePaymentAccountId() — the SAME canonical cash-
+ *    account policy QuickStudentRegistrationService/ChargeAndCollectService
+ *    already use: a 'cash' payment_method always resolves to the canonical
+ *    operating account server-side, regardless of any cash_account_id a
+ *    caller submits (corrective pass — see §7 below). No second cash-
+ *    account policy is introduced here.
  *
  * Nothing here re-derives a charge amount, re-implements allocation rules,
  * or duplicates a money total already owned by one of those engines — see
@@ -63,10 +70,30 @@ use Illuminate\Validation\ValidationException;
  * The broader academic-year lifecycle (e.g. collecting for an *upcoming*,
  * not-yet-active year) is explicitly out of scope for this PR — see the
  * implementation report.
+ *
+ * DOMAIN VALIDATION BOUNDARY (corrective pass): PR B has no controller or
+ * FormRequest yet, so this service is the ONLY place protecting the
+ * accounting invariants below — not merely presentation-shape validation
+ * deferred to a future PR C. It deliberately stays narrow: no attempt is
+ * made to become a general-purpose FormRequest replacement (field types,
+ * localized field-level messages for every conceivable malformed shape,
+ * etc. remain PR C's job) — only invariants that could otherwise let a
+ * malformed or adversarial call move money incorrectly, silently no-op, or
+ * crash with a raw PHP warning instead of a clean, catchable exception.
  */
 class FinanceCollectionService
 {
     private const IDEMPOTENCY_NAMESPACE = 'finance-collection';
+
+    /**
+     * Mirrors InvoicePaymentService::record()'s own canonical payment-
+     * method list exactly (app/Services/Finance/InvoicePaymentService.php)
+     * — not a new taxonomy. Duplicated here (rather than a shared
+     * constant) only because record() is one of the accounting engines
+     * this PR's own scope explicitly leaves untouched; if this list ever
+     * changes there, it must change here too.
+     */
+    private const PAYMENT_METHODS = ['cash', 'bank', 'card', 'transfer', 'instapay'];
 
     public function __construct(
         private InvoiceIssuanceService $issuer,
@@ -85,7 +112,7 @@ class FinanceCollectionService
      *     cash_account_id?: ?int,
      *     notes?: ?string,
      *     annual_registration?: ?array{enrollment_mode_id: int, stage_id: int, grade_id: int, class_id: int, registration_date?: ?string},
-     *     existing_obligations?: array<int, array{invoice_id: int, receive_now_amount: string, installment_id?: ?int, allocations?: ?array}>,
+     *     existing_obligations?: array<int, array{invoice_id: int, receive_now_amount?: string, installment_id?: ?int, allocations?: ?array}>,
      *     new_services?: array<int, array<string, mixed>>,
      * }  $data
      *
@@ -99,9 +126,27 @@ class FinanceCollectionService
      */
     public function collect(array $data, User $actor): FinanceCollection
     {
+        $this->validateTopLevel($data);
+
+        // §7 corrective pass — canonical cash-account resolution, resolved
+        // ONCE and used everywhere a cash account matters: the collection
+        // row itself, every existing-obligation payment, every new-charge
+        // payment. A 'cash' payment_method always resolves to the
+        // canonical operating account regardless of what (if anything)
+        // the caller submitted — the exact same policy
+        // QuickStudentRegistrationService/ChargeAndCollectService already
+        // enforce; this is not a second, divergent cash policy.
+        $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
+
+        // Normalizes every line's receive_now_amount to a validated 2dp
+        // money string (rejecting negative amounts, defaulting a missing
+        // key to '0.00' rather than raising a raw PHP warning) BEFORE
+        // hashing or processing, so both see the exact same values.
+        $data = $this->normalizeLines($data);
+
         $outerToken = $data['idempotency_token'] ?? (string) Str::uuid();
         $idempotencyKey = DeterministicIdempotencyKey::derive($outerToken, self::IDEMPOTENCY_NAMESPACE, 'collection');
-        $payloadHash = $this->payloadHash($data);
+        $payloadHash = $this->payloadHash($data, $cashAccountId);
 
         // Checked before opening the transaction too — mirrors
         // InvoiceIssuanceService::issue()/QuickStudentRegistrationService::
@@ -113,7 +158,7 @@ class FinanceCollectionService
         }
 
         try {
-            return DB::transaction(function () use ($data, $actor, $outerToken, $idempotencyKey, $payloadHash) {
+            return DB::transaction(function () use ($data, $actor, $outerToken, $idempotencyKey, $payloadHash, $cashAccountId) {
                 $collection = FinanceCollection::create([
                     'idempotency_key' => $idempotencyKey,
                     'payload_hash' => $payloadHash,
@@ -121,7 +166,7 @@ class FinanceCollectionService
                     'academic_year_id' => $data['academic_year_id'],
                     'created_by' => $actor->id,
                     'payment_method' => $data['payment_method'],
-                    'cash_account_id' => $data['cash_account_id'] ?? null,
+                    'cash_account_id' => $cashAccountId,
                     'notes' => $data['notes'] ?? null,
                     'status' => FinanceCollection::STATUS_PENDING,
                 ]);
@@ -148,12 +193,22 @@ class FinanceCollectionService
                 }
 
                 $reference = $collection->collection_number;
-                $cashAccountId = $data['cash_account_id'] ?? null;
                 $notes = $data['notes'] ?? null;
 
                 // E. Existing obligations — each its own explicit
-                // receive-now amount, never spread automatically.
+                // receive-now amount, never spread automatically. A
+                // line whose (already-validated non-negative) amount is
+                // exactly zero is intentionally skipped: the obligation
+                // was merely listed, nothing was actually collected
+                // against it, so no InvoicePayment is created for it
+                // (recording a zero-amount payment would itself be
+                // rejected by InvoicePaymentService::record() as
+                // meaningless — this is a genuine, valid "nothing
+                // collected on this one today" case, not an error).
                 foreach ($data['existing_obligations'] ?? [] as $index => $line) {
+                    if (bccomp($line['receive_now_amount'], '0.00', 2) === 0) {
+                        continue;
+                    }
                     $this->collectExistingObligation($collection, $student, $year, $line, $index, $data['payment_method'], $cashAccountId, $actor, $reference, $notes, $outerToken);
                 }
 
@@ -162,7 +217,13 @@ class FinanceCollectionService
                 // MixedPaymentCollectionOrchestrator::collectMixed() shape
                 // Quick Registration's own 'mixed' payment_type already
                 // uses for "N once-strategy lines, each independently
-                // partially paid."
+                // partially paid." A new service's own receive_now_amount
+                // of exactly zero remains fully valid here (the parent may
+                // legitimately be charged today and pay nothing yet) —
+                // collectNewServices()/buildNewChargeAllocations() already
+                // handle that by simply never emitting an allocation, and
+                // never invoking the payment orchestrator at all when the
+                // whole batch's paidNow is zero.
                 if (! empty($data['new_services'])) {
                     if ($enrollment === null) {
                         throw ValidationException::withMessages(['new_services' => 'Для начисления новых услуг нужен активный учебный контекст (зачисление) — передайте annual_registration или выберите учебный год с существующим зачислением.']);
@@ -183,6 +244,68 @@ class FinanceCollectionService
             // now-dead transaction.
             return $this->replay(FinanceCollection::query()->where('idempotency_key', $idempotencyKey)->firstOrFail(), $payloadHash);
         }
+    }
+
+    /**
+     * Corrective pass §3 — protects only accounting/domain invariants that
+     * would otherwise let a malformed call move money incorrectly, no-op
+     * meaninglessly, or crash with a raw PHP warning instead of a clean,
+     * catchable ValidationException. Deliberately not a FormRequest
+     * replacement — field-level UX polish for every malformed shape stays
+     * PR C's job.
+     */
+    private function validateTopLevel(array $data): void
+    {
+        if (! isset($data['student_id'])) {
+            throw ValidationException::withMessages(['student_id' => 'Укажите ученика.']);
+        }
+        if (! isset($data['academic_year_id'])) {
+            throw ValidationException::withMessages(['academic_year_id' => 'Укажите учебный год.']);
+        }
+        if (! isset($data['payment_method']) || ! in_array($data['payment_method'], self::PAYMENT_METHODS, true)) {
+            throw ValidationException::withMessages(['payment_method' => 'Выбран недопустимый способ оплаты.']);
+        }
+        // A collection that would pay nothing existing and charge nothing
+        // new is a no-op with no accounting meaning — reject it outright
+        // rather than persisting a meaningless completed row.
+        if (empty($data['existing_obligations']) && empty($data['new_services'])) {
+            throw ValidationException::withMessages(['services' => 'Укажите хотя бы одну оплачиваемую услугу или начисление.']);
+        }
+    }
+
+    /**
+     * Validates and normalizes every existing_obligations/new_services
+     * line's own receive_now_amount to a strict 2dp money string —
+     * rejecting a negative amount outright, defaulting a missing key to
+     * '0.00' (never a raw PHP undefined-array-key warning). Every other
+     * field on each line passes through completely unchanged; this never
+     * touches pricing, allocation, or category-specific fields.
+     */
+    private function normalizeLines(array $data): array
+    {
+        $data['existing_obligations'] = collect($data['existing_obligations'] ?? [])
+            ->values()
+            ->map(function (array $line, int $index) {
+                $line['receive_now_amount'] = $this->nonNegativeMoney(
+                    (string) ($line['receive_now_amount'] ?? '0.00'),
+                    "existing_obligations.{$index}.receive_now_amount",
+                );
+
+                return $line;
+            })->all();
+
+        $data['new_services'] = collect($data['new_services'] ?? [])
+            ->values()
+            ->map(function (array $line, int $index) {
+                $line['receive_now_amount'] = $this->nonNegativeMoney(
+                    (string) ($line['receive_now_amount'] ?? '0.00'),
+                    "new_services.{$index}.receive_now_amount",
+                );
+
+                return $line;
+            })->all();
+
+        return $data;
     }
 
     /**
@@ -225,7 +348,9 @@ class FinanceCollectionService
      * (student, academic_year) pair. Everything else — payable state,
      * amount > 0, amount within remaining capacity, allocation validity —
      * is record()'s own existing, unchanged, authoritative check; never
-     * duplicated here.
+     * duplicated here. $line['receive_now_amount'] has already been
+     * validated non-negative and non-zero by the caller (normalizeLines()
+     * + the zero-skip in collect()) by the time this runs.
      */
     private function collectExistingObligation(
         FinanceCollection $collection,
@@ -234,7 +359,7 @@ class FinanceCollectionService
         array $line,
         int $index,
         string $paymentMethod,
-        ?int $cashAccountId,
+        int $cashAccountId,
         User $actor,
         ?string $reference,
         ?string $notes,
@@ -251,7 +376,7 @@ class FinanceCollectionService
         $payment = $this->payments->record(
             invoiceId: $invoice->id,
             cashAccountId: $cashAccountId,
-            amount: $this->money((string) $line['receive_now_amount']),
+            amount: $line['receive_now_amount'],
             paymentMethod: $paymentMethod,
             idempotencyKey: DeterministicIdempotencyKey::derive($outerToken, self::IDEMPOTENCY_NAMESPACE, "existing-{$index}"),
             actor: $actor,
@@ -288,13 +413,19 @@ class FinanceCollectionService
         Enrollment $enrollment,
         array $data,
         User $actor,
-        ?int $cashAccountId,
+        int $cashAccountId,
         ?string $reference,
         ?string $notes,
         string $outerToken,
     ): void {
         $services = collect($data['new_services'])->map(function (array $service) {
-            $service['paid_now'] = $this->money((string) ($service['receive_now_amount'] ?? '0.00'));
+            // receive_now_amount is already a validated, non-negative 2dp
+            // money string here (normalizeLines() ran before the
+            // transaction opened) — 'paid_now' is the field name
+            // ServiceSelectionNormalizer's own Uniform fan-out branch
+            // reads (see that class's own docblock); this is the same
+            // translation the original implementation always did.
+            $service['paid_now'] = $service['receive_now_amount'];
 
             return $service;
         })->all();
@@ -328,13 +459,20 @@ class FinanceCollectionService
                 $reference, $notes, $outerToken, self::IDEMPOTENCY_NAMESPACE,
             );
 
+            // Fetched and saved as models (not a bulk query-builder
+            // update()) so InvoicePayment's own saving() guard — including
+            // the finance_collection_id write-once check added in this
+            // corrective pass — genuinely runs on this, the one legitimate
+            // linking call site, rather than being bypassed by a raw SQL
+            // UPDATE.
             InvoicePayment::query()
                 ->where('invoice_id', $invoice->id)
                 ->whereIn('idempotency_key', [
                     DeterministicIdempotencyKey::derive($outerToken, self::IDEMPOTENCY_NAMESPACE, 'mixed-once'),
                     DeterministicIdempotencyKey::derive($outerToken, self::IDEMPOTENCY_NAMESPACE, 'mixed-periods'),
                 ])
-                ->update(['finance_collection_id' => $collection->id]);
+                ->get()
+                ->each(fn (InvoicePayment $payment) => $payment->update(['finance_collection_id' => $collection->id]));
         }
     }
 
@@ -405,37 +543,107 @@ class FinanceCollectionService
         return $collection;
     }
 
-    private function payloadHash(array $data): string
+    /**
+     * Corrective pass §4 — hardened idempotency hash. Two changes from
+     * the original:
+     *  1. $cashAccountId is the ALREADY-RESOLVED canonical account, never
+     *     the raw $data['cash_account_id'] — two submissions that differ
+     *     only in an ignored/overridden cash_account_id (e.g. 'cash'
+     *     always resolves to the same canonical account regardless of
+     *     what was submitted) must hash identically.
+     *  2. Every line is canonicalized through an EXPLICIT field whitelist
+     *     (canonicalizeExistingObligationLine()/canonicalizeNewServiceLine()/
+     *     canonicalizeAnnualRegistration()) instead of hashing the whole
+     *     raw line array — a client-supplied decoy/irrelevant key (e.g. a
+     *     stray 'price' field that never affects behavior — see §6 of the
+     *     approved design) can no longer cause a false "conflicting
+     *     payload" rejection on an otherwise-identical retry. Every field
+     *     ServiceSelectionNormalizer/InvoicePaymentService::record()
+     *     actually reads IS in the whitelist, so a genuine change to any
+     *     of them still changes the hash.
+     * notes is deliberately excluded — same established convention as
+     * QuickStudentRegistrationService::operationPayloadHash() (a
+     * submission differing only in a descriptive comment is still the
+     * same financial transaction).
+     */
+    private function payloadHash(array $data, int $cashAccountId): string
     {
         $material = [
             'student_id' => (int) $data['student_id'],
             'academic_year_id' => (int) $data['academic_year_id'],
             'payment_method' => (string) $data['payment_method'],
-            'cash_account_id' => isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null,
-            'annual_registration' => isset($data['annual_registration']) ? $this->canonicalize($data['annual_registration']) : null,
+            'cash_account_id' => $cashAccountId,
+            'annual_registration' => isset($data['annual_registration']) ? $this->canonicalizeAnnualRegistration($data['annual_registration']) : null,
             'existing_obligations' => collect($data['existing_obligations'] ?? [])
-                ->map(fn (array $line) => $this->canonicalize($line))
-                ->sortBy(fn (array $line) => sprintf('%020d', $line['invoice_id'] ?? 0))
+                ->map(fn (array $line) => $this->canonicalizeExistingObligationLine($line))
+                ->sortBy(fn (array $line) => sprintf('%020d', $line['invoice_id'] ?? 0) . '|' . json_encode($line, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
                 ->values()->all(),
             'new_services' => collect($data['new_services'] ?? [])
-                ->map(fn (array $line) => $this->canonicalize($line))
-                ->sortBy(fn (array $line) => sprintf('%020d', $line['fee_id'] ?? 0))
+                ->map(fn (array $line) => $this->canonicalizeNewServiceLine($line))
+                ->sortBy(fn (array $line) => sprintf('%020d', $line['fee_id'] ?? 0) . '|' . json_encode($line, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
                 ->values()->all(),
         ];
 
         return hash('sha256', json_encode($material, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
-    private function canonicalize(mixed $value): mixed
+    /**
+     * @return array{invoice_id: ?int, installment_id: ?int, receive_now_amount: string, allocations: array}
+     */
+    private function canonicalizeExistingObligationLine(array $line): array
     {
-        if (is_array($value)) {
-            $isList = array_is_list($value);
-            $canonicalized = collect($value)->map(fn ($v) => $this->canonicalize($v));
+        return [
+            'invoice_id' => isset($line['invoice_id']) ? (int) $line['invoice_id'] : null,
+            'installment_id' => isset($line['installment_id']) ? (int) $line['installment_id'] : null,
+            'receive_now_amount' => $this->money((string) ($line['receive_now_amount'] ?? '0.00')),
+            'allocations' => collect($line['allocations'] ?? [])
+                ->map(fn (array $allocation) => [
+                    'invoice_item_id' => (int) $allocation['invoice_item_id'],
+                    'amount' => $this->money((string) $allocation['amount']),
+                ])
+                ->sortBy(fn (array $allocation) => $allocation['invoice_item_id'])
+                ->values()->all(),
+        ];
+    }
 
-            return $isList ? $canonicalized->values()->all() : $canonicalized->sortKeys()->all();
-        }
+    /**
+     * Whitelists exactly the fields ServiceSelectionNormalizer::normalize()
+     * and this service's own buildNewChargeAllocations() actually read
+     * (see that class's own docblock for the full field list this
+     * mirrors) plus receive_now_amount — nothing else can materially
+     * change what this line does, so nothing else enters the hash.
+     */
+    private function canonicalizeNewServiceLine(array $line): array
+    {
+        return [
+            'fee_id' => isset($line['fee_id']) ? (int) $line['fee_id'] : null,
+            'quantity' => isset($line['quantity']) ? (int) $line['quantity'] : null,
+            'grade_group' => $line['grade_group'] ?? null,
+            'transport_area' => $line['transport_area'] ?? null,
+            'transport_route_id' => isset($line['transport_route_id']) ? (int) $line['transport_route_id'] : null,
+            'meal_plan_id' => isset($line['meal_plan_id']) ? (int) $line['meal_plan_id'] : null,
+            'payment_period' => $line['payment_period'] ?? null,
+            'billing_strategy' => $line['billing_strategy'] ?? null,
+            'uniform_items' => collect($line['uniform_items'] ?? [])
+                ->map(fn (array $item) => [
+                    'uniform_product_id' => (int) $item['uniform_product_id'],
+                    'quantity' => (int) $item['quantity'],
+                ])
+                ->sortBy(fn (array $item) => $item['uniform_product_id'])
+                ->values()->all(),
+            'receive_now_amount' => $this->money((string) ($line['receive_now_amount'] ?? '0.00')),
+        ];
+    }
 
-        return $value;
+    private function canonicalizeAnnualRegistration(array $registration): array
+    {
+        return [
+            'enrollment_mode_id' => isset($registration['enrollment_mode_id']) ? (int) $registration['enrollment_mode_id'] : null,
+            'stage_id' => isset($registration['stage_id']) ? (int) $registration['stage_id'] : null,
+            'grade_id' => isset($registration['grade_id']) ? (int) $registration['grade_id'] : null,
+            'class_id' => isset($registration['class_id']) ? (int) $registration['class_id'] : null,
+            'registration_date' => $registration['registration_date'] ?? null,
+        ];
     }
 
     private function money(string $value): string
@@ -445,5 +653,20 @@ class FinanceCollectionService
         }
 
         return bcadd($value, '0', 2);
+    }
+
+    /**
+     * Corrective pass §3(C)/(D) — money() plus an explicit non-negative
+     * check, one shared helper for both existing_obligations and
+     * new_services lines so the two rules stay identical.
+     */
+    private function nonNegativeMoney(string $value, string $field): string
+    {
+        $normalized = $this->money($value);
+        if (bccomp($normalized, '0.00', 2) < 0) {
+            throw ValidationException::withMessages([$field => 'Сумма не может быть отрицательной.']);
+        }
+
+        return $normalized;
     }
 }

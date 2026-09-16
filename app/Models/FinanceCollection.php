@@ -122,17 +122,36 @@ class FinanceCollection extends Model
     }
 
     /**
-     * The one authoritative "how much was actually received" number for
-     * this collection — always derived from SUM(linked InvoicePayment
-     * amounts), never stored redundantly on this row (see this table's
-     * migration docblock for why). Net of nothing else: a linked
-     * payment's own refunds are a separate, per-payment concern
-     * (InvoiceRefundService, untouched by this feature) and are
-     * deliberately not netted out here, mirroring Invoice::netPaidAmount()
-     * being a distinct, separate accessor from a raw payment sum.
+     * The GROSS "how much was actually received" number for this
+     * collection, historical-receipt semantics — always derived from
+     * SUM(linked InvoicePayment amounts), never stored redundantly on
+     * this row (see this table's migration docblock for why). A linked
+     * payment's own refunds are NOT subtracted: this is what the
+     * collection's receipt originally recorded as received, not a
+     * live "currently held" balance. InvoiceRefundService (untouched by
+     * this feature) is the canonical source for refund amounts, should a
+     * future net-of-refunds view ever be needed — this method
+     * deliberately does not attempt to compute one, mirroring
+     * Invoice::netPaidAmount() being a distinct, separate accessor from
+     * a raw payment sum rather than folding refund-netting into this one.
+     *
+     * Corrective pass (P2, receipt-semantics ambiguity) — named explicitly
+     * so a future receipt UI cannot mistake this for a live held balance.
+     */
+    public function grossReceivedTotal(): string
+    {
+        return bcadd((string) $this->invoicePayments()->sum('amount'), '0', 2);
+    }
+
+    /**
+     * @deprecated Kept only for call-site compatibility with earlier PR B
+     *             usage — always delegates to grossReceivedTotal(). Prefer
+     *             that name directly; it makes the gross-not-net semantics
+     *             explicit at every call site instead of relying on this
+     *             method's own docblock being read.
      */
     public function receivedTotal(): string
     {
-        return bcadd((string) $this->invoicePayments()->sum('amount'), '0', 2);
+        return $this->grossReceivedTotal();
     }
 }

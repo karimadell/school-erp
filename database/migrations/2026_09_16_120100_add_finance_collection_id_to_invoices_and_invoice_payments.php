@@ -85,11 +85,19 @@ return new class extends Migration
             $this->dropSqliteTriggers();
         }
 
+        // Corrective pass — the explicit index up() adds must be dropped
+        // BEFORE dropConstrainedForeignId() attempts to drop the column
+        // itself: confirmed via a genuine up->down->up round-trip that
+        // SQLite's DROP COLUMN does not implicitly drop a named index on
+        // that column first, and errors ("error in index ... after drop
+        // column") rather than doing so automatically.
         Schema::table('invoices', function (Blueprint $table) {
+            $table->dropIndex(['finance_collection_id']);
             $table->dropConstrainedForeignId('finance_collection_id');
         });
 
         Schema::table('invoice_payments', function (Blueprint $table) {
+            $table->dropIndex(['finance_collection_id']);
             $table->dropConstrainedForeignId('finance_collection_id');
         });
 

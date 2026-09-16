@@ -8,15 +8,36 @@ use App\Http\Requests\UpdateFinanceServiceRequest;
 use App\Models\Fee;
 use App\Models\PaymentPlan;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 class FinanceServiceController extends Controller
 {
     public function __construct() { $this->middleware('permission:manage fees'); }
 
-    public function index(): View
+    /**
+     * Services catalog UX corrective — nonTest() excludes UAT/test fixture
+     * Fees from this operational catalog (display-scope only, never
+     * active(): a real, currently inactive Fee must stay visible here).
+     * Search/category/status are simple server-side GET filters, no new
+     * route — withQueryString() carries them through pagination.
+     */
+    public function index(Request $request): View
     {
-        $services = Fee::query()->with(['prices.academicYear'])->withCount('prices')->orderBy('name_ru')->paginate(25);
+        $status = $request->string('status')->toString();
+
+        $services = Fee::query()
+            ->nonTest()
+            ->with(['prices.academicYear'])
+            ->withCount('prices')
+            ->when($request->filled('search'), fn ($q) => $q->where('name_ru', 'like', '%'.$request->string('search').'%'))
+            ->when($request->filled('category'), fn ($q) => $q->where('category', $request->string('category')))
+            ->when($status === 'active', fn ($q) => $q->where('is_active', true))
+            ->when($status === 'inactive', fn ($q) => $q->where('is_active', false))
+            ->orderBy('name_ru')
+            ->paginate(25)
+            ->withQueryString();
+
         return view('dashboard.finance.services.index', compact('services'));
     }
 

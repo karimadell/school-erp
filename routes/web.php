@@ -24,6 +24,7 @@ use App\Http\Controllers\Dashboard\EnrollmentController;
 use App\Http\Controllers\Dashboard\InvoiceController;
 use App\Http\Controllers\Dashboard\QuickStudentRegistrationController;
 use App\Http\Controllers\Dashboard\UnifiedCollectionController;
+use App\Http\Controllers\Dashboard\FinanceCollectionReceiptController;
 use App\Http\Controllers\Dashboard\FeeController;
 use App\Http\Controllers\Dashboard\FeePriceController;
 use App\Http\Controllers\Dashboard\ClassController;
@@ -556,6 +557,14 @@ Route::middleware(['auth', 'administrative'])
             ->name('students.unified-collection.create');
         Route::post('students/{student}/unified-collection', [UnifiedCollectionController::class, 'store'])
             ->name('students.unified-collection.store');
+
+        // Unified Cashier Receipt + Print Flow (PR C2) — read-only, gated
+        // by 'view invoices' inside FinanceCollectionReceiptController
+        // itself, exactly like payments.receipt/refunds.receipt above.
+        Route::get('collections/{financeCollection}/receipt', [FinanceCollectionReceiptController::class, 'show'])
+            ->name('collections.receipt');
+        Route::get('collections/{financeCollection}/receipt/pdf', [FinanceCollectionReceiptController::class, 'pdf'])
+            ->name('collections.receipt.pdf');
 
         Route::get('quick-registration', [QuickStudentRegistrationController::class, 'create'])
             ->name('quick-registration.create');

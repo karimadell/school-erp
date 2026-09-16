@@ -153,12 +153,13 @@ class UnifiedCollectionController extends Controller
             return back()->withInput()->withErrors($exception->errors());
         }
 
-        // J. Temporary safe destination for PR C1 — PR C2 adds the
-        // FinanceCollection receipt; until then, the collection_number is
-        // surfaced via a flash message on the student's own financial
-        // account page (already the canonical "what does this student owe
-        // now" view, unchanged).
-        return redirect()->route('dashboard.students.finance', $student)
+        // J. PR C2 — the collection succeeded; land the cashier directly on
+        // its own receipt (route-model-bound on the exact FinanceCollection
+        // collect() just returned, never re-derived) so it can be viewed,
+        // printed, or downloaded immediately. The receipt view itself links
+        // back to the student's financial account page and to a fresh
+        // unified-collection screen.
+        return redirect()->route('dashboard.collections.receipt', $collection)
             ->with('success', "Сбор оплаты №{$collection->collection_number} успешно проведён. Получено: {$collection->grossReceivedTotal()}.");
     }
 

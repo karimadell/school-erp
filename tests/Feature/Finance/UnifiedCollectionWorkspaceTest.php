@@ -122,7 +122,8 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
             'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
         ]);
 
-        $response->assertRedirect(route('dashboard.students.finance', $this->student));
+        $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
         $invoice->refresh();
         $this->assertSame('400.00', (string) $invoice->paid_amount);
         $this->assertSame('600.00', (string) $invoice->remaining_amount);
@@ -141,8 +142,8 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
             'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '300.00']],
         ]);
 
-        $response->assertRedirect(route('dashboard.students.finance', $this->student));
         $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
         $invoice = $collection->linkedInvoices()->sole();
         $item = $invoice->items->sole();
         $this->assertSame('500.00', (string) $item->amount);
@@ -157,14 +158,15 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         $existingInvoice = $this->issueSimpleInvoice('4500.00');
         $fee = Fee::create(['name_ru' => 'Поездка', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '500.00', 'is_active' => true]);
 
-        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
             'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
             'existing_obligations' => [['invoice_id' => $existingInvoice->id, 'receive_now_amount' => '4300.00']],
             'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '300.00']],
-        ])->assertRedirect(route('dashboard.students.finance', $this->student));
+        ]);
 
         $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
         $this->assertSame('4600.00', $collection->grossReceivedTotal());
         $existingInvoice->refresh();
         $this->assertSame('200.00', (string) $existingInvoice->remaining_amount);
@@ -198,13 +200,15 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
     {
         $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '500.00', 'is_active' => true]);
 
-        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
             'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
             'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '300.00', 'price' => '1.00', 'amount' => '1.00', 'unit_price' => '1.00']],
-        ])->assertRedirect(route('dashboard.students.finance', $this->student));
+        ]);
 
-        $item = FinanceCollection::query()->sole()->linkedInvoices()->sole()->items->sole();
+        $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $item = $collection->linkedInvoices()->sole()->items->sole();
         $this->assertSame('500.00', (string) $item->amount);
     }
 
@@ -271,10 +275,12 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
             'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
         ];
 
-        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), $payload)
-            ->assertRedirect(route('dashboard.students.finance', $this->student));
-        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), $payload)
-            ->assertRedirect(route('dashboard.students.finance', $this->student));
+        $first = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), $payload);
+        $second = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), $payload);
+
+        $collection = FinanceCollection::query()->sole();
+        $first->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $second->assertRedirect(route('dashboard.collections.receipt', $collection));
 
         $this->assertSame(1, FinanceCollection::query()->count());
         $this->assertSame(1, InvoicePayment::query()->where('invoice_id', $invoice->id)->count());
@@ -290,7 +296,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         ]);
         $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
 
-        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $newStudent), [
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $newStudent), [
             'idempotency_token' => (string) Str::uuid(),
             'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
             'annual_registration' => [
@@ -300,8 +306,10 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
                 'class_id' => $this->enrollment->class_id,
             ],
             'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '100.00']],
-        ])->assertRedirect(route('dashboard.students.finance', $newStudent));
+        ]);
 
+        $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
         $this->assertDatabaseHas('enrollments', ['student_id' => $newStudent->id, 'academic_year_id' => $this->year->id]);
     }
 
@@ -329,12 +337,14 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
         $invoice = $this->issueSimpleInvoice('1000.00');
 
-        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
             'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
             'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
-        ])->assertRedirect(route('dashboard.students.finance', $this->student));
+        ]);
 
+        $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
         $payment = InvoicePayment::query()->sole();
         $this->assertSame($this->cash->id, $payment->cash_account_id);
         $this->assertNotSame($decoy->id, $payment->cash_account_id);

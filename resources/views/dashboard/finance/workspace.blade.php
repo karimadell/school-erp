@@ -23,13 +23,15 @@
         @endforeach
     </div>
 
-    {{-- ================= Four primary actions ================= --}}
+    {{-- ================= Primary actions ================= --}}
+    {{-- Finance workspace navigation corrective — the "+ Приход" button
+         previously here was a pure duplicate of the sidebar's own "Приход"
+         entry: identical route (dashboard.finance.income.index), identical
+         controller/action (IncomeEntryController::index()), and identical
+         permission gate ('view invoices') at every layer. Removed as
+         redundant; the sidebar entry and the income workflow itself are
+         completely unchanged and remain one click away. --}}
     <div class="row g-3 mb-4">
-        <div class="col-6 col-md-3">
-            @can('view invoices')
-                <a href="{{ route('dashboard.finance.income.index') }}" class="btn btn-success btn-lg w-100">+ {{ __('finance_workspace.add_income') }}</a>
-            @endcan
-        </div>
         <div class="col-6 col-md-3">
             @can('create', \App\Models\Expense::class)
                 <a href="{{ route('dashboard.finance.expenses.create') }}" class="btn btn-danger btn-lg w-100">+ {{ __('finance_workspace.add_expense') }}</a>

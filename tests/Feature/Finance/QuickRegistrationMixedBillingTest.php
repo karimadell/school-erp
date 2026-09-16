@@ -791,33 +791,32 @@ class QuickRegistrationMixedBillingTest extends TestCase
         $this->assertSame('1000.00', (string) $perItem->get($tuitionItem->id));
         $this->assertSame('1500.00', (string) $perItem->get($transportItem->id));
 
-        // Payment collection UX corrective — with more than one installment,
-        // nothing is pre-selected (the accountant must consciously choose a
-        // period), so the per-item note shows the neutral prompt on load,
-        // not a number. The exact same figures the service layer proved
-        // above are embedded in the page's own data attribute for the
-        // existing JS to apply once a period is actually chosen — this is
-        // the same authoritative InvoicePaymentService figure, just
-        // delivered via JSON instead of a server-rendered "Доступно по
-        // выбранному этапу: ..." string, since there is no default period
-        // any more for that string to describe.
+        // Service-first payment collection corrective — Tuition and
+        // Transport each render their own "Период оплаты" radio choice
+        // (nested under that service, never a global dropdown), and each
+        // radio's own data-capacity carries the exact same
+        // InvoicePaymentService-computed per-item-per-installment figure
+        // proven above — the identical authoritative number, just
+        // rendered per service/period instead of a bare "Доступно по
+        // выбранному этапу: ..." string tied to one global default.
         $page = $this->actingAs($this->accountant)->get(route('dashboard.invoices.payments.create', $invoice))->assertOk();
-        $page->assertSee('Выберите период оплаты');
-        $page->assertSee('&quot;'.$period2->id.'&quot;:{&quot;'.$tuitionItem->id.'&quot;:&quot;1000.00&quot;', false);
-        $page->assertSee('&quot;'.$transportItem->id.'&quot;:&quot;1500.00&quot;', false);
+        $html = $page->getContent();
+        $this->assertMatchesRegularExpression('/id="period-'.$tuitionItem->id.'-'.$period2->id.'"[^>]*data-capacity="1000\.00"/', $html);
+        $this->assertMatchesRegularExpression('/id="period-'.$transportItem->id.'-'.$period2->id.'"[^>]*data-capacity="1500\.00"/', $html);
     }
 
     /**
-     * Payment collection UX corrective — the payment form's per-item
-     * "items with coverage" data must correctly separate once-bucket
-     * items (Registration: no ServiceCoverage anywhere, payable through
-     * the Разовые услуги installment) from calendar items (Tuition/
-     * Transport: coverage under the SHARED monthly schedule only) — this
-     * is what lets the form's JS disable Tuition/Transport when the
-     * once-bucket installment is selected instead of incorrectly
-     * offering their whole-invoice remaining under the wrong period.
+     * Service-first payment collection corrective — a once-bucket service
+     * (Registration: no ServiceCoverage anywhere) must render as itself,
+     * with a direct amount input and no period selector at all, and must
+     * never expose the internal "Разовые услуги" installment name. A
+     * calendar service (Tuition/Transport) must render its own period
+     * radio choice(s) instead. This is what lets the accountant pay
+     * Registration immediately while Tuition/Transport each require a
+     * conscious period choice first — never a shared, unexplained global
+     * dropdown, and never once-bucket/calendar items conflated.
      */
-    public function test_once_bucket_and_calendar_items_are_correctly_distinguished_for_coverage_eligibility(): void
+    public function test_once_bucket_service_shows_no_period_selector_while_calendar_services_do(): void
     {
         $this->openCashSession();
         $registration = $this->registrationFee('7000.00');
@@ -838,13 +837,17 @@ class QuickRegistrationMixedBillingTest extends TestCase
 
         $page = $this->actingAs($this->accountant)->get(route('dashboard.invoices.payments.create', $invoice))->assertOk();
         $html = $page->getContent();
-        preg_match('/data-items-with-coverage="([^"]*)"/', $html, $matches);
-        $this->assertNotEmpty($matches, 'data-items-with-coverage attribute not found');
-        $coveredIds = json_decode(html_entity_decode($matches[1]), true);
 
-        $this->assertContains($tuitionItem->id, $coveredIds, 'Tuition has calendar coverage and must be listed');
-        $this->assertContains($transportItem->id, $coveredIds, 'Transport has calendar coverage and must be listed');
-        $this->assertNotContains($registrationItem->id, $coveredIds, 'Registration (once-bucket) has no coverage anywhere and must not be listed');
+        $page->assertDontSee('Разовые услуги');
+        $page->assertSee($registration->name_ru);
+        // Registration's own service card has a direct, immediately
+        // capped input — no period radio for it at all.
+        $this->assertMatchesRegularExpression('/data-item-id="'.$registrationItem->id.'"\s+data-installment-id="\d+"/', $html);
+        $this->assertStringNotContainsString('id="period-'.$registrationItem->id.'-', $html);
+
+        // Tuition/Transport each expose their own period radio(s).
+        $this->assertStringContainsString('id="period-'.$tuitionItem->id.'-', $html);
+        $this->assertStringContainsString('id="period-'.$transportItem->id.'-', $html);
     }
 
     /** B: a combined payment (1,000 Tuition + 1,500 Transport = 2,500) against Период 2 succeeds. */

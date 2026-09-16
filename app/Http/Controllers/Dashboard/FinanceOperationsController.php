@@ -267,6 +267,30 @@ class FinanceOperationsController extends Controller
         // enforces, instead of the coarser whole-installment total.
         $remainingByItemPerInstallment = $allocationClean ? $service->remainingByItemPerInstallment($invoice) : collect();
 
+        // Service-first UX corrective — a read-only presentation reshape
+        // only, built from the two collections above (unchanged) plus a
+        // direct read of InstallmentCoveragePeriod's own real
+        // period_start/period_end (that model's own docblock: write-once,
+        // immutable — exactly what a "payable period" for one specific
+        // service truthfully means, independent of any installment's own
+        // due_date). Only period_start/period_end/invoice_installment_id
+        // are read here — never period->remainingAmount()/
+        // netSettledAmount() (each a live query per period); capacity
+        // keeps coming from remainingByItemPerInstallment (multi-item) or
+        // the installment's own already-loaded remaining_amount column
+        // (single item — trivially correct, since one item alone accounts
+        // for its whole installment). One bulk query regardless of item
+        // count, matching this screen's existing O(1) query-count
+        // discipline.
+        $itemized = $invoice->items->count() === 1 || $allocationClean;
+        $coveragePeriodsByItem = $itemized
+            ? \App\Models\InstallmentCoveragePeriod::query()
+                ->whereHas('installment', fn ($q) => $q->where('invoice_id', $invoice->id)->where('remaining_amount', '>', 0))
+                ->with('coverage')
+                ->get()
+                ->groupBy(fn ($period) => $period->coverage->invoice_item_id)
+            : collect();
+
         return view('dashboard.finance.payments.create', [
             'invoice' => $invoice,
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
@@ -274,6 +298,7 @@ class FinanceOperationsController extends Controller
             'allocationClean' => $allocationClean,
             'remainingByItem' => $remainingByItem,
             'remainingByItemPerInstallment' => $remainingByItemPerInstallment,
+            'coveragePeriodsByItem' => $coveragePeriodsByItem,
         ]);
     }
 

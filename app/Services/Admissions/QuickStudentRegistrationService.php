@@ -11,7 +11,6 @@ use App\Models\Grade;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\InvoicePayment;
-use App\Models\MealPlan;
 use App\Models\MealSubscription;
 use App\Models\QuickRegistrationOperation;
 use App\Models\SchoolClass;
@@ -22,26 +21,47 @@ use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
+use App\Services\Finance\MixedPaymentCollectionOrchestrator;
+use App\Services\Finance\ServiceSelectionNormalizer;
 use App\Services\AcademicStructureService;
 use App\Services\StudentServiceSubscriptionService;
+use App\Support\DeterministicIdempotencyKey;
 use App\Support\QrTrace;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Ramsey\Uuid\Uuid;
 
 class QuickStudentRegistrationService
 {
+    /**
+     * Unified Collection foundation (PR A) — $normalizer and $orchestrator
+     * are extracted, reusable Finance components (see their own
+     * docblocks); everything else here is unchanged. This service now
+     * ORCHESTRATES them for the specific Quick Registration case instead
+     * of inlining their logic, with byte-identical behavior.
+     */
     public function __construct(
         private InvoiceCalculationService $calculator,
         private InvoiceIssuanceService $issuer,
         private InvoicePaymentService $payments,
         private StudentServiceSubscriptionService $subscriptions,
         private AcademicStructureService $structure,
+        private ServiceSelectionNormalizer $normalizer,
+        private MixedPaymentCollectionOrchestrator $orchestrator,
     )
     {
     }
+
+    /**
+     * Unified Collection foundation (PR A) — the idempotency-key namespace
+     * every derive() call in this service uses; extracted so a future
+     * Finance collection engine can pass its OWN, different namespace into
+     * the SAME MixedPaymentCollectionOrchestrator without ever colliding
+     * with a Quick Registration key. Renaming this constant would change
+     * every existing key this service has ever produced — never do that.
+     */
+    private const IDEMPOTENCY_NAMESPACE = 'quick-registration';
 
     /**
      * @return array{student: Student, enrollment: Enrollment, invoice: Invoice, submission_paid_amount: string}
@@ -205,151 +225,20 @@ class QuickStudentRegistrationService
             // too, since allowedBillingPeriods()/allowsBillingPeriod() are
             // called per mixed-strategy line just below and would otherwise
             // each trigger their own fee_billing_periods query.
+            // Lock-contention corrective pass: this read is used only for
+            // category-branching and metadata (never for pricing), and Fee
+            // is never written by this transaction — see
+            // ServiceSelectionNormalizer's own docblock for the full
+            // rationale (unchanged, just relocated).
             $feesById = Fee::with('billingPeriods')
                 ->whereIn('id', collect($data['services'])->pluck('fee_id')->unique())
                 ->get()->keyBy('id')->all();
             $paymentType = $data['payment_type'] ?? 'one_time';
-            $normalizedServices = collect($data['services'])->flatMap(function (array $service) use ($grade, $mode, $feesById, $paymentType) {
-                // Lock-contention corrective pass: this read is used only
-                // for category-branching and metadata (never for pricing),
-                // and Fee is never written by this transaction. Pricing
-                // itself — the one place a stale/mid-edit Fee or FeePrice
-                // would actually matter — is resolved and re-validated
-                // (including Fee.is_active, see InvoiceCalculationService::
-                // resolvePrice()) with its own proper lock later, inside
-                // InvoiceIssuanceService::issue() below. A popular Fee
-                // (e.g. Tuition/Registration) is looked up here on every
-                // single Quick Registration submission that includes it —
-                // holding a lock on it for this transaction's entire
-                // remaining duration serialized unrelated registrations
-                // against each other for no correctness benefit.
-                $fee = $feesById[(int) $service['fee_id']]
-                    ?? throw (new \Illuminate\Database\Eloquent\ModelNotFoundException())->setModel(Fee::class, [$service['fee_id']]);
-
-                $common = [
-                    '_fee_category' => $fee->category,
-                    'enrollment_mode_id' => $mode->id,
-                    'grade_id' => in_array($fee->category, [
-                        Fee::CATEGORY_TUITION,
-                        Fee::CATEGORY_TUITION_REGULAR,
-                        Fee::CATEGORY_TUITION_FAMILY,
-                        Fee::CATEGORY_TUITION_EXTERNAL,
-                    ], true) && blank($service['grade_group'] ?? null) ? $grade->id : null,
-                    'option_type' => match ($fee->category) {
-                        Fee::CATEGORY_TRANSPORT => 'zone',
-                        Fee::CATEGORY_FOOD => 'meal_plan',
-                        default => null,
-                    },
-                    'option_value' => match ($fee->category) {
-                        Fee::CATEGORY_TRANSPORT => $service['transport_area'] ?? null,
-                        Fee::CATEGORY_FOOD => isset($service['meal_plan_id']) ? (string) $service['meal_plan_id'] : null,
-                        default => null,
-                    },
-                    'payment_period' => $fee->category === Fee::CATEGORY_FOOD ? Fee::PERIOD_DAILY : ($service['payment_period'] ?? null),
-                ];
-
-                // Finance V2 Phase 1 — per-service billing strategy,
-                // resolved and re-validated server-side (never trusted
-                // from the client alone, even though the request already
-                // checked it) only when payment_type=mixed. Every other
-                // payment_type never computes this — '_billing_strategy'/
-                // '_billing_period' simply don't exist on $common for
-                // 'one_time'/'calendar'/'plan', so InvoiceIssuanceService's
-                // existing single-strategy path (unchanged) never sees
-                // them and behaves exactly as before.
-                if ($paymentType === 'mixed' && $fee->category !== Fee::CATEGORY_FOOD) {
-                    $strategy = $service['billing_strategy'] ?? 'once';
-                    $calendarCapable = $fee->allowedBillingPeriods()->intersect(\App\Models\FeeBillingPeriod::CALENDAR_PERIODS)->isNotEmpty();
-
-                    if ($strategy === 'calendar') {
-                        if (! $calendarCapable) {
-                            throw ValidationException::withMessages(['services' => "Услуга «{$fee->name_ru}» не поддерживает периодическую оплату."]);
-                        }
-                        $period = $service['payment_period'] ?? null;
-                        if (blank($period) || ! in_array($period, \App\Models\FeeBillingPeriod::CALENDAR_PERIODS, true) || ! $fee->allowsBillingPeriod($period)) {
-                            throw ValidationException::withMessages(['services' => "Недопустимый период оплаты для услуги «{$fee->name_ru}»."]);
-                        }
-                        $common['_billing_strategy'] = 'calendar';
-                        $common['_billing_period'] = $period;
-                    } else {
-                        $common['_billing_strategy'] = 'once';
-                        $common['_billing_period'] = null;
-                    }
-                }
-
-                // Multi-item Uniform corrective pass — an employee may select
-                // several distinct Uniform items (each its own exact size) in
-                // one Quick Registration; each becomes its own independent
-                // invoice line, never collapsed into one opaque total
-                // (finance:uniform-procurement-report needs each item + exact
-                // size + quantity separately). This ONE submitted service
-                // entry (fee_id is still `distinct` at the request level, so
-                // there is still exactly one Uniform entry) fans out into N
-                // normalized entries here — one per selected uniform_items
-                // row. The single paid_now this submission carries for the
-                // whole Fee is placed on the FIRST generated line only (never
-                // duplicated across siblings, which would double-count the
-                // invoice-wide total below) — the reconciliation loop after
-                // issuance redistributes it across siblings, each capped at
-                // its own resolved amount.
-                if ($fee->category === Fee::CATEGORY_UNIFORM) {
-                    $uniformItems = $service['uniform_items'] ?? [];
-                    if (empty($uniformItems)) {
-                        throw ValidationException::withMessages(['services' => 'Для школьной формы выберите хотя бы одно изделие и размер.']);
-                    }
-
-                    return collect($uniformItems)->map(function (array $row, int $position) use ($service, $common) {
-                        // Lock-contention corrective pass: uniform_products
-                        // is a catalog table only — its `stock` column is
-                        // never read or written anywhere in this codebase
-                        // outside being explicitly set to null on catalog
-                        // sync (no inventory decrement exists to protect).
-                        // Only `is_active` is checked here.
-                        $product = DB::table('uniform_products')->where('is_active', true)->find($row['uniform_product_id']);
-                        if (! $product) {
-                            throw ValidationException::withMessages(['services' => 'Выбранное изделие школьной формы больше не доступно.']);
-                        }
-
-                        return array_merge($service, $common, [
-                            'quantity' => (int) $row['quantity'],
-                            'item' => $product->name_ru,
-                            'size' => $product->size,
-                            'uniform_product_id' => $product->id,
-                            'paid_now' => $position === 0 ? ($service['paid_now'] ?? '0.00') : '0.00',
-                        ]);
-                    })->values();
-                }
-
-                // Lock-contention corrective pass: transport_routes and
-                // meal_plans are read-only catalog checks here (existence /
-                // is_active only). Since PR #42's Transport capacity
-                // decoupling, Quick Registration never assigns a seat or
-                // touches vehicle capacity at all — transport_routes has no
-                // remaining write/consistency concern in this transaction.
-                // meal_plans similarly has no capacity/quantity column.
-                $route = null;
-                $mealPlan = null;
-                if ($fee->category === Fee::CATEGORY_TRANSPORT) {
-                    $route = DB::table('transport_routes')->find($service['transport_route_id']);
-                    if (! $route) {
-                        throw ValidationException::withMessages(['services' => 'Выбранный транспортный маршрут больше не доступен.']);
-                    }
-                }
-                if ($fee->category === Fee::CATEGORY_FOOD) {
-                    $mealPlan = MealPlan::query()->where('is_active', true)->find($service['meal_plan_id']);
-                    if (! $mealPlan) {
-                        throw ValidationException::withMessages(['services' => 'Выбранный план питания больше не доступен.']);
-                    }
-                }
-
-                return collect([array_merge($service, $common, [
-                    'quantity' => (int) $service['quantity'],
-                    'item' => null,
-                    'size' => null,
-                    'transport_route_name' => $route?->name,
-                    'meal_plan_name' => $mealPlan?->name_ru,
-                ])]);
-            })->values();
+            // Unified Collection foundation (PR A) — service-selection
+            // normalization now lives in ServiceSelectionNormalizer
+            // (extracted, byte-identical output); this call replaces the
+            // inline flatMap() this method used to run directly.
+            $normalizedServices = $this->normalizer->normalize($data['services'], $grade, $mode, $paymentType, $feesById);
             $items = $normalizedServices->all();
 
             QrTrace::log('services_normalized');
@@ -562,282 +451,42 @@ class QuickStudentRegistrationService
                 }
             }
 
+            // Unified Collection foundation (PR A) — the three payment-
+            // orchestration shapes below (mixed once+calendar split,
+            // calendar+Food period split, sequential-installment walk) now
+            // live in MixedPaymentCollectionOrchestrator (extracted,
+            // byte-identical InvoicePaymentService::record() calls and
+            // idempotency-key derivation — see that class's own docblock).
+            // This block only decides WHICH shape applies, exactly as
+            // before, and resolves the shared $cashAccountId/$reference
+            // once.
             if (bccomp($paidNow, '0.00', 2) > 0) {
+                $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
+                $reference = "Быстрая регистрация {$invoice->invoice_number}";
+                $notes = $data['payment_note'] ?? null;
+
                 if (($data['payment_type'] ?? null) === 'mixed') {
-                    // Finance V2 Phase 1 — per-service billing strategy.
-                    // Item-level attribution ($allocations, already
-                    // computed above by the exact same generic loop every
-                    // other payment_type uses — it is oblivious to
-                    // installment/schedule grouping entirely) is settled
-                    // in up to two record() calls: one direct
-                    // installmentId+allocations call for the single
-                    // 'once'-group lump sum (unambiguous — it always
-                    // settles in exactly one installment, the same
-                    // condition InvoicePaymentService::record() already
-                    // requires for that combination), and one
-                    // coveragePeriodAllocations call — generalizing the
-                    // exact mechanism the pre-existing 'calendar'+Food
-                    // branch below already uses — covering every
-                    // calendar-group and Food installment together,
-                    // however many of either exist. No InvoiceItem is
-                    // ever allocated more than its own $allocations
-                    // amount; a genuine shortfall against either bucket
-                    // fails closed exactly like the pre-existing branches
-                    // below already do.
-                    $remainingByItem = collect($allocations)->mapWithKeys(fn (array $line) => [
-                        (int) $line['invoice_item_id'] => (string) $line['amount'],
-                    ])->all();
-                    $onceItemIds = [];
-                    foreach ($orderedInvoiceItems as $position => $item) {
-                        $selection = $normalizedServices[$position];
-                        if (($selection['_fee_category'] ?? null) !== Fee::CATEGORY_FOOD
-                            && ($selection['_billing_strategy'] ?? 'once') === 'once') {
-                            $onceItemIds[] = $item->id;
-                        }
-                    }
-                    $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
-
-                    $onceAllocations = collect($onceItemIds)
-                        ->map(fn (int $id) => ['invoice_item_id' => $id, 'amount' => $remainingByItem[$id] ?? '0.00'])
-                        ->filter(fn (array $line) => bccomp($line['amount'], '0.00', 2) > 0)
-                        ->values()->all();
-                    $onceAmount = collect($onceAllocations)->reduce(fn (string $sum, array $line) => bcadd($sum, $line['amount'], 2), '0.00');
-                    if (bccomp($onceAmount, '0.00', 2) > 0) {
-                        $onceInstallment = $invoice->installments()->where('name_ru', InvoiceIssuanceService::MIXED_ONCE_INSTALLMENT_NAME)->firstOrFail();
-                        QrTrace::log('before_payment:mixed_once');
-                        $this->payments->record(
-                            invoiceId: $invoice->id,
-                            cashAccountId: $cashAccountId,
-                            amount: $onceAmount,
-                            paymentMethod: $data['payment_method'],
-                            idempotencyKey: $outerToken
-                                ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:mixed-once")
-                                : (string) Str::uuid(),
-                            actor: $actor,
-                            reference: "Быстрая регистрация {$invoice->invoice_number}",
-                            notes: $data['payment_note'] ?? null,
-                            installmentId: $onceInstallment->id,
-                            allocations: $onceAllocations,
-                        );
-                        QrTrace::log('after_payment:mixed_once');
-                    }
-                    foreach ($onceItemIds as $id) {
-                        unset($remainingByItem[$id]);
-                    }
-
-                    $periodsAmount = bcsub($paidNow, $onceAmount, 2);
-                    if (bccomp($periodsAmount, '0.00', 2) > 0) {
-                        $periodAllocations = [];
-                        $periods = \App\Models\InstallmentCoveragePeriod::query()
-                            ->with(['coverage', 'installment'])
-                            ->whereHas('installment', fn ($query) => $query->where('invoice_id', $invoice->id))
-                            ->get()->sortBy(fn ($period) => sprintf('%08d|%08d', $period->installment->sequence, $period->coverage->invoice_item_id));
-                        foreach ($periods as $period) {
-                            $itemId = (int) $period->coverage->invoice_item_id;
-                            $remainingForItem = $remainingByItem[$itemId] ?? '0.00';
-                            if (bccomp($remainingForItem, '0.00', 2) <= 0) {
-                                continue;
-                            }
-                            $portion = bccomp($remainingForItem, (string) $period->amount, 2) >= 0
-                                ? (string) $period->amount
-                                : $remainingForItem;
-                            $periodAllocations[] = [
-                                'invoice_item_id' => $itemId,
-                                'installment_coverage_period_id' => $period->id,
-                                'amount' => $portion,
-                            ];
-                            $remainingByItem[$itemId] = bcsub($remainingForItem, $portion, 2);
-                        }
-                        if (collect($remainingByItem)->contains(fn ($remaining) => bccomp((string) $remaining, '0.00', 2) !== 0)) {
-                            throw ValidationException::withMessages(['services' => 'Оплату не удалось полностью распределить по выбранным периодам услуг.']);
-                        }
-                        QrTrace::log('before_payment:mixed_periods', ['period_count' => count($periodAllocations)]);
-                        $this->payments->record(
-                            invoiceId: $invoice->id,
-                            cashAccountId: $cashAccountId,
-                            amount: $periodsAmount,
-                            paymentMethod: $data['payment_method'],
-                            idempotencyKey: $outerToken
-                                ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:mixed-periods")
-                                : (string) Str::uuid(),
-                            actor: $actor,
-                            reference: "Быстрая регистрация {$invoice->invoice_number}",
-                            notes: $data['payment_note'] ?? null,
-                            coveragePeriodAllocations: $periodAllocations,
-                        );
-                        QrTrace::log('after_payment:mixed_periods');
-                    }
+                    QrTrace::log('before_payment:mixed');
+                    $this->orchestrator->collectMixed(
+                        $invoice, $allocations, $normalizedServices, $orderedInvoiceItems,
+                        $paidNow, $data['payment_method'], $cashAccountId, $actor,
+                        $reference, $notes, $outerToken, self::IDEMPOTENCY_NAMESPACE,
+                    );
+                    QrTrace::log('after_payment:mixed');
                 } elseif (($data['payment_type'] ?? null) === 'calendar' && $foodService) {
-                    $remainingByItem = collect($allocations)->mapWithKeys(fn (array $line) => [
-                        (int) $line['invoice_item_id'] => (string) $line['amount'],
-                    ])->all();
-                    $periodAllocations = [];
-                    $periods = \App\Models\InstallmentCoveragePeriod::query()
-                        ->with(['coverage', 'installment'])
-                        ->whereHas('installment', fn ($query) => $query->where('invoice_id', $invoice->id))
-                        ->get()->sortBy(fn ($period) => sprintf('%08d|%08d', $period->installment->sequence, $period->coverage->invoice_item_id));
-                    foreach ($periods as $period) {
-                        $itemId = (int) $period->coverage->invoice_item_id;
-                        $remainingForItem = $remainingByItem[$itemId] ?? '0.00';
-                        if (bccomp($remainingForItem, '0.00', 2) <= 0) {
-                            continue;
-                        }
-                        $portion = bccomp($remainingForItem, (string) $period->amount, 2) >= 0
-                            ? (string) $period->amount
-                            : $remainingForItem;
-                        $periodAllocations[] = [
-                            'invoice_item_id' => $itemId,
-                            'installment_coverage_period_id' => $period->id,
-                            'amount' => $portion,
-                        ];
-                        $remainingByItem[$itemId] = bcsub($remainingForItem, $portion, 2);
-                    }
-                    if (collect($remainingByItem)->contains(fn ($remaining) => bccomp((string) $remaining, '0.00', 2) !== 0)) {
-                        throw ValidationException::withMessages(['services' => 'Оплату не удалось полностью распределить по выбранным периодам услуг.']);
-                    }
-                    $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
-                    $idempotencyKey = $outerToken
-                        ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:calendar")
-                        : (string) Str::uuid();
-                    QrTrace::log('before_payment:calendar', ['period_count' => count($periodAllocations)]);
-                    $this->payments->record(
-                        invoiceId: $invoice->id,
-                        cashAccountId: $cashAccountId,
-                        amount: $paidNow,
-                        paymentMethod: $data['payment_method'],
-                        idempotencyKey: $idempotencyKey,
-                        actor: $actor,
-                        reference: "Быстрая регистрация {$invoice->invoice_number}",
-                        notes: $data['payment_note'] ?? null,
-                        coveragePeriodAllocations: $periodAllocations,
+                    QrTrace::log('before_payment:calendar');
+                    $this->orchestrator->collectCalendarPeriods(
+                        $invoice, $allocations, $paidNow, $data['payment_method'], $cashAccountId, $actor,
+                        $reference, $notes, $outerToken, self::IDEMPOTENCY_NAMESPACE,
                     );
                     QrTrace::log('after_payment:calendar');
                 } else {
-                // Finance V2, Phase 2B (§4 of the approved design): a
-                // calendar/custom-plan schedule can now have more than one
-                // installment, and "full payment" must settle every one of
-                // them, not just the first. Walk installments in sequence,
-                // fully settling as many as $paidNow covers; a remainder
-                // that doesn't exactly cover the next whole installment is
-                // rejected (same validation-error pattern as the old
-                // single-installment check, generalized to "the next
-                // uncovered installment" rather than hardcoded to #1).
-                $installments = $invoice->installments()->orderBy('sequence')->get();
-                if ($installments->isEmpty()) {
-                    throw ValidationException::withMessages(['services' => 'У счёта отсутствуют этапы оплаты.']);
-                }
-
-                // Each entry: [installment, amount to record against it].
-                // For the single-installment case, amount is $paidNow
-                // itself (may be a genuine partial payment, unchanged from
-                // the original behavior). For a multi-installment schedule,
-                // each settled installment's amount is its own full
-                // remaining_amount, since only whole installments may be
-                // settled (validated below).
-                $toRecord = [];
-
-                if ($installments->count() === 1) {
-                    // Unchanged original behavior: a single-installment
-                    // invoice (one_time payment_type — the overwhelmingly
-                    // common case) accepts any partial-or-full amount up
-                    // to that one installment's remaining balance. The
-                    // "must exactly cover a whole number of installments"
-                    // rule below only makes sense once there's more than
-                    // one installment to walk.
-                    $installment = $installments->first();
-                    if (bccomp($paidNow, (string) $installment->remaining_amount, 2) > 0) {
-                        throw ValidationException::withMessages(['services' => 'Первоначальная оплата превышает сумму первого этапа рассрочки.']);
-                    }
-                    $toRecord[] = [$installment, $paidNow];
-                } else {
-                    $remainingToApply = $paidNow;
-                    foreach ($installments as $installment) {
-                        if (bccomp($remainingToApply, '0.00', 2) <= 0) {
-                            break;
-                        }
-                        $due = (string) $installment->remaining_amount;
-                        if (bccomp($remainingToApply, $due, 2) < 0) {
-                            throw ValidationException::withMessages(['services' => 'Первоначальная оплата не покрывает целое число этапов оплаты.']);
-                        }
-                        $toRecord[] = [$installment, $due];
-                        $remainingToApply = bcsub($remainingToApply, $due, 2);
-                    }
-                    if (bccomp($remainingToApply, '0.00', 2) > 0) {
-                        // Cannot happen given upstream per-line paid_now
-                        // caps (never exceeds a line's own amount, and
-                        // lines sum to the invoice total) — guarded
-                        // defensively rather than silently over-applying.
-                        throw ValidationException::withMessages(['services' => 'Первоначальная оплата превышает сумму счёта.']);
-                    }
-                }
-
-                $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
-                // Finance V2, Phase 2B corrective pass (review finding M3):
-                // deterministic, per-installment-INDEX idempotency keys
-                // derived from one outer, page-render-stable token — not a
-                // fresh random UUID per call. Deliberately keyed on the
-                // POSITION within this submission's own schedule, not on
-                // invoice_id/installment_id: issue() always creates a brand
-                // new Invoice (no invoice-level dedup exists, and adding
-                // one is out of scope here), so a true retry produces a
-                // DIFFERENT invoice/installment id every time regardless —
-                // keying on those would never actually collide. Keying on
-                // the stable (token, index) pair instead means a retry's
-                // record() calls reuse attempt one's exact keys.
-                //
-                // Finance V2, Phase 2D corrective pass: $issue() above is
-                // now ALSO keyed on $invoiceIdempotencyKey (derived from
-                // this same $outerToken), so a genuine retry with the same
-                // token returns the ORIGINAL invoice/installments directly
-                // — $installment/$invoice here are already the first
-                // attempt's own rows, and each record() call below simply
-                // replays its own already-recorded payment (same
-                // idempotency-hash check InvoicePaymentService::record()
-                // already performs). Net effect: a retried submission
-                // creates nothing new at any level — invoice, installments,
-                // coverage, or payments — it observes and returns exactly
-                // what the first successful attempt already produced. A
-                // caller with no idempotency_token (e.g. a non-browser API
-                // consumer) falls back to today's fresh-UUID-per-attempt
-                // behavior, unchanged (and to always-fresh invoice
-                // issuance, also unchanged).
-                QrTrace::log('before_payment:plan', ['period_count' => count($toRecord)]);
-                foreach ($toRecord as $index => [$installment, $amount]) {
-                    $idempotencyKey = $outerToken
-                        ? (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:{$index}")
-                        : (string) Str::uuid();
-                    $this->payments->record(
-                        invoiceId: $invoice->id,
-                        cashAccountId: $cashAccountId,
-                        amount: $amount,
-                        paymentMethod: $data['payment_method'],
-                        idempotencyKey: $idempotencyKey,
-                        actor: $actor,
-                        reference: "Быстрая регистрация {$invoice->invoice_number}",
-                        notes: $data['payment_note'] ?? null,
-                        installmentId: $installment->id,
-                        // Service-level attribution ($allocations) was built
-                        // from each service's own individually-entered
-                        // paid_now amount, summing to the FULL $paidNow —
-                        // it can only be attached to a record() call whose
-                        // own amount is that same full total (Phase 1A/1C's
-                        // SUM(allocations) === payment.amount invariant), so
-                        // it is only ever passed when this whole payment
-                        // settles in exactly one installment. Whenever it
-                        // spans more than one (count($toRecord) > 1),
-                        // splitting per-item attribution across installment
-                        // slices would require guessing which item's money
-                        // landed in which period — never done here; the
-                        // whole payment is honestly recorded as Unallocated
-                        // (Phase 2A's existing "Не распределено" bucket)
-                        // instead. NOTE: null (not []) is what actually
-                        // means "no explicit allocation" to record() — an
-                        // empty array is itself a validation error there
-                        // (Phase 1A/1C: "specify the allocation").
-                        allocations: (count($toRecord) === 1 && $index === 0) ? $allocations : null,
+                    QrTrace::log('before_payment:plan');
+                    $this->orchestrator->collectAcrossInstallments(
+                        $invoice, $allocations, $paidNow, $data['payment_method'], $cashAccountId, $actor,
+                        $reference, $notes, $outerToken, self::IDEMPOTENCY_NAMESPACE,
                     );
-                }
-                QrTrace::log('after_payment:plan');
+                    QrTrace::log('after_payment:plan');
                 }
             }
 
@@ -942,7 +591,7 @@ class QuickStudentRegistrationService
             ->merge($installmentCount > 0 ? range(0, $installmentCount - 1) : []);
 
         $keys = $suffixes
-            ->map(fn ($suffix) => (string) Uuid::uuid5(Uuid::NAMESPACE_URL, "quick-registration:{$outerToken}:{$suffix}"))
+            ->map(fn ($suffix) => DeterministicIdempotencyKey::derive($outerToken, self::IDEMPOTENCY_NAMESPACE, (string) $suffix))
             ->all();
 
         return (string) InvoicePayment::query()

@@ -110,6 +110,17 @@ class RolesAndPermissionsSeeder extends Seeder
             // 'manage invoices' so voiding and refunding are separable duties.
             'void invoices',
             'refund payments',
+            // Unified Collection foundation (PR B) — the narrow,
+            // purpose-built authorization seam FinanceCollectionService
+            // checks before it may establish a minimal annual Enrollment
+            // context for a RETURNING student as part of a parent-facing
+            // collection (see that service's own docblock). Deliberately
+            // NOT 'create enrollments'/'update enrollments' (those stay
+            // Reception's generic academic-Enrollment-CRUD surface,
+            // unchanged) and NOT implied by 'manage invoices' alone —
+            // granted explicitly, only to the roles that actually need
+            // it.
+            'register students for year',
 
             // Leadership oversight
             'view audit logs',
@@ -197,6 +208,16 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage student service subscriptions',
             'void invoices',
             'refund payments',
+            // Unified Collection foundation (PR B) — the accountant is the
+            // primary actor for the parent-facing collection workflow
+            // this narrow permission authorizes (establishing a minimal
+            // annual Enrollment context for a returning student inside a
+            // FinanceCollection), same as they already are for Quick
+            // Registration's own new-Enrollment creation via 'manage
+            // invoices'. This does NOT grant generic 'create
+            // enrollments'/'update enrollments' — the accountant still
+            // cannot use the standalone Enrollment CRUD screens.
+            'register students for year',
             // Cash Operations Phase 1: the accountant is the primary actor
             // for daily handover / owner-return / internal transfers, per
             // the real business workflow this feature models.
@@ -239,6 +260,21 @@ class RolesAndPermissionsSeeder extends Seeder
             // Phase 2A — cashier reads the Collections/«Поступления» page.
             'view collections',
             'view student balances',
+            // Unified Collection foundation (PR B) — repo-evidenced
+            // decision, not an automatic broadening: the cashier already
+            // holds 'manage invoices', which is the SAME permission that
+            // gates Quick Registration's own controller
+            // (QuickStudentRegistrationController::__construct()), and
+            // Quick Registration already creates a brand-new Enrollment
+            // for every submission it accepts, from a cashier session
+            // exactly as much as from an accountant one. A cashier can
+            // therefore already establish a new Enrollment today, just
+            // via a different route. Withholding this narrower,
+            // purpose-built permission from cashier while granting it to
+            // accountant would be an inconsistency this extraction did
+            // not introduce, not a genuine reduction in what a cashier
+            // can already do.
+            'register students for year',
             // Phase 3: a cashier physically operates the drawer, so they open,
             // close and reconcile their own shift (a cash collection now
             // requires an open shift). Accepting a variance stays out of reach.

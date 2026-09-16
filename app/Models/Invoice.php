@@ -22,6 +22,7 @@ class Invoice extends Model
     protected $fillable = [
         'idempotency_key',
         'idempotency_hash',
+        'finance_collection_id',
         'student_id',
         'invoice_number',
         'currency',
@@ -95,6 +96,12 @@ class Invoice extends Model
     public function academicYear()
     {
         return $this->belongsTo(AcademicYear::class);
+    }
+
+    /** Unified Collection foundation (PR B) — nullable; only set for invoices issued through FinanceCollectionService. */
+    public function financeCollection()
+    {
+        return $this->belongsTo(FinanceCollection::class);
     }
 
     public function createdBy(): BelongsTo

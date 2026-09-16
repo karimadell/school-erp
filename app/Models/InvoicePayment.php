@@ -11,6 +11,7 @@ class InvoicePayment extends Model
     use HasFactory;
 
     protected $fillable = [
+        'finance_collection_id',
         'invoice_id',
         'invoice_installment_id',
         'cash_account_id',
@@ -58,6 +59,12 @@ class InvoicePayment extends Model
     public function invoice()
     {
         return $this->belongsTo(Invoice::class);
+    }
+
+    /** Unified Collection foundation (PR B) — nullable; only set for payments recorded through FinanceCollectionService. */
+    public function financeCollection()
+    {
+        return $this->belongsTo(FinanceCollection::class);
     }
 
     public function installment()

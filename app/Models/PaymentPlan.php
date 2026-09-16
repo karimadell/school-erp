@@ -19,6 +19,25 @@ class PaymentPlan extends Model
         return $query->where('is_active', true);
     }
 
+    /**
+     * Excludes UAT/test fixture plans (e.g. "UAT — 2 платежа 50/50",
+     * created only by finance:uat-master-data-repair) from any screen an
+     * accountant uses to browse or select a real plan. Purely a display-
+     * scope filter — never deletes/deactivates the row, identical
+     * convention to Fee::where('is_test_data', false) in Quick
+     * Registration.
+     */
+    public function scopeNonTest($query)
+    {
+        return $query->where('is_test_data', false);
+    }
+
+    /** Active AND non-test — the correct scope for every operational selector. */
+    public function scopeOperational($query)
+    {
+        return $query->active()->nonTest();
+    }
+
     /** Finance V2, Phase 2B — Fees this plan is explicitly assigned to. */
     public function fees()
     {

@@ -33,11 +33,14 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             ->assertSee(route('dashboard.invoices.pdf', $invoice), false);
     }
 
-    // Finance landing page corrective: "Выставить счёт" moved off the
-    // Финансы landing page (now compact: summary + 4 actions + recent
-    // activity) onto the student billing page under Приход
-    // (dashboard.finance.income.students) — same permission gate as before.
-    public function test_invoice_create_action_is_prominent_and_permission_protected(): void
+    // Search/UX corrective — the legacy top-level "Выставить счёт" CTA
+    // (dashboard.invoices.create, the general InvoiceController with no
+    // student pre-selected) was removed from this page entirely, along
+    // with the equivalent per-row action. The modern, canonical
+    // "Добавить услугу" action (dashboard.students.add-service) is what
+    // this page now offers instead, permission-gated identically to the
+    // action it replaces.
+    public function test_legacy_invoice_create_action_is_absent_and_add_service_is_permission_protected(): void
     {
         $viewer = $this->user('reception');
         $viewer->givePermissionTo('view invoices');
@@ -45,13 +48,15 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
         $this->actingAs($this->accountant)
             ->get(route('dashboard.finance.income.students'))
             ->assertOk()
-            ->assertSee('Выставить счёт')
-            ->assertSee(route('dashboard.invoices.create'), false);
+            ->assertDontSee('Выставить счёт')
+            ->assertDontSee(route('dashboard.invoices.create'), false)
+            ->assertSee(__('finance_uat.add_service'))
+            ->assertSee(route('dashboard.students.add-service', $this->student), false);
 
         $this->actingAs($viewer)
             ->get(route('dashboard.finance.income.students'))
             ->assertOk()
-            ->assertDontSee('Выставить счёт');
+            ->assertDontSee(__('finance_uat.add_service'));
 
         $this->actingAs($viewer)
             ->get(route('dashboard.invoices.create'))

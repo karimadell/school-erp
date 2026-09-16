@@ -23,11 +23,14 @@ class FinanceFinalUxCorrectiveTest extends FinanceOperationsTestCase
     // A. Faster student payment flow
     // ----------------------------------------------------------------
 
-    // 1. Every payable invoice gets its own direct link into the existing
-    // canonical payment route — not just when there happens to be exactly
-    // one — and the link is the unmodified dashboard.invoices.payments.create
-    // route (no new payment engine).
-    public function test_income_students_page_lists_every_payable_invoice_with_a_direct_canonical_payment_link(): void
+    // 1. Search/UX corrective — with more than one payable invoice for the
+    // same student, "Принять оплату" no longer links either invoice's
+    // payment route directly (there is no single correct target); it
+    // sends the accountant to the existing canonical Financial Account
+    // page (dashboard.students.finance) instead, where each invoice
+    // already has its own "Принять оплату" link. No new route. Financial
+    // data itself is completely untouched by rendering the search page.
+    public function test_income_students_page_routes_multiple_payable_invoices_through_the_financial_account(): void
     {
         $second = Invoice::create([
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
@@ -49,10 +52,17 @@ class FinanceFinalUxCorrectiveTest extends FinanceOperationsTestCase
 
         $response = $this->actingAs($manager)->get(route('dashboard.finance.income.students'))->assertOk();
 
-        // Both payable invoices are directly actionable from the search
-        // results, not just the first/only one.
-        $response->assertSee(route('dashboard.invoices.payments.create', $first), false);
-        $response->assertSee(route('dashboard.invoices.payments.create', $second), false);
+        $response->assertSee('Принять оплату');
+        $response->assertDontSee(route('dashboard.invoices.payments.create', $first), false);
+        $response->assertDontSee(route('dashboard.invoices.payments.create', $second), false);
+
+        // Both "Финансовый счёт" and "Принять оплату" point at the same
+        // Financial Account route in the multi-invoice case.
+        $financeUrl = route('dashboard.students.finance', $this->student);
+        $this->assertSame(2, substr_count($response->getContent(), $financeUrl));
+
+        $this->assertSame('1200.00', $first->fresh()->remaining_amount);
+        $this->assertSame('300.00', $second->fresh()->remaining_amount);
     }
 
     // Payment action links require 'manage invoices' — same gate as before.

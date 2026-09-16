@@ -113,18 +113,28 @@ class StudentPaymentAllocationUxTest extends MassBillingTestCase
         return $payment;
     }
 
-    // 1. Student search shows service names for mixed invoices.
-    public function test_student_search_shows_service_breakdown_for_a_mixed_invoice(): void
+    // 1. Search/UX corrective — full invoice/service detail no longer
+    // renders inline on the student search results; it remains on the
+    // Financial Account page (dashboard.students.finance) exactly as
+    // before. With exactly one payable invoice, the search result still
+    // exposes a direct canonical "Принять оплату" link into it — no new
+    // payment route, the same dashboard.invoices.payments.create used
+    // everywhere else.
+    public function test_student_search_omits_invoice_detail_and_links_the_single_payable_invoice_directly(): void
     {
         [$invoice] = $this->issueMixedInvoice('SearchBreakdown');
 
         $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.students'));
 
         $response->assertOk();
-        $response->assertSee('Обучение');
-        $response->assertSee('Организационный взнос');
-        $response->assertSee('Книги');
-        $response->assertSee($invoice->display_number);
+        $response->assertDontSee('Организационный взнос');
+        $response->assertDontSee('Книги');
+        $response->assertDontSee($invoice->display_number);
+        $response->assertSee('Принять оплату');
+        $response->assertSee(route('dashboard.invoices.payments.create', $invoice), false);
+
+        // The invoice itself is untouched by rendering the search page.
+        $this->assertSame('1950.00', $invoice->fresh()->total_amount);
     }
 
     // 2. Mixed clean invoice payment form shows item allocation inputs.

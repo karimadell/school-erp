@@ -62,21 +62,21 @@ class FinanceOperationsController extends Controller
      * search/list/summary logic that used to live directly on the Финансы
      * landing page (workspace()), relocated (not rewritten) under the
      * Приход flow per the "student billing work lives under Приход, not
-     * on the Finance landing page" requirement. No query or business
-     * logic changed — same StudentFinanceSummaryService, same Invoice/
-     * InvoicePayment totals.
+     * on the Finance landing page" requirement. Same StudentFinanceSummaryService.
+     *
+     * Search/UX corrective — the 5 global KPI cards (Начислено/Оплачено/
+     * Остаток/Просрочено/Платежи сегодня) were removed: they were computed
+     * system-wide (never scoped to $request's search/filters), duplicating
+     * the Финансы landing page's own operationalSummary() while looking
+     * like they reflected the current search. Full invoice/item detail
+     * also moved off this list entirely — it remains on the Financial
+     * Account page (student()) exactly as before; this screen now only
+     * needs each student's own summary (already provided by
+     * StudentFinanceSummaryService) to show outstanding/overdue per row.
      */
     public function students(Request $request): View
     {
-        $invoices = Invoice::query();
-        $payments = InvoicePayment::query();
-        // Student Payment Allocation UX corrective — additive eager-load only
-        // (items.fee), so the search/shortcut screen can show each payable
-        // invoice's service breakdown without any N+1 query. No new query
-        // shape, no allocation computation here: this screen is display/
-        // navigation only, per the corrective's own scope (see the
-        // per-invoice item list rendered in dashboard.finance.income.students).
-        $students = Student::query()->with(['currentEnrollment.academicYear', 'invoices.payments', 'invoices.items.fee'])
+        $students = Student::query()->with(['currentEnrollment.academicYear', 'currentEnrollment.schoolClass', 'invoices.payments'])
             ->when($request->filled('q'), function ($query) use ($request) {
                 $term = trim((string) $request->input('q'));
                 $query->where(fn ($query) => $query
@@ -102,13 +102,6 @@ class FinanceOperationsController extends Controller
         return view('dashboard.finance.income.students', [
             'students' => $students,
             'years' => AcademicYear::orderByDesc('start_date')->get(),
-            'totals' => [
-                'invoiced' => $this->money($invoices->sum('total_amount')),
-                'paid' => $this->money($payments->sum('amount')),
-                'remaining' => $this->money(Invoice::sum('remaining_amount')),
-                'overdue' => $this->money(Invoice::overdue()->sum('remaining_amount')),
-                'today' => $this->money(InvoicePayment::whereDate('paid_at', today())->sum('amount')),
-            ],
         ]);
     }
 

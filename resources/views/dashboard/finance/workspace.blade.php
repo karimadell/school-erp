@@ -30,13 +30,17 @@
          controller/action (IncomeEntryController::index()), and identical
          permission gate ('view invoices') at every layer. Removed as
          redundant; the sidebar entry and the income workflow itself are
-         completely unchanged and remain one click away. --}}
+         completely unchanged and remain one click away.
+
+         Finance UAT corrective #1 — the "+ Расход" button previously here
+         is removed for the same reason: the sidebar's own "Расход" entry
+         (dashboard.finance.expenses.index) reaches the identical Expense
+         workflow (ExpenseController, same 'manage expenses' permission),
+         and that index page already has its own "create expense" action.
+         Expense creation itself, its routes, permissions, and accounting
+         logic are completely unchanged — only this duplicate shortcut is
+         removed. --}}
     <div class="row g-3 mb-4">
-        <div class="col-6 col-md-3">
-            @can('create', \App\Models\Expense::class)
-                <a href="{{ route('dashboard.finance.expenses.create') }}" class="btn btn-danger btn-lg w-100">+ {{ __('finance_workspace.add_expense') }}</a>
-            @endcan
-        </div>
         <div class="col-6 col-md-3">
             @canany(['manage cash', 'transfer cash', 'view cash reports'])
                 <a href="{{ route('dashboard.cash.operations.index') }}" class="btn btn-outline-secondary btn-lg w-100">{{ __('finance_workspace.cash') }}</a>

@@ -66,6 +66,13 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             'student_first_name_ru' => ['required', 'string', 'max:100'],
             'student_patronymic_ru' => ['nullable', 'string', 'max:100'],
             'phone' => ['required', 'string', 'max:20', 'regex:/^\+?[0-9\s\-()]{7,20}$/'],
+            // Finance UAT corrective (P0) — an opaque, server-issued proof
+            // (StudentIdentityResolver::issueConfirmationToken()) that the
+            // operator already reviewed existing-Student candidates for
+            // this exact identity and chose to continue. Shape-only here;
+            // QuickStudentRegistrationService is the sole place that ever
+            // verifies it means anything.
+            'identity_resolution_token' => ['nullable', 'string'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'academic_year_id' => ['required', 'integer', 'exists:academic_years,id'],
             'stage_id' => ['required', 'integer', 'exists:stages,id'],

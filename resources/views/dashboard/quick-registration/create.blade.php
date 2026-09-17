@@ -111,6 +111,47 @@
     @if($errors->any())
         <div class="alert alert-danger"><strong>Проверьте введённые данные:</strong><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
     @endif
+
+    {{-- Finance UAT corrective (P0) — student identity resolution. Flashed
+         by QuickStudentRegistrationController::store() only when
+         QuickStudentRegistrationService found existing-Student candidates
+         BEFORE creating anything. A candidate is evidence for the operator
+         to review, never proof of identity — nothing here is auto-selected.
+         The rest of the form below is already fully re-populated via the
+         same old()-based mechanism every validation error already uses, so
+         "продолжить регистрацию" only has to resubmit it, unchanged, with
+         the hidden confirmation token this same banner renders below. --}}
+    @if(session('identity_candidates'))
+        <div class="alert alert-warning" data-identity-resolution>
+            <strong>Возможно, ученик уже существует.</strong>
+            <p class="mb-2">Найдены записи с таким же именем. Проверьте их перед созданием нового ученика — возможно, это уже зарегистрированный ученик.</p>
+            <div class="list-group mb-3">
+                @foreach(session('identity_candidates') as $candidate)
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                            <div>
+                                <div class="fw-semibold">{{ $candidate['name'] }}</div>
+                                <div class="small text-muted">
+                                    @if($candidate['phone'])Телефон: {{ $candidate['phone'] }} · @endif
+                                    @if($candidate['latest_enrollment_year'])
+                                        Последнее зачисление: {{ $candidate['latest_enrollment_year'] }}@if($candidate['latest_enrollment_class']), {{ $candidate['latest_enrollment_class'] }}@endif
+                                    @else
+                                        Зачислений не найдено
+                                    @endif
+                                    @unless($candidate['has_current_year_enrollment'])
+                                        · <span class="text-danger">нет зачисления на текущий учебный год</span>
+                                    @endunless
+                                </div>
+                            </div>
+                            <a class="btn btn-sm btn-primary" href="{{ route('dashboard.students.unified-collection.create', $candidate['student_id']) }}{{ old('academic_year_id') ? '?academic_year_id='.old('academic_year_id') : '' }}">Использовать этого ученика</a>
+                        </div>
+                    </div>
+                @endforeach
+            </div>
+            <button type="submit" form="quick-registration-form" class="btn btn-outline-secondary btn-sm">Это другой ученик — продолжить регистрацию</button>
+        </div>
+    @endif
+
     @if($academicYears->isEmpty())<div class="alert alert-warning" data-configuration-warning="academic-year">Нет активного учебного года.</div>@endif
     @if($modes->isEmpty())<div class="alert alert-warning" data-configuration-warning="enrollment-mode">Формы обучения не настроены. @can('manage academic years')<a href="{{ route('dashboard.academic.enrollment-modes.index') }}" class="alert-link">Настроить формы обучения</a>@endcan</div>@endif
     @if($fees->isEmpty())<div class="alert alert-warning" data-configuration-warning="services">Финансовые услуги не настроены. Обратитесь к администратору.</div>@endif
@@ -126,6 +167,15 @@
              per-installment payment idempotency keys instead of a fresh
              random one per attempt. --}}
         <input type="hidden" name="idempotency_token" value="{{ old('idempotency_token', (string) \Illuminate\Support\Str::uuid()) }}">
+        {{-- Finance UAT corrective (P0) — carries the server-issued proof
+             that the operator already reviewed the candidates shown above
+             for this exact identity. old() takes priority so a further
+             validation-error round trip after choosing "продолжить
+             регистрацию" doesn't lose it; the freshly-flashed session value
+             is the source on the very first resolution response. Blank
+             (and therefore ignored by confirmationMatchesIdentity()) on a
+             completely fresh page load. --}}
+        <input type="hidden" name="identity_resolution_token" value="{{ old('identity_resolution_token', session('identity_confirmation_token', '')) }}">
         <section class="card shadow-sm mb-4">
             <div class="card-header fw-bold">1. Минимальные данные ученика</div>
             <div class="card-body row g-3">

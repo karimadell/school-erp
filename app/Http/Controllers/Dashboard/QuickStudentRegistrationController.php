@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Dashboard;
 
+use App\Exceptions\StudentIdentityResolutionRequired;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreQuickStudentRegistrationRequest;
 use App\Models\AcademicYear;
@@ -160,7 +161,23 @@ class QuickStudentRegistrationController extends Controller
         StoreQuickStudentRegistrationRequest $request,
         QuickStudentRegistrationService $service,
     ): RedirectResponse {
-        $result = $service->register($request->validated(), $request->user());
+        try {
+            $result = $service->register($request->validated(), $request->user());
+        } catch (StudentIdentityResolutionRequired $exception) {
+            // Finance UAT corrective (P0) — mirrors DuplicateOpenInvoiceException's
+            // own established handling shape exactly (FinanceOperationsController
+            // ::chargeStore()): back()->withInput() preserves every submitted
+            // field (services, prices, everything) via the form's existing
+            // old()-based re-population, so choosing "continue as new" only
+            // has to resubmit the same already-filled form plus the flashed
+            // confirmation token — nothing the operator entered is lost.
+            // Candidates are flashed as a plain array (never raw Student
+            // models) — the exact same "flash simple scalars/arrays, never
+            // models" convention every other flash in this codebase uses.
+            return back()->withInput()
+                ->with('identity_candidates', $exception->candidates->all())
+                ->with('identity_confirmation_token', $exception->confirmationToken);
+        }
 
         // Karim: Quick Registration must stay a single-page flow — issuing
         // the invoice already confirms the payment, so there is no separate

@@ -2,6 +2,7 @@
 
 namespace App\Services\Admissions;
 
+use App\Exceptions\StudentIdentityResolutionRequired;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
 use App\Models\Enrollment;
@@ -49,6 +50,7 @@ class QuickStudentRegistrationService
         private AcademicStructureService $structure,
         private ServiceSelectionNormalizer $normalizer,
         private MixedPaymentCollectionOrchestrator $orchestrator,
+        private StudentIdentityResolver $identity,
     )
     {
     }
@@ -104,6 +106,47 @@ class QuickStudentRegistrationService
             $existing = QuickRegistrationOperation::query()->where('idempotency_key', $operationKey)->first();
             if ($existing) {
                 return $this->replayOperation($existing, $payloadHash);
+            }
+        }
+
+        // Finance UAT corrective (P0) — student identity resolution, the
+        // very first substantive thing this method does on a genuinely new
+        // attempt (a replayed/already-completed operation above already
+        // skipped past this, correctly: it was resolved the first time).
+        // Deliberately BEFORE the transaction opens — this is a pure read,
+        // and it must run before Student::create() below (and therefore
+        // before every Enrollment/Invoice/InvoicePayment write that follows
+        // it in the same transaction) with no exception. A confirmation
+        // token that genuinely matches the identity being submitted right
+        // now (StudentIdentityResolver::confirmationMatchesIdentity())
+        // means the operator already reviewed candidates for this exact
+        // name+phone and chose to continue — skip the check only then;
+        // any other case (no token, stale token, or the identity changed
+        // since the token was issued) re-runs the candidate search.
+        $identityConfirmed = $this->identity->confirmationMatchesIdentity(
+            $data['identity_resolution_token'] ?? null,
+            $data['student_last_name_ru'] ?? null,
+            $data['student_first_name_ru'] ?? null,
+            $data['student_patronymic_ru'] ?? null,
+            $data['phone'] ?? null,
+        );
+        if (! $identityConfirmed) {
+            $candidates = $this->identity->findCandidates(
+                $data['student_last_name_ru'] ?? null,
+                $data['student_first_name_ru'] ?? null,
+                $data['student_patronymic_ru'] ?? null,
+                $data['phone'] ?? null,
+            );
+            if ($candidates->isNotEmpty()) {
+                throw new StudentIdentityResolutionRequired(
+                    $candidates,
+                    $this->identity->issueConfirmationToken(
+                        $data['student_last_name_ru'] ?? null,
+                        $data['student_first_name_ru'] ?? null,
+                        $data['student_patronymic_ru'] ?? null,
+                        $data['phone'] ?? null,
+                    ),
+                );
             }
         }
 
@@ -640,7 +683,14 @@ class QuickStudentRegistrationService
      */
     private function operationPayloadHash(array $data): string
     {
-        $material = collect($data)->except(['idempotency_token', 'notes', 'payment_note'])->all();
+        // identity_resolution_token is excluded for the same reason
+        // idempotency_token is: a control-plane proof/authorization
+        // artifact, not registration data — and Crypt::encryptString()
+        // never produces the same ciphertext twice for identical plaintext
+        // (random IV per call), so including it here could make two
+        // otherwise-identical submissions hash differently for no
+        // business-meaningful reason.
+        $material = collect($data)->except(['idempotency_token', 'identity_resolution_token', 'notes', 'payment_note'])->all();
         if (isset($material['services']) && is_array($material['services'])) {
             $material['services'] = collect($material['services'])
                 ->sortBy(fn ($service) => (int) ($service['fee_id'] ?? 0))

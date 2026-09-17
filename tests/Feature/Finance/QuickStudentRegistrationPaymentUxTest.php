@@ -23,7 +23,16 @@ class QuickStudentRegistrationPaymentUxTest extends QuickRegistrationUxTestCase
         // inactive-account rejection is to deactivate that canonical
         // account itself.
         CashAccount::operating()->update(['is_active' => false]);
+        // Finance UAT corrective (P0) — the first call above already
+        // succeeded and created a real "Иванов Иван" Student, so resubmitting
+        // that exact identity here would (correctly) trigger the new
+        // duplicate-Student identity check before ever reaching the
+        // cash-account validation this test actually targets. A distinct
+        // name keeps this call testing what it always tested, unrelated to
+        // identity resolution (covered separately by
+        // QuickStudentRegistrationIdentityResolutionTest).
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
+            'student_last_name_ru' => 'Сидоров',
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1.00']],
             'payment_method' => 'cash',
         ]))->assertSessionHasErrors('cash_account_id');

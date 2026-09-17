@@ -102,13 +102,16 @@
         {{-- Добавить услугу --}}
         <div class="card border-0 shadow-sm mb-4"><div class="card-body">
             <h3 class="h6 mb-3">Добавить услугу</h3>
-            @if(! $canChargeNewServices)
+            @if(! $canSelectNewServices)
                 <div class="text-muted">Начисление новых услуг недоступно: у ученика нет активного зачисления на текущий учебный год.</div>
             @else
+                @unless($enrollment)
+                    <div class="text-muted small mb-3" id="ns-ar-required-hint">Сначала включите «Зачисление на {{ $year->name }}» ниже и укажите класс, чтобы добавить услугу.</div>
+                @endunless
                 <div class="row g-3">
                     <div class="col-md-5">
                         <label class="form-label">Услуга</label>
-                        <select id="ns-fee" class="form-select">
+                        <select id="ns-fee" class="form-select" @disabled(! $enrollment)>
                             <option value="">Выберите услугу</option>
                             @foreach($fees as $fee)
                                 <option value="{{ $fee->id }}">{{ $fee->name_ru }}</option>
@@ -117,7 +120,7 @@
                     </div>
                     <div class="col-md-2" id="ns-quantity-wrap">
                         <label class="form-label">Количество</label>
-                        <input type="number" min="1" max="100" id="ns-quantity" class="form-control" value="1">
+                        <input type="number" min="1" max="100" id="ns-quantity" class="form-control" value="1" @disabled(! $enrollment)>
                     </div>
                     <div class="col-md-5" id="ns-tariff-wrap" hidden>
                         <label class="form-label">Вариант тарифа</label>
@@ -192,7 +195,7 @@
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Получить сейчас</label>
-                        <input type="number" step="0.01" min="0.01" id="ns-receive-now" class="form-control">
+                        <input type="number" step="0.01" min="0.01" id="ns-receive-now" class="form-control" @disabled(! $enrollment)>
                     </div>
                     <div class="col-md-4 d-flex align-items-end">
                         <button type="button" class="btn btn-primary w-100" id="ns-add-btn" disabled>Добавить в список</button>
@@ -289,6 +292,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const token = document.querySelector('#collection-form input[name="_token"]').value;
     const gradeId = '{{ $enrollment?->grade_id }}';
     const modeId = '{{ $enrollment?->enrollment_mode_id }}';
+    // P1 corrective — when there is no current-year Enrollment yet, the
+    // price preview must use whatever placement the operator has picked in
+    // the annual-registration panel below (reused, not duplicated), so a
+    // grade-scoped fee (e.g. Tuition) still previews correctly before the
+    // Enrollment exists. Falls back to the enrolled student's own
+    // grade/mode unchanged when an Enrollment already exists.
+    const currentGradeId = () => gradeId || (document.getElementById('ar-grade')?.value ?? '');
+    const currentModeId = () => modeId || (document.getElementById('ar-mode')?.value ?? '');
     const academicYearId = '{{ $year->id }}';
     const cents = value => Math.round((Number(value || 0) + Number.EPSILON) * 100);
     const money = value => (cents(value) / 100).toFixed(2);
@@ -433,8 +444,8 @@ document.addEventListener('DOMContentLoaded', () => {
             body.append('_token', token);
             body.append('fee_id', feeSelect.value);
             body.append('academic_year_id', academicYearId);
-            body.append('grade_id', gradeId);
-            body.append('enrollment_mode_id', modeId);
+            body.append('grade_id', currentGradeId());
+            body.append('enrollment_mode_id', currentModeId());
             body.append('registration_date', '{{ now()->toDateString() }}');
 
             if (isFood()) {
@@ -472,6 +483,27 @@ document.addEventListener('DOMContentLoaded', () => {
             preview.textContent = money(result.amount);
             addBtn.disabled = !receiveNow.value;
         };
+
+        // P1 corrective — when this student has no current-year Enrollment
+        // yet, the new-service controls start disabled (see the disabled
+        // attribute in the Blade above) and only become usable once the
+        // operator turns on annual registration below; they must never be submittable as
+        // a "no enrollment" purchase. Enrolled students are unaffected —
+        // requiresAnnualRegistration is false for them, so this whole block
+        // is a no-op.
+        const requiresAnnualRegistration = {{ $enrollment ? 'false' : 'true' }};
+        if (requiresAnnualRegistration) {
+            const arToggleEl = document.getElementById('ar-toggle');
+            const syncNsAvailability = () => {
+                const enabled = !!arToggleEl?.checked;
+                feeSelect.disabled = !enabled;
+                qty.disabled = !enabled;
+                receiveNow.disabled = !enabled;
+                if (!enabled) { addBtn.disabled = true; }
+            };
+            arToggleEl?.addEventListener('change', syncNsAvailability);
+            syncNsAvailability();
+        }
 
         feeSelect.addEventListener('change', () => { syncCategoryUi(); renderTariffs(); runPreview(); });
         tariffSelect.addEventListener('change', runPreview);

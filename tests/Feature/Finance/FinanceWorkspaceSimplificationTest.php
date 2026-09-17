@@ -65,14 +65,46 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
         $this->get(route('dashboard.finance.income.index'))->assertOk();
     }
 
-    // 5. + Расход reaches the canonical Expense create flow.
-    public function test_add_expense_button_reaches_canonical_expense_create_flow(): void
+    // Finance UAT corrective #1 — the workspace's own "+ Расход" action
+    // button (a pure duplicate of the sidebar's Расход entry: same
+    // underlying Expense workflow, same 'manage expenses' permission) is
+    // removed. The workspace page still contains the global sidebar, which
+    // renders its own href to expenses.index — so a plain assertDontSee on
+    // the bare create URL would be wrong (nothing else prints that exact
+    // URL on this page once the button is gone). This asserts absence of
+    // the specific REMOVED button markup (its distinctive btn-danger class
+    // combination, only ever used by that one button on this page) rather
+    // than the URL alone, and separately confirms the sidebar's own link
+    // and the underlying Expense create workflow both remain fully intact.
+    public function test_workspace_no_longer_renders_the_duplicate_add_expense_button_but_sidebar_and_route_remain(): void
     {
         $manager = $this->user('reception');
         $manager->givePermissionTo(['view invoices', 'manage expenses']);
 
+        $response = $this->actingAs($manager)->get(route('dashboard.finance.workspace'));
+
+        $response->assertOk();
+
+        // 1. The removed workspace button's exact markup is gone — the
+        // specific anchor this test protects against reappearing, not
+        // merely the bare create URL (nothing else on this page renders
+        // it once the button is removed).
+        $response->assertDontSee(
+            'href="'.route('dashboard.finance.expenses.create').'" class="btn btn-danger',
+            false,
+        );
+
+        // 2/3. The sidebar's own Расход entry remains present and still
+        // points at the canonical Expense index route.
+        $response->assertSee(__('finance_workspace.add_expense'));
+        $response->assertSee(route('dashboard.finance.expenses.index'), false);
+
+        // 4. The canonical Expense workflow remains fully reachable: the
+        // index page (the sidebar's destination) is itself functional and
+        // still offers its own "create expense" action, and the create
+        // route/controller/view are completely unchanged.
         $this->actingAs($manager)
-            ->get(route('dashboard.finance.workspace'))
+            ->get(route('dashboard.finance.expenses.index'))
             ->assertOk()
             ->assertSee(route('dashboard.finance.expenses.create'), false);
 

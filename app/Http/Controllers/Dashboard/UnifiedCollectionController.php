@@ -92,12 +92,26 @@ class UnifiedCollectionController extends Controller
         // unchanged "year is_active + active Enrollment" gate — mirrored
         // here only as a display decision, never bypassed.
         $canChargeNewServices = $year->is_active && $enrollment !== null;
+        $canRegisterAnnually = $request->user()->can('register students for year');
+
+        // P1 corrective — a returning student with no current-year
+        // Enrollment can still be sold services in this same pass, but only
+        // when the year is active and the actor is authorized to register
+        // students for it: the annual-registration controls the template
+        // already renders can then establish the Enrollment atomically
+        // alongside the purchase, through the EXISTING
+        // FinanceCollectionService::collect() annual_registration +
+        // new_services path (unchanged). $canChargeNewServices keeps its
+        // original "already enrolled" meaning for anything else relying on
+        // it; this is a separate, additive view capability.
+        $canSelectNewServices = $canChargeNewServices
+            || ($enrollment === null && $year->is_active && $canRegisterAnnually);
 
         $fees = collect();
         $mealPlans = collect();
         $transportRoutes = collect();
         $uniformProducts = collect();
-        if ($canChargeNewServices) {
+        if ($canSelectNewServices) {
             $fees = Fee::with(['prices', 'billingPeriods'])->nonTest()->active()->orderBy('category')->orderBy('name_ru')->get();
             $mealPlans = MealPlan::active()->orderBy('name_ru')->get();
             $transportRoutes = DB::table('transport_routes')->where('is_active', true)->orderBy('name')->get();
@@ -110,13 +124,14 @@ class UnifiedCollectionController extends Controller
             'enrollment' => $enrollment,
             'yearFigures' => $yearFigures,
             'canChargeNewServices' => $canChargeNewServices,
+            'canSelectNewServices' => $canSelectNewServices,
             'obligations' => $obligations->forStudentYear($student, $year),
             'fees' => $fees,
             'mealPlans' => $mealPlans,
             'transportRoutes' => $transportRoutes,
             'uniformProducts' => $uniformProducts,
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
-            'canRegisterAnnually' => $request->user()->can('register students for year'),
+            'canRegisterAnnually' => $canRegisterAnnually,
             'structureStages' => $this->structureStagesForAnnualRegistration(),
             'enrollmentModes' => EnrollmentMode::active()->ordered()->get(),
             'idempotencyToken' => (string) Str::uuid(),

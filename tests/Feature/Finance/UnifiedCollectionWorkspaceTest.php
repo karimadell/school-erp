@@ -425,4 +425,129 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
             ->get(route('dashboard.invoices.payments.create', $invoice))
             ->assertOk();
     }
+
+    // ----- 23. P1 corrective — returning student without a current-year Enrollment -----
+
+    private function returningStudentWithoutEnrollment(string $phone): Student
+    {
+        return Student::create([
+            'last_name_ru' => 'Сидоров', 'first_name_ru' => 'Пётр', 'patronymic_ru' => null,
+            'phone' => $phone, 'class_id' => $this->enrollment->class_id, 'status' => 'registration_completed',
+        ]);
+    }
+
+    public function test_active_year_no_enrollment_authorized_actor_sees_annual_registration_and_new_service_ui(): void
+    {
+        $returning = $this->returningStudentWithoutEnrollment('+201003334455');
+
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.students.unified-collection.create', $returning))
+            ->assertOk();
+
+        $response->assertSee('id="ns-fee"', false);
+        $response->assertSee('id="ar-toggle"', false);
+        $response->assertDontSee('Начисление новых услуг недоступно');
+    }
+
+    public function test_active_year_no_enrollment_unauthorized_actor_sees_neither_annual_registration_nor_new_service_ui(): void
+    {
+        $returning = $this->returningStudentWithoutEnrollment('+201003334456');
+        // 'reception' passes the administrative-portal gate (it's a real
+        // administrative role) but is seeded with neither 'manage invoices'
+        // nor 'register students for year' — as
+        // test_unauthorized_annual_registration_path_rejected above notes,
+        // no seeded role holds 'manage invoices' without also holding
+        // 'register students for year', so 'manage invoices' is granted
+        // directly to this one actor to exercise the boundary this
+        // corrective adds, without mutating the shared reception role.
+        $actor = User::factory()->create(['is_active' => true]);
+        $actor->assignRole('reception');
+        $actor->givePermissionTo('manage invoices');
+        $this->assertFalse($actor->can('register students for year'));
+
+        $response = $this->actingAs($actor)
+            ->get(route('dashboard.students.unified-collection.create', $returning))
+            ->assertOk();
+
+        $response->assertDontSee('id="ns-fee"', false);
+        $response->assertDontSee('id="ar-toggle"', false);
+        $response->assertSee('Начисление новых услуг недоступно');
+    }
+
+    public function test_inactive_year_no_enrollment_grants_no_new_service_ui_even_when_authorized(): void
+    {
+        $returning = $this->returningStudentWithoutEnrollment('+201003334457');
+        $closedYear = \App\Models\AcademicYear::create(['name' => '2024/2025', 'start_date' => '2024-08-01', 'end_date' => '2025-06-30', 'is_active' => false]);
+
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.students.unified-collection.create', $returning).'?academic_year_id='.$closedYear->id)
+            ->assertOk();
+
+        $response->assertDontSee('id="ns-fee"', false);
+        $response->assertSee('Начисление новых услуг недоступно');
+    }
+
+    public function test_existing_enrollment_student_new_service_ui_unaffected_by_this_corrective(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.students.unified-collection.create', $this->student))
+            ->assertOk();
+
+        $response->assertSee('id="ns-fee"', false);
+        // No annual-registration panel for an already-enrolled student —
+        // unchanged from before this corrective.
+        $response->assertDontSee('id="ar-toggle"', false);
+        // The fee control itself must not carry the no-enrollment disabled
+        // attribute added by this corrective.
+        $response->assertDontSee('id="ns-fee" class="form-select" disabled', false);
+    }
+
+    public function test_returning_student_annual_registration_with_new_service_creates_exactly_one_enrollment(): void
+    {
+        $returning = $this->returningStudentWithoutEnrollment('+201003334458');
+        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $returning), [
+            'idempotency_token' => (string) Str::uuid(),
+            'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'annual_registration' => [
+                'enrollment_mode_id' => $this->enrollment->enrollment_mode_id,
+                'stage_id' => $this->enrollment->stage_id,
+                'grade_id' => $this->enrollment->grade_id,
+                'class_id' => $this->enrollment->class_id,
+            ],
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '100.00']],
+        ]);
+
+        $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $this->assertSame(1, Enrollment::query()->where('student_id', $returning->id)->count());
+        $this->assertDatabaseHas('enrollments', [
+            'student_id' => $returning->id, 'academic_year_id' => $this->year->id, 'is_active' => true,
+        ]);
+    }
+
+    public function test_get_then_post_round_trip_for_returning_student_does_not_duplicate_the_student(): void
+    {
+        $returning = $this->returningStudentWithoutEnrollment('+201003334459');
+        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.students.unified-collection.create', $returning))
+            ->assertOk();
+
+        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $returning), [
+            'idempotency_token' => (string) Str::uuid(),
+            'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'annual_registration' => [
+                'enrollment_mode_id' => $this->enrollment->enrollment_mode_id,
+                'stage_id' => $this->enrollment->stage_id,
+                'grade_id' => $this->enrollment->grade_id,
+                'class_id' => $this->enrollment->class_id,
+            ],
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '100.00']],
+        ])->assertRedirect();
+
+        $this->assertSame(1, Student::query()->where('phone', '+201003334459')->count());
+    }
 }

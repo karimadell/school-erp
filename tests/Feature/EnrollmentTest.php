@@ -661,4 +661,75 @@ class EnrollmentTest extends TestCase
         $this->assertSame($mode->id, $enrollment->enrollment_mode_id);
         $this->assertSame('transferred', $enrollment->status);
     }
+
+    public function test_generic_update_cannot_clear_an_existing_mode_with_an_empty_value(): void
+    {
+        // A crafted request submitting enrollment_mode_id="" is sent through
+        // the real HTTP kernel here, so Laravel's global
+        // ConvertEmptyStringsToNull middleware converts it to null before
+        // validation runs — exactly as it would for any real request. The
+        // guard must still reject this as an attempted change (current mode
+        // is non-null), not silently accept it as "no value submitted".
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $mode = EnrollmentMode::create(['code' => 'full_time_clear_test', 'name_ru' => 'Очная']);
+
+        $this->enroll($student, $year, $class, 'active', $mode->id);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $response = $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollment->id), [
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => '',
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'transferred',
+        ]);
+
+        $response->assertSessionHasErrors('enrollment_mode_id');
+        $this->assertSame(
+            __('enrollments.validation.mode_change_not_allowed'),
+            session('errors')->first('enrollment_mode_id')
+        );
+
+        $fresh = $enrollment->fresh();
+        $this->assertSame($mode->id, $fresh->enrollment_mode_id);
+        // The whole request is rejected together — unrelated fields in the
+        // same submission must not be partially applied either.
+        $this->assertSame('active', $fresh->status);
+    }
+
+    public function test_generic_update_cannot_assign_a_mode_to_a_null_current_mode(): void
+    {
+        // Proves the generic edit endpoint cannot be used as a backdoor to
+        // give an already-existing, mode-less Enrollment its first mode —
+        // that must go through the dedicated future mode-change workflow.
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $mode = EnrollmentMode::create(['code' => 'full_time_assign_null_test', 'name_ru' => 'Очная']);
+
+        $this->enroll($student, $year, $class);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+        $this->assertNull($enrollment->enrollment_mode_id);
+
+        $user = $this->authorizedUser();
+        $response = $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollment->id), [
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $mode->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'active',
+        ]);
+
+        $response->assertSessionHasErrors('enrollment_mode_id');
+        $this->assertNull($enrollment->fresh()->enrollment_mode_id);
+    }
 }

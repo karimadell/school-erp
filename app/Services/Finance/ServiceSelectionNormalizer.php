@@ -39,7 +39,7 @@ class ServiceSelectionNormalizer
      *         query).
      * @return Collection<int, array<string, mixed>>
      */
-    public function normalize(array $services, Grade $grade, EnrollmentMode $mode, string $paymentType, array $feesById): Collection
+    public function normalize(array $services, Grade $grade, ?EnrollmentMode $mode, string $paymentType, array $feesById): Collection
     {
         return collect($services)->flatMap(function (array $service) use ($grade, $mode, $feesById, $paymentType) {
             $fee = $feesById[(int) $service['fee_id']]
@@ -47,7 +47,7 @@ class ServiceSelectionNormalizer
 
             $common = [
                 '_fee_category' => $fee->category,
-                'enrollment_mode_id' => $mode->id,
+                'enrollment_mode_id' => $mode?->id,
                 'grade_id' => in_array($fee->category, [
                     Fee::CATEGORY_TUITION,
                     Fee::CATEGORY_TUITION_REGULAR,

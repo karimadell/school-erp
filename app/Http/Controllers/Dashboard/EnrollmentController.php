@@ -155,6 +155,19 @@ class EnrollmentController extends Controller
     {
         $enrollment = Enrollment::findOrFail($id);
 
+        // Study mode (Форма обучения) is immutable through this generic edit
+        // endpoint. Changing an existing enrollment's mode has financial and
+        // historical consequences (tariff, effective-dated history) that this
+        // endpoint has no way to apply — that requires a dedicated future
+        // "Изменить форму обучения" workflow. A submitted value equal to the
+        // enrollment's current mode is accepted as a no-op (so a form that
+        // happens to echo the existing value back doesn't break); any other
+        // submitted value is rejected explicitly rather than silently applied
+        // or silently dropped.
+        $currentModeId = $enrollment->enrollment_mode_id !== null
+            ? (int) $enrollment->enrollment_mode_id
+            : null;
+
         $data = $request->validate([
             'academic_year_id' => [
                 'required',
@@ -163,7 +176,16 @@ class EnrollmentController extends Controller
                     ->where(fn ($query) => $query->where('student_id', $enrollment->student_id))
                     ->ignore($enrollment->id),
             ],
-            'enrollment_mode_id' => ['nullable', 'exists:enrollment_modes,id'],
+            'enrollment_mode_id' => [
+                'sometimes',
+                function (string $attribute, $value, \Closure $fail) use ($currentModeId) {
+                    $submittedModeId = $value !== null ? (int) $value : null;
+
+                    if ($submittedModeId !== $currentModeId) {
+                        $fail(__('enrollments.validation.mode_change_not_allowed'));
+                    }
+                },
+            ],
 
             'stage_id' => ['required', 'exists:stages,id'],
             'grade_id' => ['required', 'exists:grades,id'],
@@ -192,7 +214,8 @@ class EnrollmentController extends Controller
             $enrollment->update([
                 'academic_year_id' => $data['academic_year_id'],
                 'academic_year' => $year->name,
-                'enrollment_mode_id' => $data['enrollment_mode_id'] ?? null,
+                // enrollment_mode_id intentionally omitted: immutable through
+                // this endpoint, see validation above.
 
                 'stage_id' => $data['stage_id'],
                 'grade_id' => $data['grade_id'],

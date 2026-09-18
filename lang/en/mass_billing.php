@@ -10,6 +10,7 @@ return [
     'preview_title' => 'Preview',
     'preview_hint' => 'Amounts are informational. No invoices are created at this step.',
     'preview_recheck_note' => 'Before invoices are created, the data, billing eligibility and tariffs are re-checked.',
+    'duplicate_warning' => 'Warning: :count of the selected students already have an invoice for this service in the current academic year. This may be expected for repeat or recurring services. Before issuing, verify this batch does not duplicate a charge already made.',
 
     'context' => [
         'create' => 'Create',

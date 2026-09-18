@@ -111,6 +111,7 @@
     @if($errors->any())
         <div class="alert alert-danger"><strong>Проверьте введённые данные:</strong><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
     @endif
+    @include('dashboard.finance.partials.missing-tariff-guidance')
 
     {{-- Finance UAT corrective (P0) — student identity resolution. Flashed
          by QuickStudentRegistrationController::store() only when

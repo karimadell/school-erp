@@ -4,11 +4,11 @@ namespace App\Filament\Resources\FeePrices;
 
 use App\Filament\Resources\FeePrices\FeePriceResource\Pages;
 use App\Models\AcademicYear;
+use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\MealPlan;
-use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
@@ -39,6 +39,21 @@ class FeePriceResource extends Resource
 
     protected static ?int $navigationSort = 20;
 
+    /**
+     * monthly / quarterly / yearly / daily / once / term / package — the
+     * single source of truth for this Select's own options, reused by the
+     * table's own payment_period column so the two can never drift.
+     *
+     * @return array<string, string>
+     */
+    public static function paymentPeriodLabels(): array
+    {
+        return [
+            'once' => 'Разово', 'daily' => 'Ежедневно', 'monthly' => 'Ежемесячно',
+            'quarterly' => 'Ежеквартально', 'term' => 'За семестр', 'yearly' => 'За год', 'package' => 'Пакет',
+        ];
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
@@ -54,10 +69,22 @@ class FeePriceResource extends Resource
                 ->visible(fn (Get $get): bool => self::isTuition($get('fee_id')))->dehydratedWhenHidden(false),
             Select::make('grade_group')->label('Группа классов')->options(array_combine(FeePrice::GRADE_GROUPS, FeePrice::GRADE_GROUPS))
                 ->visible(fn (Get $get): bool => self::isTuition($get('fee_id')))->dehydratedWhenHidden(false),
-            Select::make('payment_period')->label('Период оплаты')->options([
-                'once' => 'Разово', 'daily' => 'Ежедневно', 'monthly' => 'Ежемесячно',
-                'quarterly' => 'Ежеквартально', 'term' => 'За семестр', 'yearly' => 'За год', 'package' => 'Пакет',
-            ]),
+            // Study mode (Tuition only) — a first-class EnrollmentMode
+            // selector, never raw option_type/option_value text. Bound to
+            // the SAME option_value column Transport/Food already use
+            // (mutually exclusive via visible(), exactly like those two
+            // already coexist on this one field name) — left BLANK, a
+            // generic (non-mode-scoped) Tuition tariff is created exactly
+            // as before; CreateFeePrice::mutateFormDataBeforeCreate()
+            // derives option_type from whether a mode was actually chosen,
+            // so opening/viewing this form never forces a mode onto an
+            // existing generic row merely by rendering it.
+            Select::make('option_value')->label('Форма обучения')
+                ->options(fn () => EnrollmentMode::query()->orderBy('display_order')->pluck('name_ru', 'code'))
+                ->visible(fn (Get $get): bool => self::isTuition($get('fee_id')))->dehydratedWhenHidden(false)
+                ->searchable()
+                ->helperText('Оставьте пустым для общего тарифа без привязки к форме обучения.'),
+            Select::make('payment_period')->label('Период оплаты')->options(self::paymentPeriodLabels()),
             Hidden::make('option_type')->default('zone')
                 ->visible(fn (Get $get): bool => self::category($get('fee_id')) === Fee::CATEGORY_TRANSPORT)->dehydratedWhenHidden(false),
             TextInput::make('option_value')->label(__('finance_uat.transport_zone'))->maxLength(150)
@@ -101,12 +128,31 @@ class FeePriceResource extends Resource
         return $table->columns([
             TextColumn::make('fee.name_ru')->label('Услуга')->searchable()->sortable(),
             TextColumn::make('academicYear.name')->label('Учебный год')->sortable(),
+            TextColumn::make('grade.name')->label('Класс')->placeholder('—'),
+            TextColumn::make('grade_group')->label('Группа классов')->placeholder('—'),
+            // Study mode — resolved from the SAME small EnrollmentMode
+            // lookup table once per table render (a `static` variable
+            // inside this closure persists across every row's invocation
+            // within the same request, so this is exactly one extra query
+            // total, never one per row).
+            TextColumn::make('option_value')->label('Форма обучения')
+                ->formatStateUsing(function (?string $state, FeePrice $record): string {
+                    if ($record->option_type !== 'enrollment_mode' || blank($state)) {
+                        return '—';
+                    }
+                    static $modes = null;
+                    $modes ??= EnrollmentMode::query()->pluck('name_ru', 'code');
+
+                    return $modes[$state] ?? $state;
+                }),
+            TextColumn::make('payment_period')->label('Период оплаты')
+                ->formatStateUsing(fn (?string $state): string => self::paymentPeriodLabels()[$state] ?? '—'),
             TextColumn::make('amount')->label('Цена')->money('EGP')->sortable(),
             TextColumn::make('currency')->label('Валюта'),
             TextColumn::make('start_date')->label('Действует с')->date('d.m.Y')->sortable(),
             TextColumn::make('end_date')->label('Действует до')->date('d.m.Y')->placeholder('Без ограничения'),
             IconColumn::make('is_active')->label('Активна')->boolean(),
-        ])->defaultSort('start_date', 'desc')->recordActions([EditAction::make()->label('Изменить')]);
+        ])->defaultSort('start_date', 'desc');
     }
 
     public static function getPages(): array

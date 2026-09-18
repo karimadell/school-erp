@@ -45,6 +45,7 @@
             </ul>
         </div>
     @endif
+    @include('dashboard.finance.partials.missing-tariff-guidance')
 
     <form method="POST" action="{{ route('dashboard.invoices.store') }}" id="invoice-form">
         @csrf

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Dashboard;
 
+use App\Http\Controllers\Concerns\HasMissingTariffGuidance;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreInvoiceRequest;
 use App\Models\AcademicYear;
@@ -23,10 +24,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class InvoiceController extends Controller
 {
+    use HasMissingTariffGuidance;
+
     public function __construct()
     {
         $this->middleware('permission:view invoices')->only(['index', 'show', 'print', 'pdf']);
@@ -135,7 +139,8 @@ class InvoiceController extends Controller
         // invoice_fee compatibility pivot are all now InvoiceIssuanceService's
         // responsibility — this controller only composes issuance with the
         // optional initial payment, exactly like ChargeAndCollectService does.
-        $invoice = DB::transaction(function () use ($data, $issuer, $payments, $actor, $ip, $userAgent) {
+        try {
+            $invoice = DB::transaction(function () use ($data, $issuer, $payments, $actor, $ip, $userAgent) {
             $student = Student::findOrFail($data['student_id']);
             $invoice = $issuer->issue($student, $data, $actor, $ip, $userAgent);
 
@@ -177,7 +182,13 @@ class InvoiceController extends Controller
             }
 
             return $invoice;
-        });
+            });
+        } catch (ValidationException $exception) {
+            return $this->withMissingTariffGuidance(
+                back()->withInput()->withErrors($exception->errors()),
+                $exception, $data['items'] ?? [], (int) $data['student_id'], (int) $data['academic_year_id'], $request,
+            );
+        }
 
         return redirect()
             ->route('dashboard.invoices.print', $invoice)

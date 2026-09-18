@@ -32,6 +32,7 @@
     @if($errors->any())
         <div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
     @endif
+    @include('dashboard.finance.partials.missing-tariff-guidance')
 
     <div class="card border-0 shadow-sm mb-4"><div class="card-body">
         <div class="row g-3 align-items-center">

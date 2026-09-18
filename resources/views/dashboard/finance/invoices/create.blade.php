@@ -28,6 +28,7 @@
         <div class="alert alert-warning">У ученика нет активного зачисления.</div>
     @else
         @if($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
+        @include('dashboard.finance.partials.missing-tariff-guidance')
         <form method="POST" action="{{ route('dashboard.students.invoices.store', $student) }}" id="modern-invoice-form">
             @csrf
             <input type="hidden" name="student_id" value="{{ $student->id }}">

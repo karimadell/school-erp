@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Exceptions\StudentIdentityResolutionRequired;
+use App\Http\Controllers\Concerns\HasMissingTariffGuidance;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreQuickStudentRegistrationRequest;
 use App\Models\AcademicYear;
@@ -28,6 +29,8 @@ use Illuminate\View\View;
 
 class QuickStudentRegistrationController extends Controller
 {
+    use HasMissingTariffGuidance;
+
     public function __construct()
     {
         $this->middleware('permission:manage invoices');
@@ -177,6 +180,14 @@ class QuickStudentRegistrationController extends Controller
             return back()->withInput()
                 ->with('identity_candidates', $exception->candidates->all())
                 ->with('identity_confirmation_token', $exception->confirmationToken);
+        } catch (ValidationException $exception) {
+            $data = $request->validated();
+
+            return $this->withMissingTariffGuidance(
+                back()->withInput()->withErrors($exception->errors()),
+                $exception, $data['services'] ?? [], null, (int) $data['academic_year_id'], $request,
+                enrollmentModeId: (int) $data['enrollment_mode_id'],
+            );
         }
 
         // Karim: Quick Registration must stay a single-page flow — issuing

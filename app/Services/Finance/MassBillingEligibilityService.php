@@ -240,4 +240,40 @@ class MassBillingEligibilityService
             ->map(fn ($id) => (int) $id)
             ->unique();
     }
+
+    /**
+     * Non-blocking, informational-only signal for the operator: which of
+     * the CURRENTLY resolved target students already have an existing
+     * Invoice containing this exact Fee in this exact academic year — from
+     * ANY source (a prior Mass Billing batch, Classic Invoice, Quick
+     * Registration, Unified Collection). Deliberately broad and NOT an
+     * authoritative duplicate identity: unlike registrationDuplicateIds()
+     * above (Registration only, hard-blocking, gated on classify()), this
+     * is never consulted by classify()/execution — a repeat charge for a
+     * genuinely recurring or repeatable service (Tuition, Transport, a
+     * second one-off Activity fee, etc.) is completely legitimate and must
+     * never be skipped or rejected because of this signal. Callers must
+     * treat the return value as display-only.
+     *
+     * @param  Collection<int, int>  $studentIds  The batch's OWN currently
+     *         resolved target set (BillingTargetResolver::resolve()) —
+     *         never re-derived here, so target_mode/class selection/
+     *         include/exclude overrides are already correctly applied.
+     * @return Collection<int, int> distinct student IDs with a prior invoice
+     */
+    public function duplicateWarningStudentIds(int $academicYearId, int $feeId, Collection $studentIds): Collection
+    {
+        if ($studentIds->isEmpty()) {
+            return collect();
+        }
+
+        return Invoice::query()
+            ->where('academic_year_id', $academicYearId)
+            ->whereIn('student_id', $studentIds)
+            ->whereHas('items', fn ($query) => $query->where('fee_id', $feeId))
+            ->pluck('student_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+    }
 }

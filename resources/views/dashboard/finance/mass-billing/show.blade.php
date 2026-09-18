@@ -40,6 +40,12 @@
         </dl>
     </div>
 
+    @if($duplicateWarningCount > 0)
+        <div class="alert alert-warning mt-3 mb-0" role="alert">
+            {{ __('mass_billing.duplicate_warning', ['count' => $duplicateWarningCount]) }}
+        </div>
+    @endif
+
     @if($editable)
         <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
             <form method="POST" action="{{ route('dashboard.finance.mass-billing.preview', $batch) }}">

@@ -11,6 +11,8 @@ use App\Models\BillingBatchStudent;
 use App\Models\Fee;
 use App\Models\SchoolClass;
 use App\Models\Student;
+use App\Services\Finance\BillingTargetResolver;
+use App\Services\Finance\MassBillingEligibilityService;
 use App\Services\Finance\MassBillingExecutionService;
 use App\Services\Finance\MassBillingPreviewService;
 use Illuminate\Http\RedirectResponse;
@@ -77,7 +79,7 @@ class MassBillingController extends Controller
             ->with('success', __('mass_billing.flash.created'));
     }
 
-    public function show(BillingBatch $batch): View
+    public function show(BillingBatch $batch, BillingTargetResolver $resolver, MassBillingEligibilityService $eligibility): View
     {
         $batch->load([
             'academicYear', 'fee', 'classTargets.schoolClass', 'studentTargets.student',
@@ -86,7 +88,20 @@ class MassBillingController extends Controller
             'latestRun.items.student', 'latestRun.items.invoice',
         ]);
 
-        return view('dashboard.finance.mass-billing.show', compact('batch'));
+        // Non-blocking operator signal only — recomputed fresh on every
+        // view from the batch's own current target resolution and live
+        // Invoice data, never from the stored preview_snapshot (which can
+        // go stale the moment targets or existing invoices change) and
+        // never treated as authoritative duplicate identity. See
+        // MassBillingEligibilityService::duplicateWarningStudentIds()'s
+        // own docblock for why this must never skip or block execution.
+        $duplicateWarningCount = $eligibility->duplicateWarningStudentIds(
+            (int) $batch->academic_year_id,
+            (int) $batch->fee_id,
+            $resolver->resolve($batch),
+        )->count();
+
+        return view('dashboard.finance.mass-billing.show', compact('batch', 'duplicateWarningCount'));
     }
 
     public function edit(BillingBatch $batch): View

@@ -9,6 +9,9 @@ class EnrollmentMode extends Model
     public const FULL_TIME = 'full_time';
     public const REGULAR = 'regular';
     public const DISTANCE_LEARNING = 'distance_learning';
+    public const FAMILY = 'family';
+    public const EXTERNAL = 'external';
+    public const NO_ENROLLMENT = 'no_enrollment';
 
     protected $fillable = [
         'code',

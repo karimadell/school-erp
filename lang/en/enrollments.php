@@ -48,5 +48,6 @@ return [
         'inactive_stage' => 'The selected stage is inactive.',
         'inactive_class' => 'The selected class is inactive.',
         'structure_changed' => 'The school structure changed. Refresh the page and try again.',
+        'mode_change_not_allowed' => 'Study mode cannot be changed through the regular enrollment edit form.',
     ],
 ];

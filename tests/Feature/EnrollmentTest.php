@@ -560,4 +560,105 @@ class EnrollmentTest extends TestCase
         $this->assertDatabaseCount('enrollments', 0);
         $this->assertDatabaseMissing('audit_logs', ['model' => 'Enrollment']);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Study-mode lockout on generic enrollment edit (P0 corrective)
+    |--------------------------------------------------------------------------
+    | enrollment_mode_id is a financial/historical fact that must not change
+    | through the generic Enrollment edit/update endpoint — only a dedicated
+    | future "Изменить форму обучения" workflow may change it.
+    */
+
+    public function test_generic_update_cannot_change_an_existing_enrollments_mode(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $original = EnrollmentMode::create(['code' => 'full_time_lock_test', 'name_ru' => 'Очная']);
+        $attempted = EnrollmentMode::create(['code' => 'family_lock_test', 'name_ru' => 'Семейная']);
+
+        $this->enroll($student, $year, $class, 'active', $original->id);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $response = $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollment->id), [
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $attempted->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'active',
+        ]);
+
+        // Rejection is explicit and operator-visible, not a silent no-op:
+        // the request fails validation and the redirect carries the error.
+        $response->assertSessionHasErrors('enrollment_mode_id');
+        $this->assertSame(
+            __('enrollments.validation.mode_change_not_allowed'),
+            session('errors')->first('enrollment_mode_id')
+        );
+
+        $this->assertSame($original->id, $enrollment->fresh()->enrollment_mode_id);
+    }
+
+    public function test_generic_update_resubmitting_the_same_mode_is_accepted_as_unchanged(): void
+    {
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $mode = EnrollmentMode::create(['code' => 'full_time_resubmit_test', 'name_ru' => 'Очная']);
+
+        $this->enroll($student, $year, $class, 'active', $mode->id);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $response = $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollment->id), [
+            'academic_year_id' => $year->id,
+            'enrollment_mode_id' => $mode->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'transferred',
+        ]);
+
+        $response->assertSessionDoesntHaveErrors();
+        $enrollment->refresh();
+        $this->assertSame($mode->id, $enrollment->enrollment_mode_id);
+        $this->assertSame('transferred', $enrollment->status);
+    }
+
+    public function test_generic_update_omitting_the_mode_field_leaves_an_existing_mode_untouched(): void
+    {
+        // Regression guard: the current edit form never renders
+        // enrollment_mode_id at all, so every legitimate save omits it from
+        // the request entirely. That must never be read as "clear the mode".
+        $class = $this->makeClass();
+        $student = Student::forceCreate(['name' => 'Test Student']);
+        $year = AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
+        ]);
+        $mode = EnrollmentMode::create(['code' => 'full_time_omit_test', 'name_ru' => 'Очная']);
+
+        $this->enroll($student, $year, $class, 'active', $mode->id);
+        $enrollment = Enrollment::where('academic_year_id', $year->id)->firstOrFail();
+
+        $user = $this->authorizedUser();
+        $response = $this->actingAs($user)->put(route('dashboard.enrollments.update', $enrollment->id), [
+            'academic_year_id' => $year->id,
+            'stage_id' => $class->grade->stage_id,
+            'grade_id' => $class->grade_id,
+            'class_id' => $class->id,
+            'status' => 'transferred',
+        ]);
+
+        $response->assertSessionDoesntHaveErrors();
+        $enrollment->refresh();
+        $this->assertSame($mode->id, $enrollment->enrollment_mode_id);
+        $this->assertSame('transferred', $enrollment->status);
+    }
 }

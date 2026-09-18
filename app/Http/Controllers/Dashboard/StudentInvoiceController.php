@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Dashboard;
 
+use App\Http\Controllers\Concerns\HasMissingTariffGuidance;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreInvoiceRequest;
 use App\Models\Fee;
@@ -10,10 +11,13 @@ use App\Models\Student;
 use App\Services\Finance\InvoiceIssuanceService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class StudentInvoiceController extends Controller
 {
+    use HasMissingTariffGuidance;
+
     public function __construct()
     {
         $this->middleware('permission:manage invoices');
@@ -48,14 +52,23 @@ class StudentInvoiceController extends Controller
 
     public function store(StoreInvoiceRequest $request, Student $student, InvoiceIssuanceService $issuer): RedirectResponse
     {
-        $invoice = $issuer->issue(
-            $student,
-            $request->validated(),
-            $request->user(),
-            $request->ip(),
-            $request->userAgent(),
-            idempotencyKey: (string) $request->input('idempotency_key'),
-        );
+        $data = $request->validated();
+
+        try {
+            $invoice = $issuer->issue(
+                $student,
+                $data,
+                $request->user(),
+                $request->ip(),
+                $request->userAgent(),
+                idempotencyKey: (string) $request->input('idempotency_key'),
+            );
+        } catch (ValidationException $exception) {
+            return $this->withMissingTariffGuidance(
+                back()->withInput()->withErrors($exception->errors()),
+                $exception, $data['items'] ?? [], $student->id, (int) $data['academic_year_id'], $request,
+            );
+        }
 
         return redirect()->route('dashboard.invoices.show', $invoice)->with('success', 'Счёт успешно создан.');
     }

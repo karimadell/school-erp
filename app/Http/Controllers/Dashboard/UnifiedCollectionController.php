@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Dashboard;
 
+use App\Http\Controllers\Concerns\HasMissingTariffGuidance;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreUnifiedCollectionRequest;
 use App\Models\AcademicYear;
@@ -49,6 +50,8 @@ use Illuminate\View\View;
  */
 class UnifiedCollectionController extends Controller
 {
+    use HasMissingTariffGuidance;
+
     public function __construct()
     {
         $this->middleware('permission:manage invoices');
@@ -165,7 +168,10 @@ class UnifiedCollectionController extends Controller
                 'annual_registration' => $data['annual_registration'] ?? null,
             ], $request->user());
         } catch (ValidationException $exception) {
-            return back()->withInput()->withErrors($exception->errors());
+            return $this->withMissingTariffGuidance(
+                back()->withInput()->withErrors($exception->errors()),
+                $exception, $data['new_services'] ?? [], $student->id, (int) $data['academic_year_id'], $request,
+            );
         }
 
         // J. PR C2 — the collection succeeded; land the cashier directly on

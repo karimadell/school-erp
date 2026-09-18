@@ -1081,12 +1081,40 @@ class InvoiceCalculationService
             filled($selection['option_type'] ?? null)
                 ? $query->where('option_type', $selection['option_type'])
                 : $query->whereNull('option_type');
-        } elseif (filled($selection['enrollment_mode_id'] ?? null)) {
-            $modeId = (int) $selection['enrollment_mode_id'];
-            $mode = array_key_exists($modeId, $modeCache) ? $modeCache[$modeId] : ($modeCache[$modeId] = EnrollmentMode::find($modeId));
-            $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->unique()->values();
+        } else {
+            // P0 corrective: $hasModePrices must be checked regardless of
+            // whether enrollment_mode_id was supplied — not only inside an
+            // `elseif (filled(enrollment_mode_id))` branch. Previously, a
+            // blank enrollment_mode_id skipped this whole check, so once
+            // ANY mode-scoped FeePrice existed in this exact scope, the
+            // query stayed completely unfiltered on option_type/
+            // option_value and could return a mix of every EnrollmentMode's
+            // rows as undifferentiated candidates — selectAmongCandidates()
+            // would then pick one by date-window/id order alone, silently
+            // charging a student whose mode is unknown whatever tariff
+            // happened to sort first. A single mode-scoped row in the scope
+            // is exactly as unsafe as several: this never guesses, it fails
+            // loudly instead, matching this method's existing "a date
+            // matching none of them fails loudly rather than guessing"
+            // principle for the analogous case.
             $hasModePrices = (clone $query)->whereIn('option_type', self::MODE_OPTION_TYPES)->exists();
+
             if ($hasModePrices) {
+                if (blank($selection['enrollment_mode_id'] ?? null)) {
+                    // The message must contain "тариф" — MassBillingEligibilityService::
+                    // pricingFailureReason() classifies a caught ValidationException by
+                    // that substring into the existing SKIP_NO_TARIFF reason (rather than
+                    // the generic SKIP_PRICING_ERROR), so a NULL-mode Enrollment hitting
+                    // this guard during a mass billing run is skipped gracefully with an
+                    // accurate, already-established reason code, not a batch-halting error.
+                    throw ValidationException::withMessages([
+                        'fees' => "Для услуги «{$fee->name_ru}» тариф зависит от формы обучения — укажите форму обучения.",
+                    ]);
+                }
+
+                $modeId = (int) $selection['enrollment_mode_id'];
+                $mode = array_key_exists($modeId, $modeCache) ? $modeCache[$modeId] : ($modeCache[$modeId] = EnrollmentMode::find($modeId));
+                $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->unique()->values();
                 $query->whereIn('option_type', self::MODE_OPTION_TYPES)->whereIn('option_value', $modeValues);
             }
         }

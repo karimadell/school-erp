@@ -167,7 +167,7 @@ class InvoiceCalculationService
             $foodResolution = $item['food_resolution'] ?? null;
             $foodPricing = null;
             if ($fee->category === Fee::CATEGORY_FOOD && $foodResolution !== null) {
-                $foodPricing = $this->priceFoodDailyLine($fee, $item, $foodResolution, $academicYearId, $modeCache);
+                $foodPricing = $this->priceFoodDailyLine($fee, $item, $foodResolution, $academicYearId, $pricingDate, $modeCache);
             }
             $resolvedPrice = $foodPricing['resolved_price'] ?? $this->resolvePrice($fee, $item, $pricingDate, $academicYearId, $modeCache, $lineIndex);
             $submittedQuantity = (int) ($item['quantity'] ?? 1);
@@ -510,10 +510,10 @@ class InvoiceCalculationService
      * own period boundaries (CalendarPeriodCalculator::resolve()
      * unconditionally snaps to startOfMonth()).
      */
-    private function priceFoodDailyLine(Fee $fee, array $selection, array $foodResolution, int $academicYearId, array &$modeCache): array
+    private function priceFoodDailyLine(Fee $fee, array $selection, array $foodResolution, int $academicYearId, string $pricingDate, array &$modeCache): array
     {
         $selection['payment_period'] = Fee::PERIOD_DAILY;
-        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $modeCache);
+        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $pricingDate, $modeCache);
         if ($candidates->isEmpty()) {
             throw ValidationException::withMessages(['fees' => "Для услуги «{$fee->name_ru}» отсутствует дневной тариф питания."]);
         }
@@ -883,7 +883,7 @@ class InvoiceCalculationService
     {
         $selection['payment_period'] = $targetPeriod;
         $cache = [];
-        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $cache);
+        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $date, $cache);
 
         return $this->selectAmongCandidates($candidates, $date);
     }
@@ -959,7 +959,7 @@ class InvoiceCalculationService
             }
         }
 
-        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $modeCache);
+        $candidates = $this->dimensionalCandidates($fee, $selection, $academicYearId, $date, $modeCache);
 
         QrTrace::log('calculation:line_after_dimension_checks', [
             'line_index' => $lineIndex, 'category' => $fee->category, 'candidate_count' => $candidates->count(),
@@ -978,7 +978,7 @@ class InvoiceCalculationService
         if (! $price && ($selection['payment_period'] ?? null) === 'quarterly'
             && $fee->allowsBillingPeriod(FeeBillingPeriod::PERIOD_QUARTERLY)) {
             $monthlySelection = array_merge($selection, ['payment_period' => 'monthly']);
-            $monthlyCandidates = $this->dimensionalCandidates($fee, $monthlySelection, $academicYearId, $modeCache);
+            $monthlyCandidates = $this->dimensionalCandidates($fee, $monthlySelection, $academicYearId, $date, $modeCache);
             $monthlyPrice = $this->selectAmongCandidates($monthlyCandidates, $date);
             if ($monthlyPrice) {
                 $monthlyAmount = $this->money($monthlyPrice->getRawOriginal('amount'));
@@ -1050,7 +1050,7 @@ class InvoiceCalculationService
      * @param  array<int, ?EnrollmentMode>  $modeCache
      * @return Collection<int, FeePrice>
      */
-    private function dimensionalCandidates(Fee $fee, array $selection, ?int $academicYearId, array &$modeCache = []): Collection
+    private function dimensionalCandidates(Fee $fee, array $selection, ?int $academicYearId, string $date, array &$modeCache = []): Collection
     {
         $query = FeePrice::query()
             ->where('fee_id', $fee->id)
@@ -1116,6 +1116,40 @@ class InvoiceCalculationService
                 $mode = array_key_exists($modeId, $modeCache) ? $modeCache[$modeId] : ($modeCache[$modeId] = EnrollmentMode::find($modeId));
                 $modeValues = collect([$mode?->code, $mode?->name_ru, $mode?->short_name_ru])->filter()->unique()->values();
                 $query->whereIn('option_type', self::MODE_OPTION_TYPES)->whereIn('option_value', $modeValues);
+            }
+
+            // Payment-period ambiguity guard — the same "never guess"
+            // principle as $hasModePrices above, for a different dimension.
+            // A blank payment_period previously left the payment_period
+            // column completely unfiltered (the per-field loop above only
+            // applies a `where` when the selection actually supplies one),
+            // so once a Fee/scope had more than one payment_period-tagged
+            // tariff (e.g. monthly + yearly — QuarterlyDerivedPricingTest's
+            // own supported configuration), selectAmongCandidates() picked
+            // between them by date-window/id alone, silently charging
+            // whichever happened to sort first — proven to flip the
+            // resolved amount purely by FeePrice insertion order (Mass
+            // Billing discovery pass, tuition-payment-period-ambiguity).
+            //
+            // Evaluated only among candidates whose OWN window actually
+            // covers $date (never a not-yet-applicable or already-expired
+            // sibling) so a genuinely single-applicable tariff is never
+            // rejected just because a stale/future one of a different
+            // period also happens to exist in the same scope. A single
+            // distinct payment_period value among those — including the
+            // fully generic case where every candidate has payment_period
+            // = NULL — is not ambiguous and is left for
+            // selectAmongCandidates() to resolve exactly as before.
+            $periodCandidates = (clone $query)->get();
+            $dateApplicablePeriods = $periodCandidates
+                ->filter(fn (FeePrice $price) => $price->start_date?->toDateString() <= $date
+                    && (! $price->end_date || $price->end_date->toDateString() >= $date))
+                ->pluck('payment_period')->unique();
+
+            if ($dateApplicablePeriods->count() > 1) {
+                throw ValidationException::withMessages([
+                    'fees' => "Для услуги «{$fee->name_ru}» тариф зависит от периода оплаты — укажите период оплаты.",
+                ]);
             }
         }
 

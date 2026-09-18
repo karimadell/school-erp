@@ -89,6 +89,7 @@ class EnrollmentModeInventoryTest extends TestCase
         $this->enrollment($studentC, $year, $class, null);
 
         $before = $this->snapshotCounts();
+        $beforeValues = $this->snapshotRowValues();
 
         $exitCode = Artisan::call('enrollment-modes:inventory');
         $output = Artisan::output();
@@ -137,7 +138,11 @@ class EnrollmentModeInventoryTest extends TestCase
         $this->assertStringContainsString('Total Enrollment rows', $output);
         $this->assertStringContainsString('No data was created, updated, or deleted.', $output);
 
+        // Row counts alone would miss an in-place UPDATE (same row count,
+        // mutated content) — the value-level snapshot below is what
+        // actually proves no existing row's attributes changed.
         $this->assertSame($before, $this->snapshotCounts());
+        $this->assertSame($beforeValues, $this->snapshotRowValues());
     }
 
     /**
@@ -151,6 +156,22 @@ class EnrollmentModeInventoryTest extends TestCase
             'fees' => DB::table('fees')->count(),
             'fee_prices' => DB::table('fee_prices')->count(),
             'invoices' => DB::table('invoices')->count(),
+        ];
+    }
+
+    /**
+     * Deterministically ordered, full-attribute (including timestamps)
+     * snapshot of every enrollment_modes and enrollments row — strict
+     * equality against this after running the command catches an in-place
+     * UPDATE that a mere row-count comparison would silently miss.
+     *
+     * @return array<string, array<int, array<string, mixed>>>
+     */
+    private function snapshotRowValues(): array
+    {
+        return [
+            'enrollment_modes' => EnrollmentMode::query()->orderBy('id')->get()->toArray(),
+            'enrollments' => Enrollment::query()->orderBy('id')->get()->toArray(),
         ];
     }
 }

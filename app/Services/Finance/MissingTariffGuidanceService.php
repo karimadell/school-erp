@@ -38,11 +38,11 @@ class MissingTariffGuidanceService
 
     /**
      * @param  array<string, mixed>  $item  The single submitted item's own
-     *         selection fields (fee_id, grade_id/grade_group,
-     *         payment_period) — already validated by the caller's own
-     *         FormRequest, never raw unvalidated input.
+     *                                      selection fields (fee_id, grade_id/grade_group,
+     *                                      payment_period) — already validated by the caller's own
+     *                                      FormRequest, never raw unvalidated input.
      * @return array{message: string, link_context: array<string, mixed>}|null
-     *         null when this is not the recognized generic case.
+     *                                                                         null when this is not the recognized generic case.
      */
     public function describe(
         ValidationException $exception,
@@ -85,6 +85,23 @@ class MissingTariffGuidanceService
                 'enrollment_mode' => $mode?->code,
             ], fn ($value) => $value !== null && $value !== ''),
         ];
+    }
+
+    /**
+     * The one place that turns a describe()-produced link_context into the
+     * actual Add Price URL — shared by every caller (HasMissingTariffGuidance
+     * and QuickStudentRegistrationController::price()'s own JSON response)
+     * so the destination and query-string shape can never drift between
+     * them. Points at the Dashboard-native tariff create screen, not the
+     * separate Filament admin layout — that screen's own controller
+     * (FinanceTariffController::create()) re-validates every one of these
+     * values against real master data before using them as defaults.
+     *
+     * @param  array<string, mixed>  $linkContext
+     */
+    public function addPriceUrl(array $linkContext): string
+    {
+        return route('dashboard.finance.tariffs.create').'?'.http_build_query($linkContext);
     }
 
     private function gradeLabel(array $item): ?string

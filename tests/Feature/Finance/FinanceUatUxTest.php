@@ -65,11 +65,15 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
 
     /**
      * Finance Workspace UX corrective: the operational Финансы sidebar
-     * group is now exactly 5 entries (Финансы/Приход/Расход/Касса/Отчёты)
-     * — every backend module it used to expose directly (service catalog,
-     * pricing, the raw invoice list, mass billing, collections, expense
-     * categories/payees, cash sub-pages) stays fully functional but is no
-     * longer a separate sidebar link. See ExpenseNavigationTest for the
+     * group is now 6 entries (Финансы/Приход/Цены на услуги/Расход/Касса/
+     * Отчёты) — every OTHER backend module it used to expose directly
+     * (service catalog, the raw invoice list, mass billing, collections,
+     * expense categories/payees, cash sub-pages) stays fully functional
+     * but is no longer a separate sidebar link. Pricing ("Цены на
+     * услуги" / dashboard.finance.tariffs.index) is the one exception,
+     * per the Dashboard-native pricing workflow corrective — the owner
+     * explicitly reclassified it as an operational Finance workflow, not
+     * a technical settings link. See ExpenseNavigationTest for the
      * dedicated Расход-family regression coverage of this same corrective.
      */
     public function test_employee_finance_navigation_is_simplified_to_five_entries(): void
@@ -77,9 +81,10 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
         $response = $this->actingAs($this->user('admin'))->get(route('dashboard.finance.workspace'));
 
         $response->assertOk()
-            // The 5 operational entries that must remain.
+            // The 6 operational entries that must remain.
             ->assertSee(route('dashboard.finance.workspace'), false)
             ->assertSee(route('dashboard.finance.income.index'), false)
+            ->assertSee(route('dashboard.finance.tariffs.index'), false)
             ->assertSee(route('dashboard.finance.expenses.index'), false)
             ->assertSee(route('dashboard.cash.operations.index'), false)
             // Combined Finance Reporting V1 integration: Отчёты now points
@@ -94,7 +99,6 @@ class FinanceUatUxTest extends FinanceOperationsTestCase
             // "Выставить счёт" link to the (distinct) dashboard.invoices.create
             // URL, which shares the removed index route as a URL prefix.
             ->assertDontSee(route('dashboard.finance.services.index'), false)
-            ->assertDontSee(route('dashboard.finance.tariffs.index'), false)
             ->assertDontSee('href="'.route('dashboard.invoices.index').'"', false)
             ->assertDontSee(route('dashboard.finance.mass-billing.index'), false)
             ->assertDontSee(route('dashboard.finance.collections.index'), false)

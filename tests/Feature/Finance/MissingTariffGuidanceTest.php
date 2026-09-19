@@ -64,7 +64,8 @@ class MissingTariffGuidanceTest extends FinanceOperationsTestCase
         $this->assertStringContainsString('Цена не настроена', session('missing_tariff_message'));
         $link = session('missing_tariff_link');
         $this->assertNotNull($link);
-        $this->assertStringContainsString('/admin/fee-prices/create', $link);
+        $this->assertStringContainsString('/dashboard/finance/tariffs/create', $link);
+        $this->assertStringNotContainsString('/admin/fee-prices', $link);
         $this->assertStringContainsString('fee_id='.$this->fee->id, $link);
         $this->assertStringContainsString('academic_year_id='.$this->year->id, $link);
         $this->assertStringContainsString('enrollment_mode=full_time', $link);

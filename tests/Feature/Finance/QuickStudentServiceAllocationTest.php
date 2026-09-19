@@ -32,7 +32,9 @@ class QuickStudentServiceAllocationTest extends TestCase
     use RefreshDatabase;
 
     private User $user;
+
     private array $base;
+
     private CashAccount $account;
 
     protected function setUp(): void
@@ -45,7 +47,7 @@ class QuickStudentServiceAllocationTest extends TestCase
         $stage = Stage::create(['name' => 'Начальная школа', 'is_active' => true]);
         $grade = Grade::create(['name' => '1 класс', 'stage_id' => $stage->id]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => '1-А', 'name_ar' => '1-A', 'name_ru' => '1-А', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        $mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очное обучение', 'is_active' => true]);
         // Cash Operations Phase 4: cash payments resolve to the canonical
         // operating account server-side regardless of cash_account_id.
         $this->account = CashAccount::operating();

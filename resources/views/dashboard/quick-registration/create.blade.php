@@ -2,7 +2,7 @@
 
 @section('content')
 @php
-    $tuitionCategories = ['tuition', 'tuition_regular', 'tuition_family', 'tuition_external'];
+    $tuitionCategories = ['tuition'];
     $additionalServiceCategories = ['books', 'extra_classes', 'activity', 'other'];
     $groups = [
         'registration' => ['title' => 'Регистрационный взнос', 'fees' => $fees->where('category', 'registration')],
@@ -13,7 +13,7 @@
         'other' => ['title' => 'Дополнительные услуги', 'fees' => $fees->whereIn('category', $additionalServiceCategories)],
     ];
     $oldServices = collect(old('services', []))->keyBy(fn ($service) => (string) ($service['fee_id'] ?? ''));
-    $configurationReady = $academicYears->isNotEmpty() && $modes->isNotEmpty() && $fees->isNotEmpty();
+    $configurationReady = $academicYears->isNotEmpty() && $modeConfigurationError === null && $fees->isNotEmpty();
     $periodLabels = ['once' => 'Разово', 'daily' => 'Ежедневно', 'monthly' => 'Ежемесячно', 'quarterly' => 'Ежеквартально', 'term' => 'За семестр', 'yearly' => 'За год', 'package' => 'Пакет'];
 
     // Minimum safe availability gating, backed by FinanceConfigurationReadinessService
@@ -154,7 +154,7 @@
     @endif
 
     @if($academicYears->isEmpty())<div class="alert alert-warning" data-configuration-warning="academic-year">Нет активного учебного года.</div>@endif
-    @if($modes->isEmpty())<div class="alert alert-warning" data-configuration-warning="enrollment-mode">Формы обучения не настроены. @can('manage academic years')<a href="{{ route('dashboard.academic.enrollment-modes.index') }}" class="alert-link">Настроить формы обучения</a>@endcan</div>@endif
+    @if($modeConfigurationError)<div class="alert alert-warning" data-configuration-warning="enrollment-mode">{{ $modeConfigurationError }} @can('manage academic years')<a href="{{ route('dashboard.academic.enrollment-modes.index') }}" class="alert-link">Настроить формы обучения</a>@endcan</div>@endif
     @if($fees->isEmpty())<div class="alert alert-warning" data-configuration-warning="services">Финансовые услуги не настроены. Обратитесь к администратору.</div>@endif
 
     <form method="POST" action="{{ route('dashboard.quick-registration.store') }}" id="quick-registration-form">

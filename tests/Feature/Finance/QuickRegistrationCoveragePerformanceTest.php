@@ -9,10 +9,10 @@ use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
+use App\Models\InstallmentCoveragePeriod;
 use App\Models\Invoice;
 use App\Models\InvoiceInstallment;
 use App\Models\InvoiceItem;
-use App\Models\InstallmentCoveragePeriod;
 use App\Models\MealPlan;
 use App\Models\PaymentAllocation;
 use App\Models\SchoolClass;
@@ -63,14 +63,17 @@ class QuickRegistrationCoveragePerformanceTest extends TestCase
     use RefreshDatabase;
 
     private User $accountant;
+
     private AcademicYear $year;
+
     private array $base;
+
     private CashAccount $account;
 
     protected function setUp(): void
     {
         parent::setUp();
-        (new RolesAndPermissionsSeeder())->run();
+        (new RolesAndPermissionsSeeder)->run();
         $this->accountant = User::factory()->create(['is_active' => true]);
         $this->accountant->assignRole('accountant');
 
@@ -83,7 +86,7 @@ class QuickRegistrationCoveragePerformanceTest extends TestCase
         $stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'A', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очная форма', 'is_active' => true]);
 
         $this->base = [
             'student_last_name_ru' => 'Петрова', 'student_first_name_ru' => 'Мария',
@@ -297,7 +300,7 @@ class QuickRegistrationCoveragePerformanceTest extends TestCase
         // monthly group, Transport's quarterly group) plus one for Food —
         // at most 3 bulk INSERT statements total, never one per period
         // (which would be 13).
-        $this->assertLessThanOrEqual(3, count($periodInserts), 'coverage periods must be written via a small, bounded number of bulk inserts, not one per period: ' . implode("\n", $periodInserts));
+        $this->assertLessThanOrEqual(3, count($periodInserts), 'coverage periods must be written via a small, bounded number of bulk inserts, not one per period: '.implode("\n", $periodInserts));
 
         // Before this fix, each of the 13 periods triggered its own
         // pre-insert overlap-check SELECT against
@@ -311,7 +314,7 @@ class QuickRegistrationCoveragePerformanceTest extends TestCase
         // fix) is scoped by invoice_installment_id/invoice_id, never by
         // service_coverage_id, so it never matches this narrower filter.
         $overlapCheckShapedSelects = array_values(array_filter($periodSelects, fn ($sql) => str_contains($sql, 'service_coverage_id')));
-        $this->assertSame(0, count($overlapCheckShapedSelects), 'coverage-period overlap validation must be in-memory, not a per-row DB query: ' . implode("\n", $overlapCheckShapedSelects));
+        $this->assertSame(0, count($overlapCheckShapedSelects), 'coverage-period overlap validation must be in-memory, not a per-row DB query: '.implode("\n", $overlapCheckShapedSelects));
         // Total statements touching this table stay a small constant
         // regardless of period count (13) — the handful of remaining
         // legitimate SELECTs come from payment-ALLOCATION lookups
@@ -320,7 +323,7 @@ class QuickRegistrationCoveragePerformanceTest extends TestCase
         // from a per-PERIOD overlap check. Bounded well under what even
         // "one query per period" (13) would need, let alone the old
         // per-row pattern's 13 x 4 = 52.
-        $this->assertLessThanOrEqual(15, count($periodTableQueries), 'total statements touching installment_coverage_periods must stay bounded, not scale with period count: ' . implode("\n", $periodTableQueries));
+        $this->assertLessThanOrEqual(15, count($periodTableQueries), 'total statements touching installment_coverage_periods must stay bounded, not scale with period count: '.implode("\n", $periodTableQueries));
 
         // Confirms the inserts above genuinely carried every row — not
         // fewer statements each still doing one row at a time.

@@ -20,8 +20,8 @@ use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class QuickStudentRegistrationTest extends TestCase
@@ -29,25 +29,32 @@ class QuickStudentRegistrationTest extends TestCase
     use RefreshDatabase;
 
     private User $accountant;
+
     private AcademicYear $year;
+
     private Stage $stage;
+
     private Grade $grade;
+
     private SchoolClass $class;
+
     private EnrollmentMode $mode;
+
     private CashAccount $account;
+
     private Fee $registrationFee;
 
     protected function setUp(): void
     {
         parent::setUp();
-        (new RolesAndPermissionsSeeder())->run();
+        (new RolesAndPermissionsSeeder)->run();
         $this->accountant = User::factory()->create(['is_active' => true]);
         $this->accountant->assignRole('accountant');
         $this->year = AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
         $this->stage = Stage::create(['name' => 'Начальная школа']);
         $this->grade = Grade::create(['name' => '1 класс', 'stage_id' => $this->stage->id]);
         $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => '1-А', 'name_ar' => '1-A', 'name_ru' => '1-А', 'is_active' => true]);
-        $this->mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        $this->mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очное обучение', 'is_active' => true]);
         // Cash Operations Phase 4: cash payments resolve to the canonical
         // operating account server-side regardless of cash_account_id.
         $this->account = CashAccount::operating();
@@ -219,7 +226,8 @@ class QuickStudentRegistrationTest extends TestCase
 
     public function test_everything_rolls_back_when_calculation_fails(): void
     {
-        $this->app->instance(InvoiceCalculationService::class, new class(app(\App\Services\Finance\CalendarPeriodCalculator::class), app(\App\Services\Finance\FoodBillableDayCalculator::class)) extends InvoiceCalculationService {
+        $this->app->instance(InvoiceCalculationService::class, new class(app(\App\Services\Finance\CalendarPeriodCalculator::class), app(\App\Services\Finance\FoodBillableDayCalculator::class)) extends InvoiceCalculationService
+        {
             public function calculate(array $items, ?string $discountType = null, string|int|float|null $discountValue = null, string|int|float|null $initialPaymentAmount = null, ?string $pricingDate = null, ?int $academicYearId = null, ?string $calendarBillingPeriod = null, ?string $academicYearEndDate = null, ?string $calendarStartDate = null): array
             {
                 throw ValidationException::withMessages(['services' => 'Ошибка расчёта.']);

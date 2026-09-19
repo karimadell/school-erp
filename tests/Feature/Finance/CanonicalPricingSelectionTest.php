@@ -43,6 +43,7 @@ class CanonicalPricingSelectionTest extends TestCase
     use RefreshDatabase;
 
     private AcademicYear $year;
+
     private User $accountant;
 
     protected function setUp(): void
@@ -244,7 +245,7 @@ class CanonicalPricingSelectionTest extends TestCase
         $stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $grade = Grade::create(['name' => '1 класс', 'stage_id' => $stage->id]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => '1-А', 'name_ar' => '1-A', 'name_ru' => '1-А', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        $mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очное обучение', 'is_active' => true]);
         $account = CashAccount::operating();
         app(\App\Services\Finance\CashSessionService::class)->open($account, $this->accountant);
 

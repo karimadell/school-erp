@@ -38,7 +38,7 @@ class MultiServiceInvoicePricePreviewTest extends QuickRegistrationUxTestCase
         $transport = $this->service('Трансфер', Fee::CATEGORY_TRANSPORT);
         $food = $this->service('Питание', Fee::CATEGORY_FOOD);
         $uniform = $this->service('Форма', Fee::CATEGORY_UNIFORM);
-        $externat = $this->service('Экстернат', Fee::CATEGORY_TUITION_EXTERNAL);
+        $externalMode = EnrollmentMode::where('code', EnrollmentMode::EXTERNAL)->sole();
 
         $cases = [
             [$tuition, $this->tariff($tuition, '40500.00', ['grade_group' => '1–4 классы', 'payment_period' => 'yearly']), '40500.00'],
@@ -50,13 +50,16 @@ class MultiServiceInvoicePricePreviewTest extends QuickRegistrationUxTestCase
             [$food, $this->tariff($food, '170.00', ['option_type' => 'meal_plan', 'option_value' => 'Комплексное питание', 'payment_period' => 'daily']), '170.00'],
             [$food, $this->tariff($food, '70.00', ['option_type' => 'meal_plan', 'option_value' => 'Завтрак', 'payment_period' => 'daily']), '70.00'],
             [$uniform, $this->tariff($uniform, '2500.00', ['item' => 'Комплект', 'size' => '12–16']), '2500.00'],
-            [$externat, $this->tariff($externat, '25600.00', ['grade_group' => '1–4 классы', 'payment_period' => 'yearly']), '25600.00'],
-            [$externat, $this->tariff($externat, '3200.00', ['grade_group' => '1–4 классы', 'payment_period' => 'monthly']), '3200.00'],
+            [$tuition, $this->tariff($tuition, '25600.00', ['grade_group' => '1–4 классы', 'payment_period' => 'yearly', 'option_type' => 'enrollment_mode', 'option_value' => EnrollmentMode::EXTERNAL]), '25600.00', $externalMode->id],
+            [$tuition, $this->tariff($tuition, '3200.00', ['grade_group' => '1–4 классы', 'payment_period' => 'monthly', 'option_type' => 'enrollment_mode', 'option_value' => EnrollmentMode::EXTERNAL]), '3200.00', $externalMode->id],
         ];
 
         $sum = '0.00';
-        foreach ($cases as [$fee, $price, $amount]) {
-            $this->canonicalPreview($fee, $price)->assertOk()->assertJsonPath('amount', $amount);
+        foreach ($cases as $case) {
+            [$fee, $price, $amount] = $case;
+            $modeId = $case[3] ?? null;
+            $this->canonicalPreview($fee, $price, array_filter(['enrollment_mode_id' => $modeId ?? null]))
+                ->assertOk()->assertJsonPath('amount', $amount);
             $sum = bcadd($sum, $amount, 2);
         }
         $this->assertSame('112040.00', $sum);

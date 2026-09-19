@@ -35,25 +35,32 @@ class QuickStudentRegistrationIdentityResolutionTest extends TestCase
     use RefreshDatabase;
 
     private User $accountant;
+
     private AcademicYear $year;
+
     private Stage $stage;
+
     private Grade $grade;
+
     private SchoolClass $class;
+
     private EnrollmentMode $mode;
+
     private CashAccount $account;
+
     private Fee $registrationFee;
 
     protected function setUp(): void
     {
         parent::setUp();
-        (new RolesAndPermissionsSeeder())->run();
+        (new RolesAndPermissionsSeeder)->run();
         $this->accountant = User::factory()->create(['is_active' => true]);
         $this->accountant->assignRole('accountant');
         $this->year = AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
         $this->stage = Stage::create(['name' => 'Начальная школа']);
         $this->grade = Grade::create(['name' => '1 класс', 'stage_id' => $this->stage->id]);
         $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => '1-А', 'name_ar' => '1-A', 'name_ru' => '1-А', 'is_active' => true]);
-        $this->mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        $this->mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очное обучение', 'is_active' => true]);
         $this->account = CashAccount::operating();
         app(\App\Services\Finance\CashSessionService::class)->open($this->account, $this->accountant);
         $this->registrationFee = Fee::create(['name_ru' => 'Регистрационный взнос', 'category' => Fee::CATEGORY_REGISTRATION, 'amount' => '1000.00', 'is_active' => true]);

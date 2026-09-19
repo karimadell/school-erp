@@ -9,6 +9,7 @@ use App\Models\Fee;
 use App\Models\PaymentPlan;
 use App\Models\Student;
 use App\Services\Finance\InvoiceIssuanceService;
+use App\Services\Finance\NewSaleFeePolicy;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -23,11 +24,11 @@ class StudentInvoiceController extends Controller
         $this->middleware('permission:manage invoices');
     }
 
-    public function create(Student $student): View
+    public function create(Student $student, NewSaleFeePolicy $feePolicy): View
     {
-        $student->load(['currentEnrollment.academicYear','currentEnrollment.grade','currentEnrollment.serviceSubscriptions.fee']);
+        $student->load(['currentEnrollment.academicYear', 'currentEnrollment.grade', 'currentEnrollment.serviceSubscriptions.fee']);
         $year = $student->currentEnrollment?->academicYear;
-        $fees = Fee::active()->where('category', '!=', Fee::CATEGORY_FOOD)->with(['prices' => fn ($query) => $query
+        $fees = $feePolicy->apply(Fee::active())->where('category', '!=', Fee::CATEGORY_FOOD)->with(['prices' => fn ($query) => $query
             ->when($year, fn ($query) => $query->where('academic_year_id', $year->id))
             ->where('is_active', true)->orderByDesc('start_date')])->orderBy('category')->orderBy('name_ru')->get();
 

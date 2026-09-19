@@ -2,10 +2,10 @@
 
 namespace Tests\Feature\Finance;
 
-use App\Models\Grade;
 use App\Models\AcademicYear;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
+use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\User;
@@ -20,7 +20,7 @@ class QuickStudentRegistrationRenderTest extends TestCase
 
     public function test_page_loads_grades_by_existing_level_then_id_without_grades_order_column(): void
     {
-        (new RolesAndPermissionsSeeder())->run();
+        (new RolesAndPermissionsSeeder)->run();
         $user = User::factory()->create(['is_active' => true]);
         $user->assignRole('accountant');
 
@@ -29,7 +29,7 @@ class QuickStudentRegistrationRenderTest extends TestCase
         $grade = Grade::forceCreate(['stage_id' => $stage->id, 'name' => '2 класс', 'level' => 2]);
         SchoolClass::create(['grade_id' => $grade->id, 'code' => '2-А', 'name_ar' => '2-A', 'name_ru' => '2-А', 'is_active' => true]);
         AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
-        EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очное обучение', 'is_active' => true]);
         foreach ([
             ['Регистрационный взнос', Fee::CATEGORY_REGISTRATION], ['Обучение', Fee::CATEGORY_TUITION],
             ['Транспорт', Fee::CATEGORY_TRANSPORT], ['Питание', Fee::CATEGORY_FOOD], ['Школьная форма', Fee::CATEGORY_UNIFORM],

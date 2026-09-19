@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Finance;
 
-use App\Console\Commands\UniformProcurementReport;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
 use App\Models\EnrollmentMode;
@@ -15,8 +14,8 @@ use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\User;
 use App\Services\Finance\CashSessionService;
-use Database\Seeders\RolesAndPermissionsSeeder;
 use App\Services\Finance\SchoolPriceListImportService;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -59,7 +58,7 @@ class UniformExactSizeProcurementTest extends TestCase
         $stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'A', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очная форма', 'is_active' => true]);
 
         $this->base = [
             'student_last_name_ru' => 'Иванова', 'student_first_name_ru' => 'Анна',

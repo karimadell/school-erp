@@ -5,9 +5,6 @@
 @php
     $studyFees = $fees->whereIn('category', [
         'tuition',
-        'tuition_regular',
-        'tuition_family',
-        'tuition_external',
     ]);
 
     $registrationFee = $fees->firstWhere('category', 'registration');

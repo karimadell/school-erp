@@ -55,14 +55,17 @@ class QuickRegistrationMixedBillingTest extends TestCase
     use RefreshDatabase;
 
     private User $accountant;
+
     private AcademicYear $year;
+
     private array $base;
+
     private CashAccount $account;
 
     protected function setUp(): void
     {
         parent::setUp();
-        (new RolesAndPermissionsSeeder())->run();
+        (new RolesAndPermissionsSeeder)->run();
         $this->accountant = User::factory()->create(['is_active' => true]);
         $this->accountant->assignRole('accountant');
 
@@ -74,7 +77,7 @@ class QuickRegistrationMixedBillingTest extends TestCase
         $stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'A', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очная форма', 'is_active' => true]);
 
         $this->base = [
             'student_last_name_ru' => 'Иванова', 'student_first_name_ru' => 'Анна',
@@ -173,6 +176,7 @@ class QuickRegistrationMixedBillingTest extends TestCase
      * billing_period into ONE installment schedule — see
      * $groupKey = 'calendar:'.$item['_billing_period']). Priced at
      * $monthlyUnit/month (x9 over this fixture's year = the total).
+     *
      * @return array{Fee, int} [fee, transport_route_id]
      */
     private function transportMonthlyFee(string $monthlyUnit = '1500.00'): array

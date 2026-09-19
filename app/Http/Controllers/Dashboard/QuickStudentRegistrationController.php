@@ -8,7 +8,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreQuickStudentRegistrationRequest;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
-use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Invoice;
@@ -17,8 +16,10 @@ use App\Models\PaymentPlan;
 use App\Models\Stage;
 use App\Models\Student;
 use App\Services\Admissions\QuickStudentRegistrationService;
+use App\Services\Admissions\RegistrationEnrollmentModePolicy;
 use App\Services\Finance\FinanceConfigurationReadinessService;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\NewSaleFeePolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -36,10 +37,14 @@ class QuickStudentRegistrationController extends Controller
         $this->middleware('permission:manage invoices');
     }
 
-    public function create(FinanceConfigurationReadinessService $readiness, InvoiceCalculationService $calculator): View
-    {
+    public function create(
+        FinanceConfigurationReadinessService $readiness,
+        InvoiceCalculationService $calculator,
+        RegistrationEnrollmentModePolicy $modePolicy,
+        NewSaleFeePolicy $feePolicy,
+    ): View {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
-        $modes = EnrollmentMode::active()->ordered()->get();
+        $modes = $modePolicy->all();
         // Scoped to the academic years this screen actually offers — a
         // stale prior-year or wrong-year price must never appear as if it
         // were an available tariff (grade_group/payment_period dropdowns
@@ -53,16 +58,16 @@ class QuickStudentRegistrationController extends Controller
         // resolver itself applies, never a separate UI-only date scope.
         $academicYearIds = $academicYears->pluck('id');
         $today = now()->toDateString();
-        $fees = Fee::with([
-                'prices' => fn ($query) => $query
-                    ->active()->where('currency', 'EGP')
-                    ->whereIn('academic_year_id', $academicYearIds)
-                    ->orderByDesc('start_date'),
-                // Phase 2B/2D corrective pass — the canonical allowed-period
-                // source (see Fee::allowedBillingPeriods()), eager-loaded so
-                // the period dropdown never re-queries per Fee row.
-                'billingPeriods',
-            ])
+        $fees = $feePolicy->apply(Fee::with([
+            'prices' => fn ($query) => $query
+                ->active()->where('currency', 'EGP')
+                ->whereIn('academic_year_id', $academicYearIds)
+                ->orderByDesc('start_date'),
+            // Phase 2B/2D corrective pass — the canonical allowed-period
+            // source (see Fee::allowedBillingPeriods()), eager-loaded so
+            // the period dropdown never re-queries per Fee row.
+            'billingPeriods',
+        ]))
             // Phase 2D corrective pass (Quick Registration operator UX) —
             // internal/test Fee records (e.g. ad-hoc UAT fixtures created
             // directly against a live environment) must never appear as a
@@ -144,6 +149,7 @@ class QuickStudentRegistrationController extends Controller
             ])
                 ->where('is_active', true)->orderBy('order')->get(),
             'modes' => $modes,
+            'modeConfigurationError' => $modePolicy->configurationError(),
             'defaultEnrollmentModeId' => $modes->count() === 1 ? $modes->first()->id : null,
             'fees' => $fees,
             'serviceReadiness' => $serviceReadiness,
@@ -239,8 +245,12 @@ class QuickStudentRegistrationController extends Controller
         ];
     }
 
-    public function price(Request $request, InvoiceCalculationService $calculator): JsonResponse
-    {
+    public function price(
+        Request $request,
+        InvoiceCalculationService $calculator,
+        RegistrationEnrollmentModePolicy $modePolicy,
+        NewSaleFeePolicy $feePolicy,
+    ): JsonResponse {
         $data = $request->validate([
             'fee_id' => ['required', 'integer', 'exists:fees,id'],
             'fee_price_id' => ['nullable', 'integer', 'exists:fee_prices,id'],
@@ -278,6 +288,7 @@ class QuickStudentRegistrationController extends Controller
             'food_range_end' => ['nullable', 'date_format:Y-m-d'],
         ]);
         $fee = Fee::findOrFail($data['fee_id']);
+        $feePolicy->assertEligible($fee, 'fee_id');
         // Food date-range UX corrective pass: month-from/month-to is no
         // longer offered to accountants for NEW Quick Registration Food
         // purchases — reject it here too (this preview endpoint is only
@@ -293,14 +304,11 @@ class QuickStudentRegistrationController extends Controller
             ]);
         }
         $year = AcademicYear::findOrFail($data['academic_year_id']);
-        $mode = EnrollmentMode::active()->findOrFail($data['enrollment_mode_id']);
+        $mode = $modePolicy->resolve((int) $data['enrollment_mode_id']);
         $pricingDate = isset($data['pricing_date']) || isset($data['registration_date'])
             ? \Illuminate\Support\Carbon::parse($data['pricing_date'] ?? $data['registration_date'])
             : now();
-        $tuitionCategories = [
-            Fee::CATEGORY_TUITION, Fee::CATEGORY_TUITION_REGULAR,
-            Fee::CATEGORY_TUITION_FAMILY, Fee::CATEGORY_TUITION_EXTERNAL,
-        ];
+        $tuitionCategories = [Fee::CATEGORY_TUITION];
         $item = [
             'fee_id' => $fee->id,
             'fee_price_id' => $data['fee_price_id'] ?? null,

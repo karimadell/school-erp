@@ -32,8 +32,11 @@ class AcademicYear20262027TuitionPriceDeploymentTest extends TestCase
     {
         parent::setUp();
 
+        AcademicYear::create([
+            'name' => '2025 / 2026', 'start_date' => '2025-09-01', 'end_date' => '2026-05-31', 'is_active' => false,
+        ]);
         $this->year = AcademicYear::create([
-            'name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => true,
         ]);
         $this->tuition = Fee::create([
             'name_ru' => 'Обучение', 'category' => Fee::CATEGORY_TUITION, 'amount' => '0.00',
@@ -65,6 +68,16 @@ class AcademicYear20262027TuitionPriceDeploymentTest extends TestCase
         $this->assertCount(32, collect($plan['rows'])->map(fn ($row) => $row['option_value'].'|'.$row['grade_group'].'|'.$row['payment_period'])->unique());
     }
 
+    public function test_canonical_spaced_academic_year_resolves_without_assuming_numeric_id(): void
+    {
+        $this->assertNotSame(1, $this->year->id);
+
+        $plan = $this->service()->plan();
+
+        $this->assertSame($this->year->id, $plan['academic_year']['id']);
+        $this->assertSame('2026 / 2027', $plan['academic_year']['name']);
+    }
+
     public function test_apply_creates_and_verifies_the_exact_approved_matrix(): void
     {
         $result = $this->service()->apply();
@@ -74,7 +87,7 @@ class AcademicYear20262027TuitionPriceDeploymentTest extends TestCase
         $this->assertSame(32, FeePrice::count());
         $this->assertSame(0, FeePrice::where('payment_period', 'quarterly')->count());
         $this->assertSame(32, FeePrice::where('option_type', 'enrollment_mode')->count());
-        $this->assertSame(32, FeePrice::where('currency', 'EGP')->whereDate('start_date', '2026-09-01')->whereDate('end_date', '2027-06-30')->where('is_active', true)->count());
+        $this->assertSame(32, FeePrice::where('currency', 'EGP')->whereDate('start_date', '2026-09-01')->whereDate('end_date', '2027-05-31')->where('is_active', true)->count());
         $this->assertSame(0, FeePrice::whereNotNull('grade_id')->orWhereNotNull('item')->orWhereNotNull('size')->count());
 
         foreach ($this->expectedAmounts() as $key => $amount) {
@@ -188,6 +201,15 @@ class AcademicYear20262027TuitionPriceDeploymentTest extends TestCase
         $this->assertSame(0, FeePrice::count());
     }
 
+    public function test_duplicate_canonical_academic_year_fails_with_zero_writes(): void
+    {
+        AcademicYear::create([
+            'name' => '2026 / 2027', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31', 'is_active' => false,
+        ]);
+        $this->assertApplyFails();
+        $this->assertSame(0, FeePrice::count());
+    }
+
     public function test_effective_date_outside_academic_year_fails(): void
     {
         $this->year->update(['start_date' => '2026-10-01']);
@@ -245,7 +267,7 @@ class AcademicYear20262027TuitionPriceDeploymentTest extends TestCase
         $generic = FeePrice::create([
             'fee_id' => $this->tuition->id, 'academic_year_id' => $this->year->id,
             'grade_group' => '1–4 классы', 'payment_period' => 'monthly', 'amount' => '1234.00',
-            'currency' => 'EGP', 'start_date' => '2026-09-01', 'end_date' => '2027-06-30',
+            'currency' => 'EGP', 'start_date' => '2026-09-01', 'end_date' => '2027-05-31',
             'option_type' => null, 'option_value' => null, 'is_active' => true,
         ]);
         $before = (array) DB::table('fee_prices')->find($generic->id);

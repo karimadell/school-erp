@@ -3,15 +3,21 @@
 namespace Tests\Feature\Finance;
 
 use App\Models\CashAccount;
+use App\Models\CashTransaction;
 use App\Models\Enrollment;
+use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FinanceCollection;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
+use App\Models\ServiceCoverage;
 use App\Models\Student;
+use App\Models\StudentServiceSubscription;
 use App\Models\User;
+use App\Services\Finance\FinanceCollectionService;
 use App\Services\Finance\InvoiceIssuanceService;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Unified Cashier Workspace (PR C1) — HTTP integration tests. The
@@ -23,6 +29,12 @@ use Illuminate\Support\Str;
  */
 class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->ensureCanonicalRegistrationModeCatalog();
+    }
+
     private function issueSimpleInvoice(string $amount): Invoice
     {
         $fee = Fee::create(['name_ru' => 'Доп. услуга '.Str::random(6), 'category' => Fee::CATEGORY_BOOKS, 'amount' => $amount, 'is_active' => true]);
@@ -105,7 +117,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
             ->get(route('dashboard.students.unified-collection.create', $this->student))
             ->assertOk()
             ->assertSee('500.00')
-            ->assertSee("existing_obligations[0][invoice_id]", false);
+            ->assertSee('existing_obligations[0][invoice_id]', false);
 
         $this->assertNotNull($invoice);
     }
@@ -430,6 +442,14 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
 
     private function returningStudentWithoutEnrollment(string $phone): Student
     {
+        foreach ([
+            EnrollmentMode::FAMILY => 'Семейная форма',
+            EnrollmentMode::EXTERNAL => 'Экстернат',
+            EnrollmentMode::NO_ENROLLMENT => 'Без зачисления',
+        ] as $code => $name) {
+            EnrollmentMode::firstOrCreate(['code' => $code], ['name_ru' => $name, 'is_active' => false]);
+        }
+
         return Student::create([
             'last_name_ru' => 'Сидоров', 'first_name_ru' => 'Пётр', 'patronymic_ru' => null,
             'phone' => $phone, 'class_id' => $this->enrollment->class_id, 'status' => 'registration_completed',
@@ -447,6 +467,90 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         $response->assertSee('id="ns-fee"', false);
         $response->assertSee('id="ar-toggle"', false);
         $response->assertDontSee('Начисление новых услуг недоступно');
+        foreach (['Очная', 'Семейная форма', 'Экстернат', 'Без зачисления'] as $label) {
+            $response->assertSee($label);
+        }
+    }
+
+    public function test_incomplete_mode_catalog_rejects_http_and_direct_annual_registration_without_partial_writes(): void
+    {
+        $returning = $this->returningStudentWithoutEnrollment('+201003334460');
+        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
+        EnrollmentMode::where('code', EnrollmentMode::FAMILY)->delete();
+        $payload = [
+            'student_id' => $returning->id,
+            'idempotency_token' => (string) Str::uuid(),
+            'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'annual_registration' => [
+                'enrollment_mode_id' => $this->enrollment->enrollment_mode_id,
+                'stage_id' => $this->enrollment->stage_id,
+                'grade_id' => $this->enrollment->grade_id,
+                'class_id' => $this->enrollment->class_id,
+            ],
+            'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '100.00']],
+        ];
+        $before = [
+            Enrollment::class => Enrollment::count(), FinanceCollection::class => FinanceCollection::count(),
+            Invoice::class => Invoice::count(), InvoicePayment::class => InvoicePayment::count(),
+            ServiceCoverage::class => ServiceCoverage::count(), StudentServiceSubscription::class => StudentServiceSubscription::count(),
+            CashTransaction::class => CashTransaction::count(),
+        ];
+
+        $this->actingAs($this->accountant)
+            ->post(route('dashboard.students.unified-collection.store', $returning), $payload)
+            ->assertSessionHasErrors('annual_registration.enrollment_mode_id');
+
+        try {
+            app(FinanceCollectionService::class)->collect($payload, $this->accountant);
+            $this->fail('Direct collection service accepted an incomplete canonical mode catalog.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('enrollment_mode_id', $exception->errors());
+        }
+
+        foreach ($before as $model => $count) {
+            $this->assertSame($count, $model::count(), $model.' changed after rejected annual registration.');
+        }
+    }
+
+    public function test_existing_enrollment_collection_does_not_require_complete_registration_mode_catalog(): void
+    {
+        EnrollmentMode::where('code', EnrollmentMode::FAMILY)->delete();
+        $invoice = $this->issueSimpleInvoice('100.00');
+
+        $collection = app(FinanceCollectionService::class)->collect([
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '100.00']],
+        ], $this->accountant);
+
+        $this->assertTrue($collection->exists);
+        $this->assertSame($this->enrollment->enrollment_mode_id, $this->student->currentEnrollment()->value('enrollment_mode_id'));
+    }
+
+    public function test_workspace_hides_and_rejects_legacy_tuition_new_charges(): void
+    {
+        $legacy = Fee::create([
+            'name_ru' => 'Старый экстернат', 'category' => Fee::CATEGORY_TUITION_EXTERNAL,
+            'amount' => '100.00', 'is_active' => true,
+        ]);
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.students.unified-collection.create', $this->student))
+            ->assertOk()
+            ->assertDontSee('Старый экстернат');
+
+        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
+            'idempotency_token' => (string) Str::uuid(),
+            'academic_year_id' => $this->year->id,
+            'payment_method' => 'cash',
+            'new_services' => [[
+                'fee_id' => $legacy->id, 'quantity' => 1, 'receive_now_amount' => '100.00',
+            ]],
+        ])->assertSessionHasErrors('new_services');
+
+        $this->assertSame(0, FinanceCollection::count());
+        $this->assertSame(0, Invoice::count());
+        $this->assertSame(0, InvoicePayment::count());
     }
 
     public function test_active_year_no_enrollment_unauthorized_actor_sees_neither_annual_registration_nor_new_service_ui(): void

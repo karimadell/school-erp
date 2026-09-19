@@ -2,8 +2,12 @@
 
 namespace App\Http\Requests;
 
+use App\Services\Admissions\RegistrationEnrollmentModePolicy;
+use App\Services\Finance\NewSaleFeePolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Validator;
 
 /**
  * Unified Cashier Workspace (PR C1) — SHAPE-ONLY validation plus the two
@@ -117,5 +121,33 @@ class StoreUnifiedCollectionRequest extends FormRequest
             'new_services.*.receive_now_amount.gt' => 'Укажите сумму, полученную от родителя по этой услуге.',
             'payment_method.in' => 'Выбран недопустимый способ оплаты.',
         ];
+    }
+
+    public function after(): array
+    {
+        return [function (Validator $validator): void {
+            try {
+                app(NewSaleFeePolicy::class)->assertEligibleIds(
+                    collect($this->input('new_services', []))->pluck('fee_id'),
+                    'new_services',
+                );
+            } catch (ValidationException $exception) {
+                foreach ($exception->errors()['new_services'] ?? [] as $message) {
+                    $validator->errors()->add('new_services', $message);
+                }
+            }
+
+            if ($this->filled('annual_registration.enrollment_mode_id')) {
+                try {
+                    app(RegistrationEnrollmentModePolicy::class)->resolve(
+                        $this->integer('annual_registration.enrollment_mode_id'),
+                    );
+                } catch (ValidationException $exception) {
+                    foreach ($exception->errors()['enrollment_mode_id'] ?? [] as $message) {
+                        $validator->errors()->add('annual_registration.enrollment_mode_id', $message);
+                    }
+                }
+            }
+        }];
     }
 }

@@ -18,11 +18,17 @@ class QuickStudentRegistrationValidationTest extends TestCase
     use RefreshDatabase;
 
     private User $user;
+
     private AcademicYear $year;
+
     private Stage $stage;
+
     private Grade $grade;
+
     private SchoolClass $class;
+
     private EnrollmentMode $mode;
+
     private Fee $fee;
 
     protected function setUp(): void
@@ -35,7 +41,8 @@ class QuickStudentRegistrationValidationTest extends TestCase
         $this->stage = Stage::create(['name' => 'Начальная школа', 'is_active' => true]);
         $this->grade = Grade::create(['name' => '1 класс', 'stage_id' => $this->stage->id]);
         $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => '1-А', 'name_ar' => '1-A', 'name_ru' => '1-А', 'is_active' => true]);
-        $this->mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        $this->mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        $this->ensureCanonicalRegistrationModeCatalog();
         $this->fee = Fee::create(['name_ru' => 'Обучение', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
     }
 

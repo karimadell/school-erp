@@ -109,7 +109,7 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         // a real, strictly-enforced Postgres unique constraint the
         // moment any residual/repeated state exists — firstOrCreate()
         // is idempotent regardless.
-        $mode = EnrollmentMode::firstOrCreate(['code' => 'regular'], ['name_ru' => 'Test Mode', 'is_active' => true]);
+        $mode = EnrollmentMode::firstOrCreate(['code' => EnrollmentMode::FULL_TIME], ['name_ru' => 'Test Mode', 'is_active' => true]);
         $fee = Fee::create(['name_ru' => 'Test Fee', 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
         FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
 
@@ -227,13 +227,17 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $tables = ['students', 'enrollments', 'invoices', 'invoice_payments', 'payment_allocations', 'service_coverages', 'payment_allocation_coverage_periods'];
         $before = collect($tables)->mapWithKeys(fn ($table) => [$table => DB::connection($this->connectionName)->table($table)->count()]);
 
-        $barrier = tempnam(sys_get_temp_dir(), 'pg_periodic_reg_'); unlink($barrier);
-        $files = [$barrier.'.a', $barrier.'.b']; $pids = [];
+        $barrier = tempnam(sys_get_temp_dir(), 'pg_periodic_reg_');
+        unlink($barrier);
+        $files = [$barrier.'.a', $barrier.'.b'];
+        $pids = [];
         foreach ($files as $file) {
             $pid = pcntl_fork();
             if ($pid === 0) {
                 DB::purge($this->connectionName);
-                while (! file_exists($barrier)) { usleep(2000); }
+                while (! file_exists($barrier)) {
+                    usleep(2000);
+                }
                 try {
                     $result = app(QuickStudentRegistrationService::class)->register($data, $accountant);
                     file_put_contents($file, "student:{$result['student']->id},invoice:{$result['invoice']->id}");
@@ -245,12 +249,18 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
             $pids[] = $pid;
         }
         touch($barrier);
-        foreach ($pids as $pid) { pcntl_waitpid($pid, $status); }
+        foreach ($pids as $pid) {
+            pcntl_waitpid($pid, $status);
+        }
         $results = array_map(fn ($file) => file_exists($file) ? file_get_contents($file) : null, $files);
-        foreach ($files as $file) { @unlink($file); } @unlink($barrier);
+        foreach ($files as $file) {
+            @unlink($file);
+        } @unlink($barrier);
 
-        $this->assertNotNull($results[0]); $this->assertNotNull($results[1]);
-        $this->assertStringNotContainsString('CRASHED', $results[0]); $this->assertStringNotContainsString('CRASHED', $results[1]);
+        $this->assertNotNull($results[0]);
+        $this->assertNotNull($results[1]);
+        $this->assertStringNotContainsString('CRASHED', $results[0]);
+        $this->assertStringNotContainsString('CRASHED', $results[1]);
         $this->assertSame($results[0], $results[1]);
         foreach ($tables as $table) {
             $this->assertSame($before[$table] + 1, DB::connection($this->connectionName)->table($table)->count(), "one new {$table} row");
@@ -324,7 +334,7 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $this->assertLessThan(
             self::HOLD_SECONDS * 0.6,
             $elapsed,
-            "registration took {$elapsed}s while another transaction held {$table}.id={$id} for ".self::HOLD_SECONDS."s — it should never have needed that lock"
+            "registration took {$elapsed}s while another transaction held {$table}.id={$id} for ".self::HOLD_SECONDS.'s — it should never have needed that lock'
         );
     }
 
@@ -337,7 +347,7 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $stage = Stage::create(['name' => 'Lock Test Stage '.uniqid(), 'order' => 3, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => 'Lock Test Grade '.uniqid(), 'stage_id' => $stage->id, 'level' => 3]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'L'.uniqid(), 'name_ru' => 'L', 'name_ar' => 'L', 'is_active' => true]);
-        $mode = EnrollmentMode::firstOrCreate(['code' => 'regular'], ['name_ru' => 'Test Mode', 'is_active' => true]);
+        $mode = EnrollmentMode::firstOrCreate(['code' => EnrollmentMode::FULL_TIME], ['name_ru' => 'Test Mode', 'is_active' => true]);
         $fee = Fee::create(['name_ru' => 'Lock Test Fee '.uniqid(), 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
         FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
 
@@ -362,7 +372,7 @@ class QuickRegistrationPostgresConcurrencyTest extends TestCase
         $stage = Stage::create(['name' => 'Lock Test Stage '.uniqid(), 'order' => 4, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => 'Lock Test Grade '.uniqid(), 'stage_id' => $stage->id, 'level' => 4]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'L'.uniqid(), 'name_ru' => 'L', 'name_ar' => 'L', 'is_active' => true]);
-        $mode = EnrollmentMode::firstOrCreate(['code' => 'regular'], ['name_ru' => 'Test Mode', 'is_active' => true]);
+        $mode = EnrollmentMode::firstOrCreate(['code' => EnrollmentMode::FULL_TIME], ['name_ru' => 'Test Mode', 'is_active' => true]);
         $fee = Fee::create(['name_ru' => 'Lock Test Fee '.uniqid(), 'category' => Fee::CATEGORY_TUITION, 'amount' => '1000.00', 'is_active' => true]);
         FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $year->id, 'grade_id' => $grade->id, 'amount' => '1000.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
 

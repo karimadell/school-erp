@@ -3,15 +3,9 @@
 @php
     $tuitionCategories = [
         \App\Models\Fee::CATEGORY_TUITION,
-        \App\Models\Fee::CATEGORY_TUITION_REGULAR,
-        \App\Models\Fee::CATEGORY_TUITION_FAMILY,
-        \App\Models\Fee::CATEGORY_TUITION_EXTERNAL,
     ];
     $categoryLabels = [
         \App\Models\Fee::CATEGORY_TUITION => 'Обучение',
-        \App\Models\Fee::CATEGORY_TUITION_REGULAR => 'Обучение',
-        \App\Models\Fee::CATEGORY_TUITION_FAMILY => 'Обучение',
-        \App\Models\Fee::CATEGORY_TUITION_EXTERNAL => 'Обучение',
         \App\Models\Fee::CATEGORY_TRANSPORT => 'Трансфер',
         \App\Models\Fee::CATEGORY_FOOD => 'Питание',
         \App\Models\Fee::CATEGORY_UNIFORM => 'Школьная форма',

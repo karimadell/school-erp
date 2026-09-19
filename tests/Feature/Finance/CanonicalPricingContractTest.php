@@ -188,6 +188,8 @@ class CanonicalPricingContractTest extends FinanceOperationsTestCase
 
     private function makeActiveEnrollmentMode(): \App\Models\EnrollmentMode
     {
-        return \App\Models\EnrollmentMode::firstOrCreate(['code' => 'full_time'], ['name_ru' => 'Очная', 'is_active' => true]);
+        $this->ensureCanonicalRegistrationModeCatalog();
+
+        return \App\Models\EnrollmentMode::where('code', \App\Models\EnrollmentMode::FULL_TIME)->sole();
     }
 }

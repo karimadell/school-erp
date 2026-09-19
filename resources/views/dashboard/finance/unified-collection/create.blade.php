@@ -209,8 +209,9 @@
 
         @if(! $enrollment && $canRegisterAnnually)
             <div class="card border-0 shadow-sm mb-4"><div class="card-body">
+                @if($modeConfigurationError)<div class="alert alert-warning">{{ $modeConfigurationError }}</div>@endif
                 <div class="form-check mb-3">
-                    <input class="form-check-input" type="checkbox" id="ar-toggle">
+                    <input class="form-check-input" type="checkbox" id="ar-toggle" @disabled($modeConfigurationError)>
                     <label class="form-check-label fw-bold" for="ar-toggle">Зачисление на {{ $year->name }}</label>
                 </div>
                 <div class="row g-3" id="ar-fields" hidden>

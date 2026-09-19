@@ -31,12 +31,15 @@ use Illuminate\Support\Str;
 class ChargeAndCollectFoodTest extends FinanceOperationsTestCase
 {
     private AcademicCalendar $calendar;
+
     private MealPlan $mealPlan;
+
     private Fee $food;
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->ensureCanonicalRegistrationModeCatalog();
         $this->calendar = AcademicCalendar::create([
             'academic_year_id' => $this->year->id,
             'weekly_days_off' => ['fri', 'sat'],

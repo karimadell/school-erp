@@ -11,6 +11,7 @@ use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use App\Models\Student;
 use App\Models\User;
+use App\Services\Admissions\RegistrationEnrollmentModePolicy;
 use App\Support\DeterministicIdempotencyKey;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Collection;
@@ -100,8 +101,9 @@ class FinanceCollectionService
         private InvoicePaymentService $payments,
         private ServiceSelectionNormalizer $normalizer,
         private MixedPaymentCollectionOrchestrator $orchestrator,
-    ) {
-    }
+        private RegistrationEnrollmentModePolicy $modePolicy,
+        private NewSaleFeePolicy $feePolicy,
+    ) {}
 
     /**
      * @param  array{
@@ -127,6 +129,10 @@ class FinanceCollectionService
     public function collect(array $data, User $actor): FinanceCollection
     {
         $this->validateTopLevel($data);
+        $this->feePolicy->assertEligibleIds(collect($data['new_services'] ?? [])->pluck('fee_id'), 'new_services');
+        if (! empty($data['annual_registration'])) {
+            $this->modePolicy->resolve((int) ($data['annual_registration']['enrollment_mode_id'] ?? 0));
+        }
 
         // §7 corrective pass — canonical cash-account resolution, resolved
         // ONCE and used everywhere a cash account matters: the collection
@@ -324,11 +330,12 @@ class FinanceCollectionService
     private function establishAnnualRegistration(Student $student, AcademicYear $year, array $registration, User $actor): Enrollment
     {
         abort_unless($actor->can('register students for year'), 403);
+        $mode = $this->modePolicy->resolve((int) ($registration['enrollment_mode_id'] ?? 0));
 
         return Enrollment::create([
             'student_id' => $student->id,
             'academic_year_id' => $year->id,
-            'enrollment_mode_id' => $registration['enrollment_mode_id'],
+            'enrollment_mode_id' => $mode->id,
             'stage_id' => $registration['stage_id'],
             'grade_id' => $registration['grade_id'],
             'class_id' => $registration['class_id'],
@@ -576,11 +583,11 @@ class FinanceCollectionService
             'annual_registration' => isset($data['annual_registration']) ? $this->canonicalizeAnnualRegistration($data['annual_registration']) : null,
             'existing_obligations' => collect($data['existing_obligations'] ?? [])
                 ->map(fn (array $line) => $this->canonicalizeExistingObligationLine($line))
-                ->sortBy(fn (array $line) => sprintf('%020d', $line['invoice_id'] ?? 0) . '|' . json_encode($line, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
+                ->sortBy(fn (array $line) => sprintf('%020d', $line['invoice_id'] ?? 0).'|'.json_encode($line, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
                 ->values()->all(),
             'new_services' => collect($data['new_services'] ?? [])
                 ->map(fn (array $line) => $this->canonicalizeNewServiceLine($line))
-                ->sortBy(fn (array $line) => sprintf('%020d', $line['fee_id'] ?? 0) . '|' . json_encode($line, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
+                ->sortBy(fn (array $line) => sprintf('%020d', $line['fee_id'] ?? 0).'|'.json_encode($line, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
                 ->values()->all(),
         ];
 

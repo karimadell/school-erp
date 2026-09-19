@@ -6,6 +6,7 @@ use App\Models\AcademicYear;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Services\Finance\NewSaleFeePolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -136,6 +137,13 @@ class StoreInvoiceRequest extends FormRequest
             }
 
             $fees = Fee::query()->whereIn('id', collect($this->input('items'))->pluck('fee_id'))->get()->keyBy('id');
+            try {
+                app(NewSaleFeePolicy::class)->assertEligibleIds($fees->keys(), 'fees');
+            } catch (\Illuminate\Validation\ValidationException $exception) {
+                foreach ($exception->errors()['fees'] ?? [] as $message) {
+                    $validator->errors()->add('fees', $message);
+                }
+            }
             foreach ($this->input('items') as $index => $item) {
                 $fee = $fees->get((int) $item['fee_id']);
                 if (! $fee?->is_active) {

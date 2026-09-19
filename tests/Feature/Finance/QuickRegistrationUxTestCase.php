@@ -34,7 +34,10 @@ abstract class QuickRegistrationUxTestCase extends TestCase
         $stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $stage->id, 'level' => 1]);
         $class = SchoolClass::create(['grade_id' => $grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'A', 'is_active' => true]);
-        $mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очная форма', 'is_active' => true]);
+        EnrollmentMode::create(['code' => EnrollmentMode::FAMILY, 'name_ru' => 'Семейная форма', 'is_active' => false]);
+        EnrollmentMode::create(['code' => EnrollmentMode::EXTERNAL, 'name_ru' => 'Экстернат', 'is_active' => false]);
+        EnrollmentMode::create(['code' => EnrollmentMode::NO_ENROLLMENT, 'name_ru' => 'Без зачисления', 'is_active' => false]);
 
         return [$year, $stage, $grade, $class, $mode];
     }

@@ -4,11 +4,12 @@ namespace App\Http\Requests;
 
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
-use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\SchoolClass;
+use App\Services\Admissions\RegistrationEnrollmentModePolicy;
+use App\Services\Finance\NewSaleFeePolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -210,12 +211,17 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
                 }
             }
 
-            if (! EnrollmentMode::where('is_active', true)->exists()) {
+            $modePolicy = app(RegistrationEnrollmentModePolicy::class);
+            if ($modePolicy->all()->isEmpty()) {
                 $validator->errors()->add('enrollment_mode_id', 'Формы обучения не настроены.');
-            }
-            $mode = EnrollmentMode::find($this->integer('enrollment_mode_id'));
-            if ($mode && ! $mode->is_active) {
-                $validator->errors()->add('enrollment_mode_id', 'Выбранная форма обучения не активна.');
+            } elseif ($this->filled('enrollment_mode_id')) {
+                try {
+                    $modePolicy->resolve($this->integer('enrollment_mode_id'));
+                } catch (ValidationException $exception) {
+                    foreach ($exception->errors()['enrollment_mode_id'] ?? [] as $message) {
+                        $validator->errors()->add('enrollment_mode_id', $message);
+                    }
+                }
             }
 
             $grade = Grade::find($this->integer('grade_id'));
@@ -236,6 +242,13 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             // allowedBillingPeriods() below, each of which queries
             // fee_billing_periods unless already eager-loaded.
             $fees = Fee::with('billingPeriods')->whereIn('id', $services->pluck('fee_id'))->get()->keyBy('id');
+            try {
+                app(NewSaleFeePolicy::class)->assertEligibleIds($services->pluck('fee_id'), 'services');
+            } catch (ValidationException $exception) {
+                foreach ($exception->errors()['services'] ?? [] as $message) {
+                    $validator->errors()->add('services', $message);
+                }
+            }
             // Batched replacement for the removed per-element
             // 'exists:fees,id' rule on services.*.fee_id — identical
             // rejection (any submitted fee_id not found in $fees fails),

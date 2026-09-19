@@ -5,8 +5,8 @@ namespace Tests\Feature\Finance;
 use App\Models\AcademicYear;
 use App\Models\BillingBatch;
 use App\Models\BillingBatchStudent;
-use App\Models\EnrollmentMode;
 use App\Models\Enrollment;
+use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
@@ -23,18 +23,25 @@ abstract class MassBillingTestCase extends TestCase
     use RefreshDatabase;
 
     protected User $accountant;
+
     protected AcademicYear $year;
+
     protected Stage $stage;
+
     protected Grade $grade;
+
     protected EnrollmentMode $mode;
+
     protected SchoolClass $classA;
+
     protected SchoolClass $classB;
+
     protected Fee $tuition;
 
     protected function setUp(): void
     {
         parent::setUp();
-        (new RolesAndPermissionsSeeder())->run();
+        (new RolesAndPermissionsSeeder)->run();
         $this->accountant = User::factory()->create(['is_active' => true]);
         $this->accountant->assignRole('accountant');
 
@@ -42,6 +49,7 @@ abstract class MassBillingTestCase extends TestCase
         $this->stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $this->grade = Grade::forceCreate(['name' => '1 КЛАСС', 'stage_id' => $this->stage->id, 'level' => 1]);
         $this->mode = EnrollmentMode::create(['code' => 'full_time', 'name_ru' => 'Очная', 'is_active' => true]);
+        $this->ensureCanonicalRegistrationModeCatalog();
         $this->classA = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => '1-А', 'name_ru' => '1-А', 'name_ar' => '1-A', 'is_active' => true]);
         $this->classB = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => '1-Б', 'name_ru' => '1-Б', 'name_ar' => '1-B', 'is_active' => true]);
 

@@ -7,12 +7,13 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreUnifiedCollectionRequest;
 use App\Models\AcademicYear;
 use App\Models\CashAccount;
-use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\MealPlan;
 use App\Models\Stage;
 use App\Models\Student;
+use App\Services\Admissions\RegistrationEnrollmentModePolicy;
 use App\Services\Finance\FinanceCollectionService;
+use App\Services\Finance\NewSaleFeePolicy;
 use App\Services\Finance\StudentFinanceSummaryService;
 use App\Services\Finance\StudentObligationsViewModel;
 use Illuminate\Http\RedirectResponse;
@@ -62,6 +63,8 @@ class UnifiedCollectionController extends Controller
         Request $request,
         StudentObligationsViewModel $obligations,
         StudentFinanceSummaryService $summaries,
+        RegistrationEnrollmentModePolicy $modePolicy,
+        NewSaleFeePolicy $feePolicy,
     ): View|RedirectResponse {
         $student->loadMissing('currentEnrollment.academicYear', 'currentEnrollment.schoolClass');
 
@@ -115,7 +118,8 @@ class UnifiedCollectionController extends Controller
         $transportRoutes = collect();
         $uniformProducts = collect();
         if ($canSelectNewServices) {
-            $fees = Fee::with(['prices', 'billingPeriods'])->nonTest()->active()->orderBy('category')->orderBy('name_ru')->get();
+            $fees = $feePolicy->apply(Fee::with(['prices', 'billingPeriods']))
+                ->nonTest()->active()->orderBy('category')->orderBy('name_ru')->get();
             $mealPlans = MealPlan::active()->orderBy('name_ru')->get();
             $transportRoutes = DB::table('transport_routes')->where('is_active', true)->orderBy('name')->get();
             $uniformProducts = DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get();
@@ -136,7 +140,8 @@ class UnifiedCollectionController extends Controller
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
             'canRegisterAnnually' => $canRegisterAnnually,
             'structureStages' => $this->structureStagesForAnnualRegistration(),
-            'enrollmentModes' => EnrollmentMode::active()->ordered()->get(),
+            'enrollmentModes' => $enrollment === null && $canRegisterAnnually ? $modePolicy->all() : collect(),
+            'modeConfigurationError' => $enrollment === null && $canRegisterAnnually ? $modePolicy->configurationError() : null,
             'idempotencyToken' => (string) Str::uuid(),
         ]);
     }

@@ -243,9 +243,7 @@ class ClassicInvoiceTuitionModeDerivationTest extends FinanceOperationsTestCase
         $this->assertDatabaseHas('invoices', ['student_id' => $this->student->id, 'total_amount' => '1500.00']);
     }
 
-    // 14: legacy tuition_external (Fee #8's category on Cloud) with its
-    // CURRENT generic pricing remains functional before any future retirement.
-    public function test_legacy_tuition_external_generic_pricing_remains_compatible(): void
+    public function test_legacy_tuition_external_is_hidden_and_rejected_for_new_invoices_but_history_remains_readable(): void
     {
         $externalFee = Fee::create(['name_ru' => 'Экстернат', 'category' => Fee::CATEGORY_TUITION_EXTERNAL, 'amount' => '0.00', 'is_active' => true]);
         FeePrice::create([
@@ -253,13 +251,31 @@ class ClassicInvoiceTuitionModeDerivationTest extends FinanceOperationsTestCase
             'payment_period' => 'yearly', 'amount' => '25600.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
         ]);
 
+        $historical = $this->invoice('25600.00');
+        $historicalItem = $historical->items()->firstOrFail();
+        $historicalItem->update(['fee_id' => $externalFee->id]);
+        $before = $historicalItem->fresh()->toArray();
+
+        $this->actingAs($this->accountant)->get(route('dashboard.invoices.create'))
+            ->assertOk()->assertDontSee('Экстернат');
+        $this->actingAs($this->accountant)->get(route('dashboard.students.invoices.create', $this->student))
+            ->assertOk()->assertDontSee('Экстернат');
+
+        $beforeCount = Invoice::count();
         $response = $this->actingAs($this->accountant)->post(
             route('dashboard.students.invoices.store', $this->student),
             $this->payload(['fees' => [$externalFee->id]])
         );
 
-        $response->assertRedirect();
-        $this->assertDatabaseHas('invoices', ['student_id' => $this->student->id, 'total_amount' => '25600.00']);
+        $response->assertSessionHasErrors('fees');
+        $this->assertSame($beforeCount, Invoice::count());
+        $this->assertSame($before, $historicalItem->fresh()->toArray());
+
+        $this->actingAs($this->accountant)->post(
+            route('dashboard.invoices.store'),
+            $this->payload(['fees' => [$externalFee->id], 'idempotency_key' => null])
+        )->assertSessionHasErrors('fees');
+        $this->assertSame($beforeCount, Invoice::count());
     }
 
     // 15: BOTH Classic Invoice entry points derive the same authoritative

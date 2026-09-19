@@ -9,10 +9,10 @@ use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
+use App\Models\InstallmentCoveragePeriod;
 use App\Models\Invoice;
 use App\Models\InvoiceInstallment;
 use App\Models\InvoiceItem;
-use App\Models\InstallmentCoveragePeriod;
 use App\Models\MealPlan;
 use App\Models\PaymentAllocation;
 use App\Models\SchoolClass;
@@ -81,14 +81,17 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
     use RefreshDatabase;
 
     private User $accountant;
+
     private AcademicYear $year;
+
     private array $base;
+
     private CashAccount $account;
 
     protected function setUp(): void
     {
         parent::setUp();
-        (new RolesAndPermissionsSeeder())->run();
+        (new RolesAndPermissionsSeeder)->run();
         $this->accountant = User::factory()->create(['is_active' => true]);
         $this->accountant->assignRole('accountant');
         $this->accountant->givePermissionTo('manage invoices');
@@ -97,7 +100,8 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
         $this->stage = Stage::create(['name' => 'Начальная школа', 'order' => 1, 'is_active' => true]);
         $this->grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $this->stage->id, 'level' => 1]);
         $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'A', 'is_active' => true]);
-        $this->mode = EnrollmentMode::create(['code' => 'regular', 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $this->mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $this->ensureCanonicalRegistrationModeCatalog();
 
         $this->base = [
             'student_last_name_ru' => 'Петрова', 'student_first_name_ru' => 'Мария',
@@ -111,8 +115,11 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
     }
 
     private Stage $stage;
+
     private Grade $grade;
+
     private SchoolClass $class;
+
     private EnrollmentMode $mode;
 
     private function openCashSession(): void
@@ -209,7 +216,9 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
         }
 
         $queries = [];
-        DB::listen(function ($query) use (&$queries) { $queries[] = $query->sql; });
+        DB::listen(function ($query) use (&$queries) {
+            $queries[] = $query->sql;
+        });
 
         $response = $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'));
         $response->assertOk();
@@ -218,7 +227,7 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
         // count (measured at 18) to avoid brittleness on unrelated schema
         // changes, but a small, fixed constant — the whole point is that
         // this must NEVER scale with catalog size again.
-        $this->assertLessThanOrEqual(30, count($queries), 'GET /dashboard/quick-registration must stay within a bounded, catalog-size-independent query ceiling: ' . count($queries) . ' queries issued');
+        $this->assertLessThanOrEqual(30, count($queries), 'GET /dashboard/quick-registration must stay within a bounded, catalog-size-independent query ceiling: '.count($queries).' queries issued');
     }
 
     /** 1: confirms the ceiling is independent of Fee count specifically (the confirmed N+1). */
@@ -234,7 +243,9 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
             }
 
             $queries = [];
-            DB::listen(function ($query) use (&$queries) { $queries[] = $query->sql; });
+            DB::listen(function ($query) use (&$queries) {
+                $queries[] = $query->sql;
+            });
             $this->actingAs($admin)->get(route('dashboard.quick-registration.create'))->assertOk();
 
             return count($queries);
@@ -351,7 +362,7 @@ class QuickRegistrationEndToEndPerformanceTest extends TestCase
         // pass (down from 253 after the first pass, 286 at the PR #46
         // baseline) — ceilinged with headroom above the measured value to
         // avoid brittleness on unrelated schema/behavior changes.
-        $this->assertLessThanOrEqual(250, count($queries), 'a realistic 5-service Quick Registration must stay within a bounded query ceiling, not scale with period/installment count: ' . count($queries) . ' queries issued');
+        $this->assertLessThanOrEqual(250, count($queries), 'a realistic 5-service Quick Registration must stay within a bounded query ceiling, not scale with period/installment count: '.count($queries).' queries issued');
     }
 
     /** 10 (Transport): Operations' own capacity enforcement is untouched by any of this pass's changes. */

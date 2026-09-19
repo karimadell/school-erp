@@ -671,7 +671,7 @@ async function updateRow(row) {
         });
     }
 
-    let unit = null, total = null, errorMessage = 'Тариф не настроен.';
+    let unit = null, total = null, errorMessage = 'Тариф не настроен.', addPriceUrl = null;
     const response = await fetch('{{ route('dashboard.quick-registration.price') }}', {method: 'POST', body, headers: {'Accept': 'application/json'}});
     let tariffPeriod = '';
     if (response.ok) {
@@ -700,6 +700,11 @@ async function updateRow(row) {
             const problem = await response.json();
             const firstError = Object.values(problem.errors || {})[0]?.[0];
             if (firstError) errorMessage = firstError;
+            // Authorized-only, server-derived link (see
+            // QuickStudentRegistrationController::price()) — never trust
+            // this as anything but a plain URL to assign to href; it is
+            // never treated as HTML.
+            if (typeof problem.missing_tariff_link === 'string') addPriceUrl = problem.missing_tariff_link;
         } catch (e) { /* keep the generic fallback */ }
     } else {
         errorMessage = 'Не удалось рассчитать тариф. Попробуйте ещё раз.';
@@ -708,7 +713,21 @@ async function updateRow(row) {
         row.querySelector('.resolved-unit').textContent = errorMessage;
         row.querySelector('.resolved-total').textContent = '—';
         row.querySelector('.remaining').textContent = '—';
-        row.querySelector('.tariff-period').textContent = errorMessage;
+        // Fully rebuilt on every call (via textContent below, which clears
+        // any previously appended link) so a stale Add Price link can never
+        // survive into a later successful preview or an unrelated error.
+        const periodEl = row.querySelector('.tariff-period');
+        periodEl.textContent = errorMessage;
+        if (addPriceUrl) {
+            const link = document.createElement('a');
+            link.href = addPriceUrl;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.className = 'ms-1';
+            link.textContent = 'Добавить тариф';
+            periodEl.appendChild(document.createElement('br'));
+            periodEl.appendChild(link);
+        }
         row.dataset.pricingAvailable = 'false';
         row.dataset.total = row.dataset.paid = row.dataset.remaining = '0';
         updateSummary();

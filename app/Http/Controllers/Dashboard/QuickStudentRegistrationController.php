@@ -19,7 +19,7 @@ use App\Services\Admissions\QuickStudentRegistrationService;
 use App\Services\Admissions\RegistrationEnrollmentModePolicy;
 use App\Services\Finance\FinanceConfigurationReadinessService;
 use App\Services\Finance\InvoiceCalculationService;
-use App\Services\Finance\NewSaleFeePolicy;
+use App\Services\Finance\QuickRegistrationFeePolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -41,7 +41,7 @@ class QuickStudentRegistrationController extends Controller
         FinanceConfigurationReadinessService $readiness,
         InvoiceCalculationService $calculator,
         RegistrationEnrollmentModePolicy $modePolicy,
-        NewSaleFeePolicy $feePolicy,
+        QuickRegistrationFeePolicy $feePolicy,
     ): View {
         $academicYears = AcademicYear::where('is_active', true)->orderByDesc('start_date')->get();
         $modes = $modePolicy->all();
@@ -249,7 +249,7 @@ class QuickStudentRegistrationController extends Controller
         Request $request,
         InvoiceCalculationService $calculator,
         RegistrationEnrollmentModePolicy $modePolicy,
-        NewSaleFeePolicy $feePolicy,
+        QuickRegistrationFeePolicy $feePolicy,
     ): JsonResponse {
         $data = $request->validate([
             'fee_id' => ['required', 'integer', 'exists:fees,id'],

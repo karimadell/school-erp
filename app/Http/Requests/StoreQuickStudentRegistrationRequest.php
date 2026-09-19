@@ -9,7 +9,7 @@ use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Services\Admissions\RegistrationEnrollmentModePolicy;
-use App\Services\Finance\NewSaleFeePolicy;
+use App\Services\Finance\QuickRegistrationFeePolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -243,7 +243,7 @@ class StoreQuickStudentRegistrationRequest extends FormRequest
             // fee_billing_periods unless already eager-loaded.
             $fees = Fee::with('billingPeriods')->whereIn('id', $services->pluck('fee_id'))->get()->keyBy('id');
             try {
-                app(NewSaleFeePolicy::class)->assertEligibleIds($services->pluck('fee_id'), 'services');
+                app(QuickRegistrationFeePolicy::class)->assertEligibleIds($services->pluck('fee_id'), 'services');
             } catch (ValidationException $exception) {
                 foreach ($exception->errors()['services'] ?? [] as $message) {
                     $validator->errors()->add('services', $message);

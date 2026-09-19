@@ -15,10 +15,67 @@ use App\Models\ServiceCoverage;
 use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Services\Admissions\QuickStudentRegistrationService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class QuickStudentRegistrationPricingTest extends QuickRegistrationUxTestCase
 {
+    public function test_activity_is_excluded_from_every_quick_registration_boundary_without_partial_writes(): void
+    {
+        $structure = $this->structure();
+        [$year, , $grade] = $structure;
+        $activity = $this->fee('Экскурсия в аквариум', Fee::CATEGORY_ACTIVITY);
+
+        foreach ([
+            Fee::CATEGORY_REGISTRATION => 'Регистрационный взнос',
+            Fee::CATEGORY_TUITION => 'Единое обучение',
+            Fee::CATEGORY_TRANSPORT => 'Транспорт',
+            Fee::CATEGORY_FOOD => 'Питание',
+            Fee::CATEGORY_UNIFORM => 'Школьная форма',
+            Fee::CATEGORY_BOOKS => 'Учебники',
+            Fee::CATEGORY_EXTRA_CLASSES => 'Дополнительные занятия',
+            Fee::CATEGORY_OTHER => 'Прочая услуга',
+        ] as $category => $name) {
+            $this->fee($name, $category);
+        }
+
+        $page = $this->actingAs($this->accountant)
+            ->get(route('dashboard.quick-registration.create'))
+            ->assertOk()
+            ->assertDontSee('Экскурсия в аквариум');
+
+        foreach (['Регистрационный взнос', 'Единое обучение', 'Транспорт', 'Питание', 'Школьная форма', 'Учебники', 'Дополнительные занятия', 'Прочая услуга'] as $name) {
+            $page->assertSee($name);
+        }
+
+        $this->actingAs($this->accountant)->postJson(route('dashboard.quick-registration.price'), [
+            'fee_id' => $activity->id, 'quantity' => 1, 'academic_year_id' => $year->id,
+            'grade_id' => $grade->id, 'enrollment_mode_id' => $structure[4]->id,
+            'registration_date' => '2026-09-10',
+        ])->assertUnprocessable()->assertJsonValidationErrors('fee_id');
+
+        $payload = $this->payload($structure, $activity);
+        $this->actingAs($this->accountant)
+            ->post(route('dashboard.quick-registration.store'), $payload)
+            ->assertSessionHasErrors('services');
+
+        try {
+            app(QuickStudentRegistrationService::class)->register($payload, $this->accountant);
+            $this->fail('Direct registration service accepted an activity Fee.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('services', $exception->errors());
+        }
+
+        $this->assertSame(0, Student::count());
+        $this->assertSame(0, Enrollment::count());
+        $this->assertSame(0, Invoice::count());
+        $this->assertSame(0, InvoiceItem::count());
+        $this->assertSame(0, InvoicePayment::count());
+        $this->assertSame(0, ServiceCoverage::count());
+        $this->assertSame(0, StudentServiceSubscription::count());
+        $this->assertSame(0, DB::table('cash_transactions')->count());
+    }
+
     public function test_registration_offers_exactly_four_canonical_modes_and_only_unified_tuition(): void
     {
         [$year, , $grade] = $this->structure();

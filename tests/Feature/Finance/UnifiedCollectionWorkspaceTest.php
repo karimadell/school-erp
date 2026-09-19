@@ -553,6 +553,40 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         $this->assertSame(0, InvoicePayment::count());
     }
 
+    public function test_activity_remains_available_after_registration_and_its_invoice_history_is_readable(): void
+    {
+        $activity = Fee::create([
+            'name_ru' => 'Экскурсия в аквариум', 'type' => 'service',
+            'category' => Fee::CATEGORY_ACTIVITY, 'payment_period' => Fee::PERIOD_ONCE,
+            'amount' => '500.00', 'is_active' => true, 'is_test_data' => false,
+        ]);
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.students.unified-collection.create', $this->student))
+            ->assertOk()
+            ->assertSee('Экскурсия в аквариум');
+
+        $response = $this->actingAs($this->accountant)->post(
+            route('dashboard.students.unified-collection.store', $this->student),
+            [
+                'idempotency_token' => (string) Str::uuid(),
+                'academic_year_id' => $this->year->id,
+                'payment_method' => 'cash',
+                'cash_account_id' => $this->cash->id,
+                'new_services' => [[
+                    'fee_id' => $activity->id, 'quantity' => 1, 'receive_now_amount' => '500.00',
+                ]],
+            ],
+        );
+
+        $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $item = $collection->linkedInvoices()->sole()->items()->with('fee')->sole();
+        $this->assertSame($activity->id, $item->fee_id);
+        $this->assertSame('Экскурсия в аквариум', $item->fee->name_ru);
+        $this->assertSame('500.00', (string) $item->amount);
+    }
+
     public function test_active_year_no_enrollment_unauthorized_actor_sees_neither_annual_registration_nor_new_service_ui(): void
     {
         $returning = $this->returningStudentWithoutEnrollment('+201003334456');

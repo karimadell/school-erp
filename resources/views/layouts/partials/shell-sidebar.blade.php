@@ -113,6 +113,14 @@
                 // redundant shortcut link is gone.
                 ['label' => __('finance_uat.student_finance'), 'icon' => 'landmark', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.workspace' : null, 'active' => 'dashboard.finance.workspace'],
                 ['label' => __('finance_workspace.add_income'), 'icon' => 'payments', 'route' => auth()->user()?->can('view invoices') ? 'dashboard.finance.income.index' : null, 'active' => 'dashboard.finance.income.*'],
+                // Owner corrective — pricing is now explicitly classified
+                // as an operational Finance workflow, not a technical
+                // settings link buried inside Приход (see this group's own
+                // "Услуги и тарифы" comment above). Points at the same
+                // Dashboard-native tariff screen that comment already
+                // described; nothing else about that earlier corrective is
+                // reverted.
+                ['label' => 'Цены на услуги', 'icon' => 'price_change', 'route' => auth()->user()?->can('manage fee prices') ? 'dashboard.finance.tariffs.index' : null, 'active' => 'dashboard.finance.tariffs.*'],
                 ['label' => __('finance_workspace.add_expense'), 'icon' => 'trending_down', 'route' => auth()->user()?->can('manage expenses') ? 'dashboard.finance.expenses.index' : null, 'active' => ['dashboard.finance.expenses.*', 'dashboard.finance.expense-categories.*', 'dashboard.finance.payees.*']],
                 ['label' => __('finance_workspace.cash'), 'icon' => 'briefcase', 'route' => auth()->user()?->hasAnyPermission(['manage cash', 'transfer cash', 'view cash reports']) ? 'dashboard.cash.operations.index' : null, 'active' => ['dashboard.cash.operations.*', 'dashboard.cash.accounts', 'dashboard.cash.accounts.*', 'dashboard.cash.sessions.*', 'dashboard.cash.ledger', 'dashboard.cash.transactions', 'dashboard.cash.transfers', 'dashboard.cash.transfer.*', 'dashboard.cash.income', 'dashboard.cash.expenses*']],
                 // Combined Finance Reporting V1 — Отчёты now points at the

@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Concerns;
 
-use App\Filament\Resources\FeePrices\FeePriceResource;
 use App\Models\Enrollment;
 use App\Services\Finance\MissingTariffGuidanceService;
 use Illuminate\Http\RedirectResponse;
@@ -21,17 +20,17 @@ trait HasMissingTariffGuidance
 {
     /**
      * @param  array<int, array<string, mixed>>  $items  The exact submitted
-     *         items array (already validated by the caller's own
-     *         FormRequest). Enrichment is only attempted when it contains
-     *         exactly one item — with more than one, which item's
-     *         dimensions actually failed cannot be attributed without
-     *         guessing, so the plain, unenriched redirect is returned
-     *         unchanged.
+     *                                                   items array (already validated by the caller's own
+     *                                                   FormRequest). Enrichment is only attempted when it contains
+     *                                                   exactly one item — with more than one, which item's
+     *                                                   dimensions actually failed cannot be attributed without
+     *                                                   guessing, so the plain, unenriched redirect is returned
+     *                                                   unchanged.
      * @param  ?int  $enrollmentModeId  The caller's own already-resolved,
-     *         authoritative mode — the student's active Enrollment for
-     *         Classic Invoice/Unified Collection, or the request's own
-     *         required, validated field for Quick Registration. Never
-     *         derived here from client input.
+     *                                  authoritative mode — the student's active Enrollment for
+     *                                  Classic Invoice/Unified Collection, or the request's own
+     *                                  required, validated field for Quick Registration. Never
+     *                                  derived here from client input.
      */
     protected function withMissingTariffGuidance(
         RedirectResponse $redirect,
@@ -54,7 +53,8 @@ trait HasMissingTariffGuidance
                 ->value('enrollment_mode_id');
         }
 
-        $guidance = app(MissingTariffGuidanceService::class)->describe(
+        $service = app(MissingTariffGuidanceService::class);
+        $guidance = $service->describe(
             $exception, $items[0], $academicYearId, $enrollmentModeId ? (int) $enrollmentModeId : null,
         );
 
@@ -65,7 +65,7 @@ trait HasMissingTariffGuidance
         $redirect->with('missing_tariff_message', $guidance['message']);
 
         if ($request->user()?->can('manage fee prices')) {
-            $redirect->with('missing_tariff_link', FeePriceResource::getUrl('create').'?'.http_build_query($guidance['link_context']));
+            $redirect->with('missing_tariff_link', $service->addPriceUrl($guidance['link_context']));
         }
 
         return $redirect;

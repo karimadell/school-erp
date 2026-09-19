@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Exceptions\StudentIdentityResolutionRequired;
-use App\Filament\Resources\FeePrices\FeePriceResource;
 use App\Http\Controllers\Concerns\HasMissingTariffGuidance;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreQuickStudentRegistrationRequest;
@@ -349,12 +348,13 @@ class QuickStudentRegistrationController extends Controller
             // of a redirect, so the link travels as an extra response key
             // rather than a session flash. The original error message above
             // is never replaced; this only adds an optional, authorized-only
-            // pointer to the existing FeePrice create screen.
-            $guidance = app(MissingTariffGuidanceService::class)->describe(
+            // pointer to the Dashboard-native tariff create screen.
+            $guidanceService = app(MissingTariffGuidanceService::class);
+            $guidance = $guidanceService->describe(
                 $exception, $item, (int) $data['academic_year_id'], $mode->id,
             );
             if ($guidance && $request->user()?->can('manage fee prices')) {
-                $payload['missing_tariff_link'] = FeePriceResource::getUrl('create').'?'.http_build_query($guidance['link_context']);
+                $payload['missing_tariff_link'] = $guidanceService->addPriceUrl($guidance['link_context']);
             }
 
             return response()->json($payload, $exception->status);

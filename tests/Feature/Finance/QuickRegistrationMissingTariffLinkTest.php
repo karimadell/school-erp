@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Finance;
 
-use App\Filament\Resources\FeePrices\FeePriceResource;
 use App\Models\EnrollmentMode;
 use App\Models\FeePrice;
 use App\Models\User;
@@ -13,10 +12,11 @@ use App\Models\User;
  * enriched redirect flow) now carries the same authorized-only Add Price
  * link as an extra response key, without ever replacing the original
  * fail-loud validation message and without ever adding a link for an
- * unrelated validation failure. Reuses MissingTariffGuidanceService and
- * FeePriceResource::getUrl('create') exactly as store() already does —
- * nothing about pricing, resolution, or the create form's own prefill
- * contract is touched here.
+ * unrelated validation failure. Reuses MissingTariffGuidanceService,
+ * pointing at the Dashboard-native tariff create screen
+ * (dashboard.finance.tariffs.create) — not the separate Filament admin
+ * layout — exactly as store() already does. Nothing about pricing,
+ * resolution, or the create form's own prefill contract is touched here.
  */
 class QuickRegistrationMissingTariffLinkTest extends FinanceOperationsTestCase
 {
@@ -63,7 +63,8 @@ class QuickRegistrationMissingTariffLinkTest extends FinanceOperationsTestCase
         $response->assertJsonPath('errors.fees.0', 'На выбранную дату тариф не настроен.');
         $link = $response->json('missing_tariff_link');
         $this->assertNotNull($link);
-        $this->assertStringStartsWith(FeePriceResource::getUrl('create'), $link);
+        $this->assertStringStartsWith(route('dashboard.finance.tariffs.create'), $link);
+        $this->assertStringNotContainsString('/admin/fee-prices', $link);
         $this->assertStringNotContainsString('amount=', $link);
     }
 

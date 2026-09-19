@@ -6,19 +6,12 @@ use App\Filament\Resources\FeePrices\FeePriceResource;
 use App\Models\EnrollmentMode;
 use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Services\Finance\TuitionEnrollmentModePricing;
 use Filament\Resources\Pages\CreateRecord;
-use Illuminate\Validation\ValidationException;
 
 class CreateFeePrice extends CreateRecord
 {
     protected static string $resource = FeePriceResource::class;
-
-    private const TUITION_CATEGORIES = [
-        Fee::CATEGORY_TUITION,
-        Fee::CATEGORY_TUITION_REGULAR,
-        Fee::CATEGORY_TUITION_FAMILY,
-        Fee::CATEGORY_TUITION_EXTERNAL,
-    ];
 
     /**
      * Trusted, server-side-validated query-string DEFAULTS only (Scope D)
@@ -53,33 +46,22 @@ class CreateFeePrice extends CreateRecord
      * The Study Mode Select (Scope A) shares the `option_value` column
      * with Transport/Food's own fields — for a Tuition Fee, its submitted
      * value is a study-mode code, never a raw option_value. Re-validated
-     * against the database here (never trusted from form/query-string
-     * state alone) and translated into the real option_type/option_value
-     * pair; left blank, both are forced to null so a plain generic
+     * against the database (never trusted from form/query-string state
+     * alone) via the SAME shared rule the Dashboard-native tariff create
+     * screen uses (TuitionEnrollmentModePricing) — left blank, both
+     * option_type/option_value are forced to null so a plain generic
      * Tuition tariff remains fully supported, exactly as before.
      */
     protected function mutateFormDataBeforeCreate(array $data): array
     {
         $category = Fee::query()->whereKey($data['fee_id'] ?? null)->value('category');
-        if (! in_array($category, self::TUITION_CATEGORIES, true)) {
+        if (! TuitionEnrollmentModePricing::isTuitionCategory($category)) {
             return $data;
         }
 
-        $code = $data['option_value'] ?? null;
-        if (blank($code)) {
-            $data['option_type'] = null;
-            $data['option_value'] = null;
-
-            return $data;
-        }
-
-        $mode = EnrollmentMode::query()->where('code', $code)->first();
-        if (! $mode) {
-            throw ValidationException::withMessages(['option_value' => 'Недопустимая форма обучения.']);
-        }
-
-        $data['option_type'] = 'enrollment_mode';
-        $data['option_value'] = $mode->code;
+        $resolved = TuitionEnrollmentModePricing::resolve($data['option_value'] ?? null);
+        $data['option_type'] = $resolved['option_type'];
+        $data['option_value'] = $resolved['option_value'];
 
         return $data;
     }

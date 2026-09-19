@@ -6,15 +6,23 @@ use App\Models\AcademicYear;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\MealPlan;
+use App\Services\Finance\TuitionEnrollmentModePricing;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
 
 class StoreFinanceTariffRequest extends FormRequest
 {
-    public function authorize(): bool { return $this->user()?->can('manage fee prices') === true; }
+    public function authorize(): bool
+    {
+        return $this->user()?->can('manage fee prices') === true;
+    }
 
-    protected function prepareForValidation(): void { $this->merge(['currency' => 'EGP', 'is_active' => $this->boolean('is_active')]); }
+    protected function prepareForValidation(): void
+    {
+        $this->merge(['currency' => 'EGP', 'is_active' => $this->boolean('is_active')]);
+    }
 
     public function rules(): array
     {
@@ -32,7 +40,9 @@ class StoreFinanceTariffRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
-            if ($validator->errors()->isNotEmpty()) return;
+            if ($validator->errors()->isNotEmpty()) {
+                return;
+            }
 
             // Canonical dimension contract: transport is always priced by
             // option_type='zone', food always by option_type='meal_plan'
@@ -52,12 +62,38 @@ class StoreFinanceTariffRequest extends FormRequest
                     $validator->errors()->add('option_value', 'Выбранный план питания не найден.');
                 }
             }
-            if ($validator->errors()->isNotEmpty()) return;
+            // Tuition Study Mode — the SAME shared rule the Filament
+            // FeePrice admin form uses (TuitionEnrollmentModePricing),
+            // never re-implemented here. The submitted option_value is a
+            // study-mode code, re-verified against real EnrollmentMode
+            // master data and translated into the real option_type/
+            // option_value pair. Merged back into both the request (so the
+            // collision check just below sees the corrected dimensions)
+            // and the validator's own data (so $request->validated()
+            // returns the corrected pair to the controller). Left blank,
+            // both are forced to null — a plain generic Tuition tariff
+            // remains fully supported, exactly as before.
+            if (TuitionEnrollmentModePricing::isTuitionCategory($fee?->category)) {
+                try {
+                    $resolved = TuitionEnrollmentModePricing::resolve($this->input('option_value'));
+                    $this->merge($resolved);
+                    $validator->setValue('option_type', $resolved['option_type']);
+                    $validator->setValue('option_value', $resolved['option_value']);
+                } catch (ValidationException $exception) {
+                    $validator->errors()->add('option_value', $exception->errors()['option_value'][0]);
+                }
+            }
+            if ($validator->errors()->isNotEmpty()) {
+                return;
+            }
 
             $year = AcademicYear::find($this->integer('academic_year_id'));
-            $start = $this->date('start_date'); $end = $this->filled('end_date') ? $this->date('end_date') : null;
+            $start = $this->date('start_date');
+            $end = $this->filled('end_date') ? $this->date('end_date') : null;
             if (! $year || $start->gt($year->end_date) || ($end && $end->gt($year->end_date))) {
-                $validator->errors()->add('start_date', 'Тариф может начинаться до учебного года, но не может действовать после его окончания.'); return;
+                $validator->errors()->add('start_date', 'Тариф может начинаться до учебного года, но не может действовать после его окончания.');
+
+                return;
             }
             $dimensions = ['fee_id', 'academic_year_id', 'grade_id', 'grade_group', 'payment_period', 'option_type', 'option_value', 'item', 'size'];
             $query = FeePrice::query()->where('is_active', true);
@@ -67,7 +103,9 @@ class StoreFinanceTariffRequest extends FormRequest
             }
             $query->whereDate('start_date', '<=', ($end ?? $year->end_date)->toDateString())
                 ->where(fn ($q) => $q->whereNull('end_date')->orWhereDate('end_date', '>=', $start->toDateString()));
-            if ($query->exists()) $validator->errors()->add('start_date', 'Период тарифа пересекается с существующим тарифом с такими же параметрами.');
+            if ($query->exists()) {
+                $validator->errors()->add('start_date', 'Период тарифа пересекается с существующим тарифом с такими же параметрами.');
+            }
         }];
     }
 

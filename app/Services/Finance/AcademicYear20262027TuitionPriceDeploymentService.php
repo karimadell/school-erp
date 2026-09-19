@@ -15,7 +15,7 @@ use RuntimeException;
 
 class AcademicYear20262027TuitionPriceDeploymentService
 {
-    public const YEAR_NAME = '2026/2027';
+    public const YEAR_NAME = '2026 / 2027';
 
     public const EFFECTIVE_START = '2026-09-01';
 
@@ -163,7 +163,7 @@ class AcademicYear20262027TuitionPriceDeploymentService
         $query = AcademicYear::query()->where('name', self::YEAR_NAME);
         $years = $this->get($query, $lock);
         if ($years->count() !== 1) {
-            throw new RuntimeException('Expected exactly one AcademicYear named 2026/2027; found '.$years->count().'.');
+            throw new RuntimeException('Expected exactly one AcademicYear named '.self::YEAR_NAME.'; found '.$years->count().'.');
         }
 
         $year = $years->first();

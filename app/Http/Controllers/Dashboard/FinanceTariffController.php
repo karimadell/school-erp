@@ -11,6 +11,7 @@ use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\MealPlan;
+use App\Services\Finance\NewSaleFeePolicy;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -49,9 +50,21 @@ class FinanceTariffController extends Controller
      * contract Filament's CreateFeePrice::fillForm() already enforces for
      * the same fields — used by MissingTariffGuidanceService's Add Price
      * link. amount is deliberately never accepted here.
+     *
+     * The "Услуга" selector is scoped through the SAME NewSaleFeePolicy
+     * Quick Registration already uses (never its own duplicated category
+     * list) — a legacy Tuition Fee (tuition_regular/tuition_family/
+     * tuition_external) must never be offered for a NEW tariff here; new
+     * Tuition pricing always goes through the unified Tuition Fee +
+     * EnrollmentMode. A legacy fee_id in the query string is dropped the
+     * same way an invalid/nonexistent one already is.
      */
-    public function create(Request $request): View
+    public function create(Request $request, NewSaleFeePolicy $newSaleFeePolicy): View
     {
+        $feeId = $request->integer('fee_id') ?: null;
+        if ($feeId && ! $newSaleFeePolicy->apply(Fee::query())->whereKey($feeId)->exists()) {
+            $feeId = null;
+        }
         $academicYearId = $request->integer('academic_year_id') ?: null;
         if ($academicYearId && ! AcademicYear::whereKey($academicYearId)->exists()) {
             $academicYearId = null;
@@ -67,12 +80,12 @@ class FinanceTariffController extends Controller
         $enrollmentModeCode = EnrollmentMode::query()->where('code', $request->query('enrollment_mode'))->value('code');
 
         return view('dashboard.finance.tariffs.create', [
-            'services' => Fee::active()->orderBy('name_ru')->get(),
+            'services' => $newSaleFeePolicy->apply(Fee::active())->orderBy('name_ru')->get(),
             'years' => AcademicYear::orderByDesc('start_date')->get(),
             'grades' => Grade::ordered()->get(),
             'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
             'enrollmentModes' => EnrollmentMode::query()->orderBy('display_order')->pluck('name_ru', 'code'),
-            'selectedFeeId' => $request->integer('fee_id') ?: null,
+            'selectedFeeId' => $feeId,
             'selectedAcademicYearId' => $academicYearId,
             'selectedGradeId' => $gradeId,
             'selectedGradeGroup' => $gradeGroup,

@@ -6,6 +6,7 @@ use App\Models\AcademicYear;
 use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\MealPlan;
+use App\Services\Finance\NewSaleFeePolicy;
 use App\Services\Finance\TuitionEnrollmentModePricing;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -51,6 +52,22 @@ class StoreFinanceTariffRequest extends FormRequest
             // direct request can't silently create a tariff no consumer
             // will ever be able to resolve.
             $fee = Fee::find($this->integer('fee_id'));
+            // New-sale eligibility — the SAME policy Quick Registration
+            // already uses, never a duplicated category list. A legacy
+            // Tuition Fee (tuition_regular/tuition_family/
+            // tuition_external) can never be the target of a NEW tariff
+            // here, even via a crafted request bypassing the hidden
+            // "Услуга" option — new Tuition pricing always goes through
+            // the unified Tuition Fee + EnrollmentMode. Historical
+            // FeePrice rows already tied to a legacy Fee are entirely
+            // unaffected — this only gates NEW writes.
+            if ($fee) {
+                try {
+                    app(NewSaleFeePolicy::class)->assertEligible($fee, 'fee_id');
+                } catch (ValidationException $exception) {
+                    $validator->errors()->add('fee_id', $exception->errors()['fee_id'][0]);
+                }
+            }
             if ($fee?->category === Fee::CATEGORY_TRANSPORT && $this->filled('option_type') && $this->input('option_type') !== 'zone') {
                 $validator->errors()->add('option_type', 'Для транспорта параметр option_type должен быть «zone».');
             }

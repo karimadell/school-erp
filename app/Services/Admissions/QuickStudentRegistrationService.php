@@ -23,7 +23,7 @@ use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\MixedPaymentCollectionOrchestrator;
-use App\Services\Finance\NewSaleFeePolicy;
+use App\Services\Finance\QuickRegistrationFeePolicy;
 use App\Services\Finance\ServiceSelectionNormalizer;
 use App\Services\StudentServiceSubscriptionService;
 use App\Support\DeterministicIdempotencyKey;
@@ -52,7 +52,7 @@ class QuickStudentRegistrationService
         private MixedPaymentCollectionOrchestrator $orchestrator,
         private StudentIdentityResolver $identity,
         private RegistrationEnrollmentModePolicy $modePolicy,
-        private NewSaleFeePolicy $feePolicy,
+        private QuickRegistrationFeePolicy $feePolicy,
     ) {}
 
     /**

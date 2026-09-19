@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Exceptions\StudentIdentityResolutionRequired;
+use App\Filament\Resources\FeePrices\FeePriceResource;
 use App\Http\Controllers\Concerns\HasMissingTariffGuidance;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreQuickStudentRegistrationRequest;
@@ -19,6 +20,7 @@ use App\Services\Admissions\QuickStudentRegistrationService;
 use App\Services\Admissions\RegistrationEnrollmentModePolicy;
 use App\Services\Finance\FinanceConfigurationReadinessService;
 use App\Services\Finance\InvoiceCalculationService;
+use App\Services\Finance\MissingTariffGuidanceService;
 use App\Services\Finance\QuickRegistrationFeePolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -337,7 +339,26 @@ class QuickStudentRegistrationController extends Controller
             $item['food_resolution'] = app(\App\Services\Finance\FoodBillableDayCalculator::class)
                 ->resolveFromDurationSelection($year, $data);
         }
-        $calculation = $calculator->calculate(items: [$item], pricingDate: $pricingDate->toDateString(), academicYearId: (int) $data['academic_year_id']);
+        try {
+            $calculation = $calculator->calculate(items: [$item], pricingDate: $pricingDate->toDateString(), academicYearId: (int) $data['academic_year_id']);
+        } catch (ValidationException $exception) {
+            $payload = ['message' => $exception->getMessage(), 'errors' => $exception->errors()];
+
+            // Same recognition/authorization rule as HasMissingTariffGuidance
+            // (used by store()) — this preview endpoint returns JSON instead
+            // of a redirect, so the link travels as an extra response key
+            // rather than a session flash. The original error message above
+            // is never replaced; this only adds an optional, authorized-only
+            // pointer to the existing FeePrice create screen.
+            $guidance = app(MissingTariffGuidanceService::class)->describe(
+                $exception, $item, (int) $data['academic_year_id'], $mode->id,
+            );
+            if ($guidance && $request->user()?->can('manage fee prices')) {
+                $payload['missing_tariff_link'] = FeePriceResource::getUrl('create').'?'.http_build_query($guidance['link_context']);
+            }
+
+            return response()->json($payload, $exception->status);
+        }
 
         // Pre-Premium-UI corrective pass (Decision 3) — the Food duration-
         // mode summary the live preview needs (billable day count, resolved

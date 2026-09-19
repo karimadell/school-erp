@@ -13,6 +13,9 @@ use App\Models\InvoiceItem;
 use App\Models\InvoicePayment;
 use App\Models\ServiceCoverage;
 use App\Models\Student;
+use App\Models\StudentServiceSubscription;
+use App\Services\Admissions\QuickStudentRegistrationService;
+use Illuminate\Validation\ValidationException;
 
 class QuickStudentRegistrationPricingTest extends QuickRegistrationUxTestCase
 {
@@ -42,7 +45,8 @@ class QuickStudentRegistrationPricingTest extends QuickRegistrationUxTestCase
 
     public function test_incomplete_canonical_mode_catalog_fails_clearly(): void
     {
-        $this->structure();
+        $structure = $this->structure();
+        $fee = $this->fee();
         EnrollmentMode::where('code', EnrollmentMode::FAMILY)->delete();
 
         $this->actingAs($this->accountant)->get(route('dashboard.quick-registration.create'))
@@ -50,6 +54,26 @@ class QuickStudentRegistrationPricingTest extends QuickRegistrationUxTestCase
             ->assertSee('Формы обучения не настроены.')
             ->assertSee(EnrollmentMode::FAMILY)
             ->assertSee('disabled', false);
+
+        $payload = $this->payload($structure, $fee);
+        $this->actingAs($this->accountant)
+            ->post(route('dashboard.quick-registration.store'), $payload)
+            ->assertSessionHasErrors('enrollment_mode_id');
+
+        try {
+            app(QuickStudentRegistrationService::class)->register($payload, $this->accountant);
+            $this->fail('Direct registration service accepted an incomplete canonical mode catalog.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('enrollment_mode_id', $exception->errors());
+        }
+
+        $this->assertSame(0, Student::count());
+        $this->assertSame(0, Enrollment::count());
+        $this->assertSame(0, Invoice::count());
+        $this->assertSame(0, InvoiceItem::count());
+        $this->assertSame(0, InvoicePayment::count());
+        $this->assertSame(0, ServiceCoverage::count());
+        $this->assertSame(0, StudentServiceSubscription::count());
     }
 
     public function test_all_canonical_modes_preview_and_submit_against_the_unified_tuition_matrix(): void

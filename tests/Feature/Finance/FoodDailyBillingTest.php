@@ -35,12 +35,15 @@ use Illuminate\Validation\ValidationException;
 class FoodDailyBillingTest extends FinanceOperationsTestCase
 {
     private AcademicCalendar $calendar;
+
     private MealPlan $mealPlan;
+
     private Fee $food;
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->ensureCanonicalRegistrationModeCatalog();
         $this->calendar = AcademicCalendar::create([
             'academic_year_id' => $this->year->id,
             'weekly_days_off' => ['fri', 'sat'],
@@ -453,12 +456,20 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
     public function test_null_monthly_and_ambiguous_daily_tariffs_fail_closed_without_graph(): void
     {
         FeePrice::create(['fee_id' => $this->food->id, 'academic_year_id' => $this->year->id, 'payment_period' => null, 'option_type' => 'meal_plan', 'option_value' => (string) $this->mealPlan->id, 'amount' => '100.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
-        try { $this->issue(); $this->fail('Expected missing daily tariff rejection.'); } catch (ValidationException) {}
+        try {
+            $this->issue();
+            $this->fail('Expected missing daily tariff rejection.');
+        } catch (ValidationException) {
+        }
         $this->assertSame(0, Invoice::count());
 
         $this->price();
         $this->price('101.00');
-        try { $this->issue(); $this->fail('Expected ambiguous tariff rejection.'); } catch (ValidationException) {}
+        try {
+            $this->issue();
+            $this->fail('Expected ambiguous tariff rejection.');
+        } catch (ValidationException) {
+        }
         $this->assertSame(0, Invoice::count());
     }
 
@@ -466,7 +477,11 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
     {
         $this->calendar->update(['weekly_days_off' => ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']]);
         $this->price();
-        try { $this->issue(itemOverrides: ['food_duration_mode' => 'month', 'food_month' => '2026-09']); $this->fail('Expected zero-day rejection.'); } catch (ValidationException) {}
+        try {
+            $this->issue(itemOverrides: ['food_duration_mode' => 'month', 'food_month' => '2026-09']);
+            $this->fail('Expected zero-day rejection.');
+        } catch (ValidationException) {
+        }
         $this->assertSame(0, Invoice::count());
 
         $this->calendar->update(['weekly_days_off' => ['fri', 'sat']]);
@@ -485,7 +500,8 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
                     'payment_type' => 'calendar',
                 ], $this->accountant);
                 $this->fail("Expected unsupported Food duration mode '{$mode}' to be rejected.");
-            } catch (ValidationException) {}
+            } catch (ValidationException) {
+            }
         }
         $this->assertSame(0, Invoice::count());
     }
@@ -570,7 +586,8 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         try {
             $this->issue(itemOverrides: ['food_duration_mode' => 'month', 'food_month' => '2026-09', 'food_end_month' => '2027-01'], key: $key);
             $this->fail('Expected changed range conflict.');
-        } catch (ValidationException) {}
+        } catch (ValidationException) {
+        }
         $this->assertSame(1, Invoice::count());
     }
 
@@ -585,7 +602,8 @@ class FoodDailyBillingTest extends FinanceOperationsTestCase
         try {
             $this->issue(itemOverrides: ['food_duration_mode' => 'teaching_days', 'food_start_date' => '2026-09-01', 'food_day_count' => 11], key: $key);
             $this->fail('Expected changed day-count conflict.');
-        } catch (ValidationException) {}
+        } catch (ValidationException) {
+        }
         $this->assertSame(1, Invoice::count());
     }
 

@@ -30,6 +30,7 @@ class QuickStudentRegistrationRenderTest extends TestCase
         SchoolClass::create(['grade_id' => $grade->id, 'code' => '2-А', 'name_ar' => '2-A', 'name_ru' => '2-А', 'is_active' => true]);
         AcademicYear::create(['name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true]);
         EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очное обучение', 'is_active' => true]);
+        $this->ensureCanonicalRegistrationModeCatalog();
         foreach ([
             ['Регистрационный взнос', Fee::CATEGORY_REGISTRATION], ['Обучение', Fee::CATEGORY_TUITION],
             ['Транспорт', Fee::CATEGORY_TRANSPORT], ['Питание', Fee::CATEGORY_FOOD], ['Школьная форма', Fee::CATEGORY_UNIFORM],

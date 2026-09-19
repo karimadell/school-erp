@@ -41,8 +41,19 @@ class RegistrationEnrollmentModePolicy
         return null;
     }
 
+    public function assertConfigured(): void
+    {
+        if ($error = $this->configurationError()) {
+            throw ValidationException::withMessages([
+                'enrollment_mode_id' => $error,
+            ]);
+        }
+    }
+
     public function resolve(int $id): EnrollmentMode
     {
+        $this->assertConfigured();
+
         $mode = EnrollmentMode::query()
             ->whereKey($id)
             ->whereIn('code', $this->codes())

@@ -28,6 +28,12 @@ use Illuminate\Validation\ValidationException;
  */
 class FinanceCollectionServiceTest extends FinanceOperationsTestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->ensureCanonicalRegistrationModeCatalog();
+    }
+
     private function service(): FinanceCollectionService
     {
         return app(FinanceCollectionService::class);
@@ -594,7 +600,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
 
     public function test_a_freshly_configured_generic_fee_flows_through_without_any_hardcoded_category_list(): void
     {
-        $fee = Fee::create(['name_ru' => 'Новая услуга ' . Str::random(6), 'category' => Fee::CATEGORY_OTHER, 'amount' => '77.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Новая услуга '.Str::random(6), 'category' => Fee::CATEGORY_OTHER, 'amount' => '77.00', 'is_active' => true]);
 
         $collection = $this->service()->collect([
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
@@ -1015,7 +1021,7 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
 
     private function issueSimpleInvoice(string $amount): Invoice
     {
-        $fee = Fee::create(['name_ru' => 'Доп. услуга ' . Str::random(6), 'category' => Fee::CATEGORY_BOOKS, 'amount' => $amount, 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Доп. услуга '.Str::random(6), 'category' => Fee::CATEGORY_BOOKS, 'amount' => $amount, 'is_active' => true]);
 
         return app(InvoiceIssuanceService::class)->issue($this->student, [
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,

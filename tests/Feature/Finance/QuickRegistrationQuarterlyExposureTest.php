@@ -55,6 +55,7 @@ class QuickRegistrationQuarterlyExposureTest extends TestCase
         $this->grade = Grade::forceCreate(['name' => '1 класс', 'stage_id' => $this->stage->id, 'level' => 1]);
         $this->class = SchoolClass::create(['grade_id' => $this->grade->id, 'code' => 'А', 'name_ru' => 'А', 'name_ar' => 'A', 'is_active' => true]);
         $this->mode = EnrollmentMode::create(['code' => EnrollmentMode::FULL_TIME, 'name_ru' => 'Очная форма', 'is_active' => true]);
+        $this->ensureCanonicalRegistrationModeCatalog();
 
         app(CashSessionService::class)->open(CashAccount::operating(), $this->accountant);
     }

@@ -24,6 +24,12 @@ use Illuminate\Support\Str;
  */
 class MissingTariffGuidanceTest extends FinanceOperationsTestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->ensureCanonicalRegistrationModeCatalog();
+    }
+
     private function missingPriceItem(): array
     {
         // $this->fee only has a price for $this->enrollment->grade_id
@@ -183,7 +189,7 @@ class MissingTariffGuidanceTest extends FinanceOperationsTestCase
     // pricing.
     public function test_external_missing_price_never_borrows_another_mode_or_grade(): void
     {
-        $external = EnrollmentMode::create(['code' => 'external', 'name_ru' => 'Экстернат', 'is_active' => false]);
+        $external = EnrollmentMode::where('code', EnrollmentMode::EXTERNAL)->sole();
         $this->enrollment->update(['enrollment_mode_id' => $external->id]);
 
         // Real external price exists ONLY for a DIFFERENT grade group.

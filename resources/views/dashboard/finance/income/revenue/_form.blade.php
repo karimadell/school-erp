@@ -1,12 +1,21 @@
 @php
     /** @var \App\Models\RevenueCategory|null $lockedCategory */
     $lockedCategory = $lockedCategory ?? null;
+    /** @var string|null $lockedType */
+    $lockedType = $lockedType ?? null;
 @endphp
 
 <div class="row g-4">
     <div class="col-md-4">
         <label class="form-label fw-semibold">{{ __('revenues.category') }} <span class="text-danger">*</span></label>
         @if($lockedCategory)
+            {{-- revenue_category_id here is a DEFAULT only — the
+                authoritative category for a locked workflow is
+                re-resolved server-side from this "type" discriminator
+                (RevenueEntryController::applyLockedCategory()), so a
+                tampered revenue_category_id can never persist as
+                anything other than the locked category. --}}
+            <input type="hidden" name="type" value="{{ $lockedType }}">
             <input type="hidden" name="revenue_category_id" value="{{ $lockedCategory->id }}">
             <input type="text" class="form-control" value="{{ $lockedCategory->name_ru }}" disabled>
         @else

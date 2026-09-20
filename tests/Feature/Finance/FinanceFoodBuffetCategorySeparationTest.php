@@ -23,6 +23,8 @@ use Database\Seeders\RevenueCategorySeeder;
 class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
 {
     // 1, 2, 3. Both new categories are seeded exactly once, idempotently.
+    // A. school_food seeded INACTIVE (reserved for the not-yet-built
+    // Staff Food feature). B. buffet seeded ACTIVE (its shortcut is live).
     public function test_school_food_and_buffet_categories_are_seeded_idempotently(): void
     {
         (new RevenueCategorySeeder)->run();
@@ -35,7 +37,7 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertCount(1, $buffet);
         $this->assertSame('Школьное питание', $schoolFood->first()->name_ru);
         $this->assertSame('Буфет', $buffet->first()->name_ru);
-        $this->assertTrue($schoolFood->first()->is_active);
+        $this->assertFalse($schoolFood->first()->is_active);
         $this->assertTrue($buffet->first()->is_active);
     }
 
@@ -60,6 +62,18 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertSame('Пожертвования', RevenueCategory::where('code', RevenueCategory::CODE_DONATION)->value('name_ru'));
         $this->assertSame('Штрафы', RevenueCategory::where('code', RevenueCategory::CODE_FINE)->value('name_ru'));
         $this->assertSame('Прочие доходы', RevenueCategory::where('code', RevenueCategory::CODE_OTHER)->value('name_ru'));
+    }
+
+    // D. The generic (unlocked) revenue form must not offer the inactive
+    // school_food category — it never appears among "active" choices.
+    public function test_generic_revenue_form_does_not_offer_inactive_school_food(): void
+    {
+        (new RevenueCategorySeeder)->run();
+
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.revenue.create'));
+
+        $response->assertOk();
+        $response->assertDontSee('Школьное питание');
     }
 
     // 6. The Buffet shortcut resolves to, and locks, only the buffet category.
@@ -100,6 +114,108 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $transaction = $transactions->first();
         $this->assertSame('2000.00', (string) $transaction->amount);
         $this->assertSame($this->cash->id, $transaction->cash_account_id);
+    }
+
+    private function buffetPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'type' => 'buffet',
+            'amount' => '2000.00',
+            'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id,
+            'payment_method' => 'cash',
+            'status' => RevenueEntry::STATUS_DRAFT,
+        ], $overrides);
+    }
+
+    // F. A crafted Buffet POST carrying the legacy cafeteria category id
+    // still persists RevenueCategory::CODE_BUFFET — the server-side lock
+    // ignores the tampered field, resolving strictly from type=buffet.
+    public function test_crafted_buffet_post_with_cafeteria_id_still_persists_buffet(): void
+    {
+        (new RevenueCategorySeeder)->run();
+        $buffet = RevenueCategory::where('code', RevenueCategory::CODE_BUFFET)->sole();
+        $cafeteria = RevenueCategory::firstOrCreate(['code' => RevenueCategory::CODE_CAFETERIA], ['name_ru' => 'Кафетерий', 'is_active' => true]);
+        $before = RevenueEntry::count();
+
+        $response = $this->actingAs($this->accountant)->post(
+            route('dashboard.finance.income.revenue.store'),
+            $this->buffetPayload(['revenue_category_id' => $cafeteria->id]),
+        );
+
+        $response->assertSessionDoesntHaveErrors();
+        $this->assertSame($before + 1, RevenueEntry::count());
+        $entry = RevenueEntry::latest('id')->first();
+        $this->assertSame($buffet->id, $entry->revenue_category_id);
+        $this->assertNotSame($cafeteria->id, $entry->revenue_category_id);
+    }
+
+    // G. A crafted Buffet POST carrying the (inactive) school_food
+    // category id also still persists Buffet, never school_food.
+    public function test_crafted_buffet_post_with_school_food_id_still_persists_buffet(): void
+    {
+        (new RevenueCategorySeeder)->run();
+        $buffet = RevenueCategory::where('code', RevenueCategory::CODE_BUFFET)->sole();
+        $schoolFood = RevenueCategory::where('code', RevenueCategory::CODE_SCHOOL_FOOD)->sole();
+        $before = RevenueEntry::count();
+
+        $response = $this->actingAs($this->accountant)->post(
+            route('dashboard.finance.income.revenue.store'),
+            $this->buffetPayload(['revenue_category_id' => $schoolFood->id]),
+        );
+
+        $response->assertSessionDoesntHaveErrors();
+        $this->assertSame($before + 1, RevenueEntry::count());
+        $entry = RevenueEntry::latest('id')->first();
+        $this->assertSame($buffet->id, $entry->revenue_category_id);
+        $this->assertNotSame($schoolFood->id, $entry->revenue_category_id);
+    }
+
+    // H. The same shared mechanism covers Donation — a crafted Donation
+    // POST carrying another category id still persists Donation.
+    public function test_crafted_donation_post_with_another_category_id_still_persists_donation(): void
+    {
+        (new RevenueCategorySeeder)->run();
+        $donation = RevenueCategory::where('code', RevenueCategory::CODE_DONATION)->sole();
+        $fine = RevenueCategory::firstOrCreate(['code' => RevenueCategory::CODE_FINE], ['name_ru' => 'Штрафы', 'is_active' => true]);
+        $before = RevenueEntry::count();
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.finance.income.revenue.store'), [
+            'type' => 'donation',
+            'revenue_category_id' => $fine->id,
+            'amount' => '500.00',
+            'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id,
+            'payment_method' => 'cash',
+            'status' => RevenueEntry::STATUS_DRAFT,
+        ]);
+
+        $response->assertSessionDoesntHaveErrors();
+        $this->assertSame($before + 1, RevenueEntry::count());
+        $entry = RevenueEntry::latest('id')->first();
+        $this->assertSame($donation->id, $entry->revenue_category_id);
+    }
+
+    // I. The generic "Прочий приход" (Other) workflow is untouched by the
+    // lock mechanism — a legitimate, freely-selected active category
+    // still persists exactly as chosen.
+    public function test_generic_other_workflow_still_accepts_legitimate_selected_category(): void
+    {
+        (new RevenueCategorySeeder)->run();
+        $fine = RevenueCategory::firstOrCreate(['code' => RevenueCategory::CODE_FINE], ['name_ru' => 'Штрафы', 'is_active' => true]);
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.finance.income.revenue.store'), [
+            'revenue_category_id' => $fine->id,
+            'amount' => '300.00',
+            'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id,
+            'payment_method' => 'cash',
+            'status' => RevenueEntry::STATUS_DRAFT,
+        ]);
+
+        $response->assertSessionDoesntHaveErrors();
+        $entry = RevenueEntry::latest('id')->first();
+        $this->assertSame($fine->id, $entry->revenue_category_id);
     }
 
     // 9 & 10. A Buffet entry is never classified as school_food or cafeteria.

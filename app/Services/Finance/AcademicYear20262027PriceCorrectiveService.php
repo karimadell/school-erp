@@ -157,7 +157,7 @@ class AcademicYear20262027PriceCorrectiveService
         foreach (self::FOOD as $name => $amount) {
             $this->setPrice($mapped[$name], $amount, $summary, $apply, 'food.'.$name);
         }
-        foreach (['Комплексное питание', 'Завтрак', 'Обед'] as $name) {
+        foreach (array_keys(self::FOOD) as $name) {
             $plan = MealPlan::where('name_ru', $name)->lockForUpdate()->sole();
             if ($plan->period !== MealPlan::PERIOD_DAILY) {
                 throw new RuntimeException("MealPlan {$name} is not daily.");
@@ -166,9 +166,6 @@ class AcademicYear20262027PriceCorrectiveService
             if ($apply && bccomp((string) $plan->price, self::FOOD[$name], 2) !== 0) {
                 $plan->update(['price' => self::FOOD[$name]]);
             }
-        }
-        if (MealPlan::whereIn('name_ru', ['Суп', 'Второе блюдо', 'Напиток'])->exists()) {
-            throw new RuntimeException('Legacy a-la-carte Food rows must not be MealPlans.');
         }
     }
 

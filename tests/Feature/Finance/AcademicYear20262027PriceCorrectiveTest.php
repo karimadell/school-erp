@@ -89,12 +89,11 @@ class AcademicYear20262027PriceCorrectiveTest extends TestCase
             $this->assertSame($food[$name], $row->amount);
             $this->assertSame('daily', $row->payment_period);
         }
-        foreach (array_slice($food, 0, 3, true) as $name => $amount) {
+        foreach ($food as $name => $amount) {
             $plan = MealPlan::where('name_ru', $name)->sole();
             $this->assertSame($amount, $plan->price);
             $this->assertSame('daily', $plan->period);
         }
-        $this->assertFalse(MealPlan::whereIn('name_ru', ['Суп', 'Второе блюдо', 'Напиток'])->exists());
 
         $this->assertSame(40, FeePrice::where('fee_id', 13)->where('academic_year_id', $this->year->id)->whereIn('size', ['6', '8', '10', '12', '14', '16', 'S', 'M', 'L', 'XL'])->count());
         foreach ($this->uniformExpected() as $key => $amount) {
@@ -176,11 +175,15 @@ class AcademicYear20262027PriceCorrectiveTest extends TestCase
                 $this->price($transport, $this->year, ['amount' => '3.00', 'payment_period' => $period, 'option_type' => 'zone', 'option_value' => $zone]);
             }
         }
-        foreach ([['Комплексное питание', 'both', '170.00'], ['Завтрак', 'breakfast', '70.00'], ['Обед', 'lunch', '100.00']] as [$name,$type,$amount]) {
+        foreach ([
+            ['Комплексное питание', 'both', '170.00'],
+            ['Завтрак', 'breakfast', '70.00'],
+            ['Обед', 'lunch', '100.00'],
+            ['Суп', 'lunch', '20.00'],
+            ['Второе блюдо', 'lunch', '80.00'],
+            ['Напиток', 'both', '10.00'],
+        ] as [$name,$type,$amount]) {
             $plan = MealPlan::create(['name_ru' => $name, 'meal_type' => $type, 'period' => 'daily', 'price' => $amount, 'is_active' => true]);
-            $this->price($food, $this->year, ['amount' => $amount, 'payment_period' => 'daily', 'item' => $name]);
-        }
-        foreach (['Суп' => '20.00', 'Второе блюдо' => '80.00', 'Напиток' => '10.00'] as $name => $amount) {
             $this->price($food, $this->year, ['amount' => $amount, 'payment_period' => 'daily', 'item' => $name]);
         }
         foreach ($this->uniformExpected() as $key => $ignored) {

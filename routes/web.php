@@ -471,6 +471,7 @@ Route::middleware(['auth', 'administrative'])
             Route::prefix('income')->name('income.')->controller(IncomeEntryController::class)->group(function () {
                 Route::get('/', 'index')->name('index');
                 Route::get('donation', 'donation')->name('donation');
+                Route::get('buffet', 'buffet')->name('buffet');
                 Route::get('other', 'other')->name('other');
                 // Finance landing page corrective — student search/billing
                 // relocated here from the Финансы landing page; same

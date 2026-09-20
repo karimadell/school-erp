@@ -19,9 +19,9 @@ use Illuminate\View\View;
 /**
  * Dashboard-native counterpart of the Non-Tuition Revenues V1 backend
  * (RevenueService/RevenueEntry/RevenueCategory), reached only from the
- * unified Приход type selector (IncomeEntryController::donation()/other()
- * redirect here) — no standalone sidebar entry, mirroring how
- * income.students has none either.
+ * unified Приход type selector (IncomeEntryController::donation()/
+ * buffet()/other() redirect here) — no standalone sidebar entry, mirroring
+ * how income.students has none either.
  *
  * Every status-changing mutation (create/post/reverse/delete) delegates to
  * RevenueService — this controller never calls RevenueEntry::create() or
@@ -63,18 +63,50 @@ class RevenueEntryController extends Controller
         ]);
     }
 
+    /**
+     * Every "locked" workflow (Donation, Buffet, …) maps its own stable
+     * ?type= discriminator to a real RevenueCategory.code and its own
+     * page title. This is the SINGLE source of truth for that mapping —
+     * used identically by create() (to preselect/display) and store() (to
+     * resolve the category SERVER-SIDE, overriding whatever
+     * revenue_category_id a client actually submitted). No numeric IDs
+     * are ever hardcoded; a category is always resolved fresh by its
+     * stable code.
+     *
+     * @return array<string, array{0: string, 1: string}>
+     */
+    private function lockedRevenueTypes(): array
+    {
+        return [
+            'donation' => [RevenueCategory::CODE_DONATION, 'revenues.donation_page_title'],
+            'buffet' => [RevenueCategory::CODE_BUFFET, 'revenues.buffet_page_title'],
+        ];
+    }
+
     public function create(Request $request): View
     {
         $this->authorize('create', RevenueEntry::class);
 
+        // Owner-approved Finance category separation (pre-go-live) — each
+        // locked type maps to its own dedicated RevenueCategory row and
+        // its own page title; 'buffet' is never the legacy 'cafeteria'
+        // category, and the two can never be confused here since each
+        // type is resolved by its own real, distinct code.
+        $lockedTypes = $this->lockedRevenueTypes();
+        $type = $request->string('type')->toString();
         $lockedCategory = null;
-        if ($request->string('type')->toString() === 'donation') {
-            $lockedCategory = RevenueCategory::query()->where('code', RevenueCategory::CODE_DONATION)->first();
+        $lockedType = null;
+        $pageTitle = __('revenues.other_page_title');
+        if (isset($lockedTypes[$type])) {
+            [$code, $titleKey] = $lockedTypes[$type];
+            $lockedCategory = RevenueCategory::query()->where('code', $code)->first();
+            $lockedType = $type;
+            $pageTitle = __($titleKey);
         }
 
         return view('dashboard.finance.income.revenue.create', array_merge(
             $this->formOptions(),
-            ['lockedCategory' => $lockedCategory]
+            ['lockedCategory' => $lockedCategory, 'lockedType' => $lockedType, 'pageTitle' => $pageTitle]
         ));
     }
 
@@ -83,6 +115,7 @@ class RevenueEntryController extends Controller
         $this->authorize('create', RevenueEntry::class);
 
         $data = $this->validateRevenue($request);
+        $data = $this->applyLockedCategory($request, $data);
         $data = $this->applyAttachment($request, $data);
 
         $entry = $this->revenues->create($data, $request->user());
@@ -90,6 +123,36 @@ class RevenueEntryController extends Controller
         return redirect()
             ->route('dashboard.finance.income.revenue.show', $entry)
             ->with('success', __('revenues.created_notification'));
+    }
+
+    /**
+     * Server-side authoritative category lock. When the submission
+     * carries a recognized workflow discriminator (the same hidden
+     * "type" field create()'s locked form renders), the category is
+     * re-resolved here from RevenueCategory's own stable code and
+     * OVERRIDES whatever revenue_category_id the client actually
+     * submitted — a tampered hidden field (e.g. a crafted Buffet POST
+     * carrying the legacy cafeteria or school_food id) can never persist
+     * as anything other than the locked category. Unlocked ("Прочий
+     * приход") submissions have no "type" and are entirely unaffected —
+     * the operator's own freely-selected active category passes through
+     * exactly as validated.
+     */
+    private function applyLockedCategory(Request $request, array $data): array
+    {
+        $type = $request->string('type')->toString();
+        $lockedTypes = $this->lockedRevenueTypes();
+        if (! isset($lockedTypes[$type])) {
+            return $data;
+        }
+
+        [$code] = $lockedTypes[$type];
+        $category = RevenueCategory::query()->where('code', $code)->first();
+        if ($category) {
+            $data['revenue_category_id'] = $category->id;
+        }
+
+        return $data;
     }
 
     public function show(RevenueEntry $revenueEntry): View
@@ -182,7 +245,7 @@ class RevenueEntryController extends Controller
         abort_unless($disk->exists($revenueEntry->attachment_path), 404);
 
         return response()->stream(
-            fn () => print($disk->get($revenueEntry->attachment_path)),
+            fn () => print ($disk->get($revenueEntry->attachment_path)),
             200,
             [
                 'Content-Type' => $revenueEntry->attachment_type ?: 'application/octet-stream',

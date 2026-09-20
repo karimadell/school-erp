@@ -19,6 +19,14 @@ class RevenueCategory extends Model
 
     const CODE_OTHER = 'other';
 
+    // Owner-approved Finance category separation (pre-go-live): School
+    // Food and Buffet are two distinct operational activities and must
+    // never share a revenue category with each other or with the legacy,
+    // deliberately-untouched CODE_CAFETERIA row.
+    const CODE_SCHOOL_FOOD = 'school_food';
+
+    const CODE_BUFFET = 'buffet';
+
     protected $fillable = [
         'code',
         'name_ru',

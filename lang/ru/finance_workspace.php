@@ -36,6 +36,8 @@ return [
     'income_type_service_hint' => 'Начисление и оплата дополнительной услуги ученику.',
     'income_type_donation' => 'Пожертвование',
     'income_type_donation_hint' => 'Благотворительное поступление, не связанное с учеником.',
+    'income_type_buffet' => 'Буфет',
+    'income_type_buffet_hint' => 'Сдача выручки за день от школьного буфета.',
     'income_type_other' => 'Прочий приход',
     'income_type_other_hint' => 'Любое иное поступление денежных средств.',
 

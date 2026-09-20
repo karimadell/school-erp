@@ -62,6 +62,17 @@
         </div>
 
         <div class="col-md-6 col-xl-4">
+            <a href="{{ route('dashboard.finance.income.buffet') }}" class="text-decoration-none">
+                <div class="card border-0 shadow-sm h-100 income-type-card">
+                    <div class="card-body">
+                        <div class="fw-semibold fs-5 mb-1">{{ __('finance_workspace.income_type_buffet') }}</div>
+                        <div class="text-muted small">{{ __('finance_workspace.income_type_buffet_hint') }}</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-6 col-xl-4">
             <a href="{{ route('dashboard.finance.income.other') }}" class="text-decoration-none">
                 <div class="card border-0 shadow-sm h-100 income-type-card">
                     <div class="card-body">

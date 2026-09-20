@@ -54,6 +54,7 @@ return [
     // native pattern).
     'page_title' => 'Прочие поступления',
     'donation_page_title' => 'Пожертвование',
+    'buffet_page_title' => 'Буфет',
     'other_page_title' => 'Прочий приход',
     'list_hint' => 'Поступления, не связанные с оплатой обучения учеников',
     'create' => 'Новое поступление',

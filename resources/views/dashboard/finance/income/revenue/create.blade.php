@@ -4,7 +4,7 @@
 <div class="container py-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h3 class="mb-1">{{ $lockedCategory ? __('revenues.donation_page_title') : __('revenues.other_page_title') }}</h3>
+            <h3 class="mb-1">{{ $pageTitle ?? __('revenues.other_page_title') }}</h3>
         </div>
         <a href="{{ route('dashboard.finance.income.index') }}" class="btn btn-outline-secondary">← {{ __('revenues.back') }}</a>
     </div>

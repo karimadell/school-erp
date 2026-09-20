@@ -40,6 +40,16 @@ class IncomeEntryController extends Controller
         return redirect()->route('dashboard.finance.income.revenue.create', ['type' => 'donation']);
     }
 
+    // Буфет — same canonical Revenue flow, category pre-selected and
+    // locked to the dedicated 'buffet' category (owner-approved Finance
+    // category separation, pre-go-live). One daily handover amount per
+    // entry — no product-level POS/inventory. Never the legacy
+    // 'cafeteria' category, never mixed with School Food.
+    public function buffet(): RedirectResponse
+    {
+        return redirect()->route('dashboard.finance.income.revenue.create', ['type' => 'buffet']);
+    }
+
     // Прочий приход — same canonical Revenue flow, but the user picks
     // their own category (cafeteria/fine/other) instead of it being locked.
     public function other(): RedirectResponse

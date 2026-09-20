@@ -19,9 +19,9 @@ use Illuminate\View\View;
 /**
  * Dashboard-native counterpart of the Non-Tuition Revenues V1 backend
  * (RevenueService/RevenueEntry/RevenueCategory), reached only from the
- * unified Приход type selector (IncomeEntryController::donation()/other()
- * redirect here) — no standalone sidebar entry, mirroring how
- * income.students has none either.
+ * unified Приход type selector (IncomeEntryController::donation()/
+ * buffet()/other() redirect here) — no standalone sidebar entry, mirroring
+ * how income.students has none either.
  *
  * Every status-changing mutation (create/post/reverse/delete) delegates to
  * RevenueService — this controller never calls RevenueEntry::create() or
@@ -67,14 +67,27 @@ class RevenueEntryController extends Controller
     {
         $this->authorize('create', RevenueEntry::class);
 
+        // Owner-approved Finance category separation (pre-go-live) — each
+        // locked type maps to its own dedicated RevenueCategory row and
+        // its own page title; 'buffet' is never the legacy 'cafeteria'
+        // category, and the two can never be confused here since each
+        // type is resolved by its own real, distinct code.
+        $lockedTypes = [
+            'donation' => [RevenueCategory::CODE_DONATION, 'revenues.donation_page_title'],
+            'buffet' => [RevenueCategory::CODE_BUFFET, 'revenues.buffet_page_title'],
+        ];
+        $type = $request->string('type')->toString();
         $lockedCategory = null;
-        if ($request->string('type')->toString() === 'donation') {
-            $lockedCategory = RevenueCategory::query()->where('code', RevenueCategory::CODE_DONATION)->first();
+        $pageTitle = __('revenues.other_page_title');
+        if (isset($lockedTypes[$type])) {
+            [$code, $titleKey] = $lockedTypes[$type];
+            $lockedCategory = RevenueCategory::query()->where('code', $code)->first();
+            $pageTitle = __($titleKey);
         }
 
         return view('dashboard.finance.income.revenue.create', array_merge(
             $this->formOptions(),
-            ['lockedCategory' => $lockedCategory]
+            ['lockedCategory' => $lockedCategory, 'pageTitle' => $pageTitle]
         ));
     }
 
@@ -182,7 +195,7 @@ class RevenueEntryController extends Controller
         abort_unless($disk->exists($revenueEntry->attachment_path), 404);
 
         return response()->stream(
-            fn () => print($disk->get($revenueEntry->attachment_path)),
+            fn () => print ($disk->get($revenueEntry->attachment_path)),
             200,
             [
                 'Content-Type' => $revenueEntry->attachment_type ?: 'application/octet-stream',

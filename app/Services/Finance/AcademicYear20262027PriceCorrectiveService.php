@@ -49,10 +49,7 @@ class AcademicYear20262027PriceCorrectiveService
     {
         DB::beginTransaction();
         try {
-            $year = AcademicYear::query()->lockForUpdate()->find($yearId);
-            if (! $year || AcademicYear::normalizeName($year->name) !== AcademicYear::normalizeName(self::TARGET_YEAR_NAME)) {
-                throw new RuntimeException("AcademicYear id={$yearId} must exist and be named ".self::TARGET_YEAR_NAME.'.');
-            }
+            $year = $this->resolveYearOrFail($yearId);
 
             $summary = ['year_id' => $year->id, 'changes' => [], 'apply' => $apply];
             $this->registration($year, $summary, $apply);
@@ -69,6 +66,66 @@ class AcademicYear20262027PriceCorrectiveService
             DB::rollBack();
             throw $e;
         }
+    }
+
+    /**
+     * Food-only execution path (Option B — see the discovery that led to
+     * this method). Registration/Tuition/Transport/Uniform/After-School
+     * each currently have their own, independent, unrelated UAT
+     * incompatibilities (stale hardcoded Fee ids, duplicate active
+     * tariffs, an option_value format mismatch, an unapproved Fee-creation
+     * proposal) — none of that is fixed here, and none of it is reachable
+     * from this method. This has its own transaction boundary and calls
+     * ONLY updateFood() — it never calls run() and never touches
+     * registration()/updateTuition()/updateTransport()/updateUniform()/
+     * afterSchool(), so it cannot create, update, or delete anything
+     * outside the six canonical Food FeePrice rows and their MealPlan
+     * display-price sync, no matter how broken those other categories'
+     * data is.
+     *
+     * @return array{year_id: int, changes: array, apply: bool, food_report: array<int, array<string, mixed>>}
+     */
+    public function runFoodOnly(int $yearId, bool $apply = false): array
+    {
+        DB::beginTransaction();
+        try {
+            $year = $this->resolveYearOrFail($yearId);
+            $mealPlanPricesBefore = MealPlan::whereIn('name_ru', array_keys(self::FOOD))->pluck('price', 'name_ru');
+
+            $summary = ['year_id' => $year->id, 'changes' => [], 'apply' => $apply, 'food_report' => []];
+            $this->updateFood($year, $summary, $apply);
+
+            // Reporting-only enrichment — never influences any validation
+            // or write decision, which already happened inside
+            // updateFood() above. amount_after is already the exact target
+            // MealPlan.price updateFood() itself would sync to (same
+            // self::FOOD value, same loop pass), so it's reused rather
+            // than re-derived, to avoid a second copy of the price map.
+            foreach ($summary['food_report'] as &$entry) {
+                $plan = MealPlan::where('name_ru', $entry['name'])->sole();
+                $entry['meal_plan_id'] = $plan->id;
+                $entry['meal_plan_price_before'] = (string) ($mealPlanPricesBefore[$entry['name']] ?? $plan->price);
+                $entry['meal_plan_price_after'] = $entry['amount_after'];
+            }
+            unset($entry);
+
+            $apply ? DB::commit() : DB::rollBack();
+
+            return $summary;
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    private function resolveYearOrFail(int $yearId): AcademicYear
+    {
+        $year = AcademicYear::query()->lockForUpdate()->find($yearId);
+        if (! $year || AcademicYear::normalizeName($year->name) !== AcademicYear::normalizeName(self::TARGET_YEAR_NAME)) {
+            throw new RuntimeException("AcademicYear id={$yearId} must exist and be named ".self::TARGET_YEAR_NAME.'.');
+        }
+
+        return $year;
     }
 
     private function registration(AcademicYear $year, array &$summary, bool $apply): void

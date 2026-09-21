@@ -15,6 +15,7 @@
 - New Food purchases create a new invoice/coverage and preserve historical Food invoices/coverage unchanged.
 - Overlap protection exists for Food coverage (same student/Food fee, date-range overlap rejected safely).
 - `AcademicCalendar` / `FoodBillableDayCalculator` logic is reused for every Food purchase path (Quick Registration and Charge & Collect) — no second pricing engine.
+- Food 2026/2027 master data & pricing corrective (Phase 4B `option_value` identity migration + `finance:correct-food-2026-2027` price/`payment_period` correction) is closed, UAT-verified, and idempotent. See `docs/CHANGELOG.md` (2026-09-21 entry). The legacy whole-year command `finance:correct-2026-2027-prices` remains unfixed and is not the operational Food path.
 
 ### Still open / next
 
@@ -22,6 +23,7 @@
 - Classic `StudentInvoiceController` invoice creation still needs idempotency / duplicate-submit protection (Charge & Collect and Quick Registration already have it; the classic invoice-creation path does not).
 
 **P2**
+- Browser-based UAT of the modern Food purchase flows (Quick Registration / Unified Collection) against the corrected 2026/2027 prices has not yet been performed.
 - Existing Student tab on the Quick Registration screen remains primarily a search-and-redirect card, not a guided in-place workflow — discoverability issue, not a functional gap.
 - Returning-student / new-academic-year workflow is only partially integrated: `Enrollment` support exists, but re-enrolling a student into a new academic year and charging that year's services is not yet one guided Finance workflow.
 - Classic Uniform purchase needs better quantity / multiple-item support (Quick Registration's multi-item Uniform selection is not yet mirrored elsewhere).

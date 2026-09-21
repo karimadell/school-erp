@@ -132,7 +132,7 @@ class UatMasterDataRepair extends Command
     // =====================================================================
     private function normalizeYearName(string $name): string
     {
-        return preg_replace('/\s+/', '', $name);
+        return AcademicYear::normalizeName($name);
     }
 
     private function resolveYear(): ?AcademicYear

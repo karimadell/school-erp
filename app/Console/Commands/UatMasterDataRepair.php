@@ -25,15 +25,32 @@ use Illuminate\Support\Facades\DB;
  *    plan name) clearly prefixed "UAT —" so it can never be mistaken for
  *    real production master data.
  *
- * Default mode is dry-run: it computes and prints the full plan, including
- * anything already satisfied (SKIP) and the 3 legacy Food a-la-carte names
- * (Суп, Второе блюдо, Напиток) that are explicitly, permanently excluded
- * from the MealPlan model by a confirmed UAT decision — reported as
- * SKIPPED, never as a blocker, and never preventing the rest of --apply
- * from completing. Nothing is written unless --apply is passed, and the
- * entire write is one DB transaction. Re-running (dry-run or --apply) is
- * idempotent — every entity is matched by a natural key before deciding
- * to create it.
+ * Food Phase 4B corrective (owner-approved): the previous "3 legacy
+ * a-la-carte names are permanently excluded from the MealPlan model"
+ * decision is superseded. All six Food names — Комплексное питание,
+ * Завтрак, Обед, Суп, Второе блюдо, Напиток — are now migrated
+ * identically: a real MealPlan is created/reused by natural key
+ * (name_ru), and the matching FeePrice row's option_value is repointed
+ * from its legacy textual name to that MealPlan's numeric id.
+ * amount/fee_id/academic_year_id/grade_id/grade_group/payment_period/
+ * start_date/end_date/option_type/is_active/currency and every other
+ * FeePrice field are never touched — only option_value changes, and
+ * only for rows whose option_value still exactly equals the legacy
+ * name at the moment of the write (see applyAll()'s conditional
+ * UPDATE — re-verified inside the transaction; if it no longer
+ * matches, the whole apply aborts rather than risk an incorrect
+ * write). This is a pure identity migration — legacy textual
+ * option_value to numeric MealPlan id — and never writes amount, so
+ * multiple matched FeePrice rows for the same Food name legitimately
+ * disagreeing on amount (e.g. a mid-year price change across
+ * non-overlapping date ranges — already a first-class, tested Food
+ * pricing feature) is never treated as a conflict or a reason to
+ * abort; every such row is still correctly repointed. Default mode is
+ * dry-run: it computes and prints the full plan, including anything
+ * already satisfied (SKIP). Nothing is written unless --apply is
+ * passed, and the entire write is one DB transaction. Re-running
+ * (dry-run or --apply) is idempotent — every entity is matched by a
+ * natural key before deciding to create it.
  */
 class UatMasterDataRepair extends Command
 {
@@ -43,23 +60,23 @@ class UatMasterDataRepair extends Command
 
     protected $description = 'UAT-only: idempotently create/link the minimum master data (transport routes, meal plans, uniform products, one test installment plan) Quick Registration needs — default dry-run, --apply required to write.';
 
-    /** name_ru => [meal_type, period] — the 3 legacy Food names that fit the MealPlan model shape. */
+    /**
+     * name_ru => [meal_type, period] — all six operational Food names,
+     * mapped to the MealPlan model's own existing enum domain (never an
+     * invented value). Суп/Второе блюдо are individually purchasable
+     * items associated with lunch (TYPE_LUNCH); Напиток is a drink
+     * available across meal contexts, matching Комплексное питание's
+     * own existing TYPE_BOTH usage. All six are daily, matching the
+     * three already-established entries.
+     */
     private const FOOD_MEAL_TYPE_MAP = [
         'Комплексное питание' => ['meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_DAILY],
         'Завтрак' => ['meal_type' => MealPlan::TYPE_BREAKFAST, 'period' => MealPlan::PERIOD_DAILY],
         'Обед' => ['meal_type' => MealPlan::TYPE_LUNCH, 'period' => MealPlan::PERIOD_DAILY],
+        'Суп' => ['meal_type' => MealPlan::TYPE_LUNCH, 'period' => MealPlan::PERIOD_DAILY],
+        'Второе блюдо' => ['meal_type' => MealPlan::TYPE_LUNCH, 'period' => MealPlan::PERIOD_DAILY],
+        'Напиток' => ['meal_type' => MealPlan::TYPE_BOTH, 'period' => MealPlan::PERIOD_DAILY],
     ];
-
-    /**
-     * The 3 legacy Food names confirmed (UAT decision, Phase 4B) to be
-     * a-la-carte components — not subscription-shaped MealPlans — and
-     * therefore permanently excluded from MealPlan creation/linking. Never
-     * mapped, never linked, their FeePrice rows never touched. Reported as
-     * SKIPPED — informational, never a blocker to the rest of --apply.
-     */
-    private const FOOD_SKIPPED_LEGACY_NAMES = ['Суп', 'Второе блюдо', 'Напиток'];
-
-    private const FOOD_SKIPPED_LEGACY_STATUS = 'SKIPPED — LEGACY A-LA-CARTE / OUTSIDE CURRENT QUICK REGISTRATION MEALPLAN MODEL';
 
     private const TRANSPORT_ROUTES = [
         'UAT — Зона 1 — Каусер, Мубарак 2, Интерконтиненталь',
@@ -91,7 +108,6 @@ class UatMasterDataRepair extends Command
         $this->printFoodPlan($foodPlan);
         $this->printUniformPlan($uniformPlan);
         $this->printInstallmentPlan($installmentPlan);
-        $this->printSkippedLegacyNotes($foodPlan);
         $this->printRollbackInfo($foodPlan);
 
         if (! $apply) {
@@ -103,11 +119,7 @@ class UatMasterDataRepair extends Command
 
         $this->applyAll($transportPlan, $foodPlan, $uniformPlan, $installmentPlan);
 
-        $skippedLegacy = collect($foodPlan)->where('skipped_legacy', true);
         $this->newLine();
-        if ($skippedLegacy->isNotEmpty()) {
-            $this->line($skippedLegacy->count().' Food name(s) SKIPPED — LEGACY A-LA-CARTE, left exactly as-is (this does not affect the rest of this run): '.$skippedLegacy->pluck('name')->implode(', '));
-        }
         $this->components->info('Apply complete. Nothing outside transport_routes / meal_plans / uniform_products / payment_plans / payment_plan_installments / the linked fee_prices.option_value fields was touched.');
 
         return self::SUCCESS;
@@ -162,42 +174,40 @@ class UatMasterDataRepair extends Command
             ->where('option_type', 'meal_plan')
             ->get();
 
-        $names = array_merge(array_keys(self::FOOD_MEAL_TYPE_MAP), self::FOOD_SKIPPED_LEGACY_NAMES);
+        $names = array_keys(self::FOOD_MEAL_TYPE_MAP);
         $plan = [];
 
         foreach ($names as $name) {
             $matches = $rows->filter(fn (FeePrice $p) => $p->option_value === $name)->values();
 
             if ($matches->isEmpty()) {
-                $plan[] = ['name' => $name, 'status' => 'NOT FOUND (no FeePrice row uses this legacy name)', 'skipped_legacy' => false, 'fee_price_updates' => []];
-
-                continue;
-            }
-
-            if (in_array($name, self::FOOD_SKIPPED_LEGACY_NAMES, true)) {
-                $plan[] = [
-                    'name' => $name,
-                    'status' => self::FOOD_SKIPPED_LEGACY_STATUS,
-                    'skipped_legacy' => true,
-                    'reason' => "confirmed UAT decision: '{$name}' is an a-la-carte item, not a subscription-shaped MealPlan — left exactly as-is (no deletion, no option_value rewrite, no invented enum value); does not block Transport/other Food links/Uniform/Installments",
-                    'fee_price_ids' => $matches->pluck('id')->all(),
-                    'fee_price_updates' => [],
-                ];
+                $plan[] = ['name' => $name, 'status' => 'NOT FOUND (no FeePrice row uses this legacy name)', 'fee_price_updates' => []];
 
                 continue;
             }
 
             $existingPlan = MealPlan::where('name_ru', $name)->first();
-            $amounts = $matches->pluck('amount')->unique();
 
             $plan[] = [
                 'name' => $name,
                 'status' => $existingPlan ? 'MEAL PLAN ALREADY EXISTS' : 'CREATE MEAL PLAN',
-                'skipped_legacy' => false,
                 'meal_type' => self::FOOD_MEAL_TYPE_MAP[$name]['meal_type'],
                 'period' => self::FOOD_MEAL_TYPE_MAP[$name]['period'],
+                // MealPlan.price is NOT authoritative for billing — every
+                // invoice resolves its price from FeePrice directly (see
+                // InvoiceCalculationService::priceFoodDailyLine()), which
+                // legitimately supports multiple FeePrice rows for the
+                // same Food identity within one academic year at
+                // different amounts across non-overlapping date ranges
+                // (a tested, first-class feature — see
+                // FoodDailyBillingTest's tariff-segmentation tests).
+                // Differing amounts across $matches are therefore never
+                // an identity conflict for this repair — this deterministic
+                // "first match" pick (the same established convention
+                // already used for the pre-existing 3 Food names) only
+                // seeds a cosmetic display field; it never affects what
+                // any invoice actually charges.
                 'price' => $matches->first()->getRawOriginal('amount'),
-                'amount_conflict' => $amounts->count() > 1,
                 'existing_meal_plan_id' => $existingPlan?->id,
                 'fee_price_updates' => $matches->map(fn (FeePrice $p) => [
                     'fee_price_id' => $p->id,
@@ -284,20 +294,15 @@ class UatMasterDataRepair extends Command
         $this->header('B/C. Food — MealPlan creation and fee_prices.option_value linking');
         $rows = [];
         foreach ($plan as $entry) {
-            if (empty($entry['fee_price_updates']) && ! ($entry['skipped_legacy'] ?? false)) {
+            if (empty($entry['fee_price_updates'])) {
                 $rows[] = [$entry['name'], $entry['status'], '—', '—'];
-
-                continue;
-            }
-            if ($entry['skipped_legacy'] ?? false) {
-                $rows[] = [$entry['name'], self::FOOD_SKIPPED_LEGACY_STATUS, '—', 'see section G — fee_price ids: '.implode(',', $entry['fee_price_ids']).' (untouched)'];
 
                 continue;
             }
             foreach ($entry['fee_price_updates'] as $update) {
                 $rows[] = [
                     $entry['name'],
-                    $entry['status'].($entry['amount_conflict'] ? ' [amounts differ across matched rows]' : ''),
+                    $entry['status'],
                     "fee_price #{$update['fee_price_id']}: option_value BEFORE = '{$update['before_option_value']}'",
                     $update['already_linked'] ? 'already linked, no change' : "AFTER = numeric MealPlan id (amount {$update['amount']} EGP unchanged)",
                 ];
@@ -328,23 +333,9 @@ class UatMasterDataRepair extends Command
         }
     }
 
-    private function printSkippedLegacyNotes(array $foodPlan): void
-    {
-        $this->header('G. Skipped legacy rows (informational — confirmed UAT decision, never blocks --apply)');
-        $skipped = collect($foodPlan)->where('skipped_legacy', true);
-        if ($skipped->isEmpty()) {
-            $this->line('None.');
-
-            return;
-        }
-        foreach ($skipped as $entry) {
-            $this->line("- {$entry['name']}: {$entry['reason']} (fee_price ids: ".implode(',', $entry['fee_price_ids']).')');
-        }
-    }
-
     private function printRollbackInfo(array $foodPlan): void
     {
-        $this->header('H. Rollback / reversal information');
+        $this->header('G. Rollback / reversal information');
         $this->line('- transport_routes / MealPlan / uniform_products / payment_plans rows created by --apply can be deleted directly (nothing references them yet: no FeePrice FK to transport_routes or uniform_products, no invoice/subscription created by this command).');
         $updates = collect($foodPlan)->flatMap(fn ($entry) => collect($entry['fee_price_updates'] ?? [])
             ->where('already_linked', false)
@@ -371,7 +362,7 @@ class UatMasterDataRepair extends Command
             }
 
             foreach ($foodPlan as $entry) {
-                if (($entry['skipped_legacy'] ?? false) || empty($entry['fee_price_updates'])) {
+                if (empty($entry['fee_price_updates'])) {
                     continue;
                 }
                 $plan = MealPlan::firstOrCreate(
@@ -379,8 +370,22 @@ class UatMasterDataRepair extends Command
                     ['meal_type' => $entry['meal_type'], 'period' => $entry['period'], 'price' => $entry['price'], 'is_active' => true],
                 );
                 foreach ($entry['fee_price_updates'] as $update) {
-                    if (! $update['already_linked']) {
-                        FeePrice::whereKey($update['fee_price_id'])->update(['option_value' => (string) $plan->id]);
+                    if ($update['already_linked']) {
+                        continue;
+                    }
+                    // Re-verify inside the transaction that the row still
+                    // holds the exact legacy value this plan was computed
+                    // from — guards against a concurrent write between the
+                    // plan read and this update. Anything other than
+                    // exactly one affected row means the plan is stale, so
+                    // abort the whole transaction rather than risk writing
+                    // an option_value onto a row that no longer matches.
+                    $affected = FeePrice::whereKey($update['fee_price_id'])
+                        ->where('option_value', $update['before_option_value'])
+                        ->update(['option_value' => (string) $plan->id]);
+
+                    if ($affected !== 1) {
+                        throw new \RuntimeException("Food repair aborted: fee_price #{$update['fee_price_id']} no longer matches its planned option_value '{$update['before_option_value']}' (expected exactly 1 affected row, got {$affected}).");
                     }
                 }
             }

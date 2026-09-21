@@ -20,20 +20,26 @@ use Tests\TestCase;
 /**
  * Phase 4B — finance:uat-master-data-repair. Default dry-run, --apply
  * required to write, entire write wrapped in one transaction, idempotent
- * on re-run. Confirmed UAT decision: the three a-la-carte legacy Food names
- * (Суп/Второе блюдо/Напиток) are permanently excluded from MealPlan
- * creation/linking — reported as SKIPPED — LEGACY A-LA-CARTE / OUTSIDE
- * CURRENT QUICK REGISTRATION MEALPLAN MODEL, left completely untouched,
- * and never block the rest of --apply (Transport + the 3 valid MealPlans
- * + Uniform + the UAT installment plan).
+ * on re-run. Food Phase 4B corrective (owner-approved, supersedes the
+ * former "3 a-la-carte legacy Food names are permanently excluded from
+ * MealPlan" decision): all six Food names — Комплексное питание,
+ * Завтрак, Обед, Суп, Второе блюдо, Напиток — are migrated identically —
+ * a MealPlan is created/reused by natural key and the matching
+ * FeePrice.option_value is repointed from the legacy text to that
+ * MealPlan's numeric id, with amount and every other FeePrice field left
+ * untouched (Transport + all 6 MealPlans + Uniform + the UAT installment
+ * plan all complete in the same --apply).
  */
 class UatMasterDataRepairTest extends TestCase
 {
     use RefreshDatabase;
 
     private AcademicYear $year;
+
     private Fee $foodFee;
+
     private Fee $uniformFee;
+
     private Fee $transportFee;
 
     protected function setUp(): void
@@ -175,23 +181,32 @@ class UatMasterDataRepairTest extends TestCase
         $this->assertSame(count($before), FeePrice::count(), 'no FeePrice row may be created or deleted');
     }
 
-    // ----- 3/6. The 3 valid MealPlans are created and linked; Food option_value is
-    //            the only modified Food tariff field, only for resolvable names ---
+    // ----- 3/6. All 6 MealPlans are created and linked; Food option_value is
+    //            the only modified Food tariff field ---------------------------
 
-    public function test_food_option_value_is_the_only_field_changed_and_only_for_resolvable_names(): void
+    public function test_food_option_value_is_the_only_field_changed_for_all_six_names(): void
     {
         Artisan::call('finance:uat-master-data-repair', ['--year' => '2026/2027', '--apply' => true]);
 
         $plans = MealPlan::pluck('id', 'name_ru');
-        $this->assertCount(3, $plans, 'only the 3 shape-compatible names get a MealPlan');
+        $this->assertCount(6, $plans, 'all 6 Food names get a MealPlan');
         $this->assertTrue($plans->has('Комплексное питание'));
         $this->assertTrue($plans->has('Завтрак'));
         $this->assertTrue($plans->has('Обед'));
+        $this->assertTrue($plans->has('Суп'));
+        $this->assertTrue($plans->has('Второе блюдо'));
+        $this->assertTrue($plans->has('Напиток'));
         $this->assertSame(MealPlan::TYPE_BOTH, MealPlan::find($plans['Комплексное питание'])->meal_type);
         $this->assertSame(MealPlan::TYPE_BREAKFAST, MealPlan::find($plans['Завтрак'])->meal_type);
         $this->assertSame(MealPlan::TYPE_LUNCH, MealPlan::find($plans['Обед'])->meal_type);
+        $this->assertSame(MealPlan::TYPE_LUNCH, MealPlan::find($plans['Суп'])->meal_type);
+        $this->assertSame(MealPlan::TYPE_LUNCH, MealPlan::find($plans['Второе блюдо'])->meal_type);
+        $this->assertSame(MealPlan::TYPE_BOTH, MealPlan::find($plans['Напиток'])->meal_type);
 
-        foreach (['Комплексное питание' => '170.00', 'Завтрак' => '70.00', 'Обед' => '100.00'] as $name => $amount) {
+        foreach ([
+            'Комплексное питание' => '170.00', 'Завтрак' => '70.00', 'Обед' => '100.00',
+            'Суп' => '20.00', 'Второе блюдо' => '80.00', 'Напиток' => '10.00',
+        ] as $name => $amount) {
             $row = FeePrice::where('fee_id', $this->foodFee->id)->where('amount', $amount)->sole();
             $this->assertSame((string) $plans[$name], $row->option_value);
             $this->assertSame('meal_plan', $row->option_type);
@@ -199,25 +214,26 @@ class UatMasterDataRepairTest extends TestCase
         }
     }
 
-    // ----- 1. The 3 a-la-carte rows are skipped and unchanged --------------------
+    // ----- 1. The 3 legacy a-la-carte rows are migrated identically to the
+    //          original 3 (Food Phase 4B corrective) --------------------------
 
-    public function test_the_three_a_la_carte_rows_are_skipped_and_left_completely_unchanged(): void
+    public function test_the_three_legacy_a_la_carte_rows_are_migrated_to_real_meal_plans(): void
     {
-        $skippedBefore = FeePrice::where('fee_id', $this->foodFee->id)
+        $before = FeePrice::where('fee_id', $this->foodFee->id)
             ->whereIn('option_value', ['Суп', 'Второе блюдо', 'Напиток'])
             ->get(['id', 'option_type', 'option_value', 'amount'])
             ->keyBy('option_value');
-        $this->assertCount(3, $skippedBefore);
+        $this->assertCount(3, $before);
 
         Artisan::call('finance:uat-master-data-repair', ['--year' => '2026/2027', '--apply' => true]);
 
         foreach (['Суп', 'Второе блюдо', 'Напиток'] as $name) {
-            $row = FeePrice::find($skippedBefore[$name]->id);
-            $this->assertNotNull($row, "{$name}'s FeePrice row must not be deleted");
+            $plan = MealPlan::where('name_ru', $name)->sole();
+            $row = FeePrice::find($before[$name]->id);
+            $this->assertNotNull($row, "{$name}'s FeePrice row must not be deleted/recreated");
             $this->assertSame('meal_plan', $row->option_type, "{$name}: option_type must stay 'meal_plan'");
-            $this->assertSame($name, $row->option_value, "{$name}: option_value must stay the legacy text, never rewritten");
-            $this->assertSame($skippedBefore[$name]->amount, $row->amount, "{$name}: amount must be untouched");
-            $this->assertFalse(MealPlan::where('name_ru', $name)->exists(), "{$name} must never get a MealPlan");
+            $this->assertSame((string) $plan->id, $row->option_value, "{$name}: option_value must now be the resolved MealPlan's numeric id");
+            $this->assertSame($before[$name]->amount, $row->amount, "{$name}: amount must be unchanged");
         }
     }
 
@@ -285,35 +301,37 @@ class UatMasterDataRepairTest extends TestCase
         $this->assertTrue($readiness->installments()['ready']);
     }
 
-    // ----- 1/2. The 3 a-la-carte names are reported SKIPPED (not blocked) and
-    //            never prevent the rest of --apply from completing -------------
+    // ----- 1/2. The 3 legacy a-la-carte names are reported CREATE MEAL PLAN
+    //            (never SKIPPED/BLOCKED) alongside the original 3 -------------
 
-    public function test_the_three_a_la_carte_names_are_reported_skipped_not_blocked(): void
+    public function test_the_three_legacy_a_la_carte_names_are_reported_as_create_meal_plan(): void
     {
         $exitCode = Artisan::call('finance:uat-master-data-repair', ['--year' => '2026/2027']);
         $output = Artisan::output();
 
         $this->assertSame(0, $exitCode);
-        $this->assertStringContainsString('SKIPPED — LEGACY A-LA-CARTE / OUTSIDE CURRENT QUICK REGISTRATION MEALPLAN MODEL', $output);
+        $this->assertStringNotContainsString('SKIPPED', $output);
         $this->assertStringNotContainsString('BLOCKED', $output);
         foreach (['Суп', 'Второе блюдо', 'Напиток'] as $name) {
             $this->assertStringContainsString($name, $output);
         }
+        $this->assertStringContainsString('CREATE MEAL PLAN', $output);
     }
 
-    public function test_the_three_a_la_carte_names_do_not_block_the_rest_of_apply(): void
+    public function test_the_three_legacy_a_la_carte_names_complete_alongside_the_rest_of_apply(): void
     {
         $exitCode = Artisan::call('finance:uat-master-data-repair', ['--year' => '2026/2027', '--apply' => true]);
         $output = Artisan::output();
 
         $this->assertSame(0, $exitCode);
         $this->assertStringContainsString('Apply complete.', $output);
-        $this->assertFalse(MealPlan::where('name_ru', 'Суп')->exists());
-        $this->assertFalse(MealPlan::where('name_ru', 'Второе блюдо')->exists());
-        $this->assertFalse(MealPlan::where('name_ru', 'Напиток')->exists());
+        $this->assertTrue(MealPlan::where('name_ru', 'Суп')->exists());
+        $this->assertTrue(MealPlan::where('name_ru', 'Второе блюдо')->exists());
+        $this->assertTrue(MealPlan::where('name_ru', 'Напиток')->exists());
 
-        // Everything else completes fully despite the 3 skipped rows.
+        // Everything else completes fully alongside all 6 Food names.
         $this->assertTrue(MealPlan::where('name_ru', 'Обед')->exists());
+        $this->assertSame(6, MealPlan::count());
         $this->assertSame(3, DB::table('transport_routes')->count());
         $this->assertGreaterThan(0, DB::table('uniform_products')->count());
         $this->assertSame(1, PaymentPlan::count());
@@ -330,7 +348,7 @@ class UatMasterDataRepairTest extends TestCase
         $this->assertStringContainsString('UAT — Зона 1', $output);
         $this->assertStringContainsString('UAT — 2 платежа 50/50', $output);
         $this->assertStringContainsString('Комплект', $output);
-        $this->assertStringContainsString('H. Rollback / reversal information', $output);
+        $this->assertStringContainsString('G. Rollback / reversal information', $output);
         $this->assertStringContainsString('UPDATE fee_prices SET option_value', $output);
     }
 }

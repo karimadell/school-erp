@@ -39,11 +39,16 @@ use Illuminate\Support\Facades\DB;
  * name at the moment of the write (see applyAll()'s conditional
  * UPDATE — re-verified inside the transaction; if it no longer
  * matches, the whole apply aborts rather than risk an incorrect
- * write). Default mode is dry-run: it computes and prints the full
- * plan, including anything already satisfied (SKIP). If any matched
- * candidates disagree on amount, the whole apply aborts before any
- * write (dry-run still reports it). Nothing is written unless --apply
- * is passed, and the entire write is one DB transaction. Re-running
+ * write). This is a pure identity migration — legacy textual
+ * option_value to numeric MealPlan id — and never writes amount, so
+ * multiple matched FeePrice rows for the same Food name legitimately
+ * disagreeing on amount (e.g. a mid-year price change across
+ * non-overlapping date ranges — already a first-class, tested Food
+ * pricing feature) is never treated as a conflict or a reason to
+ * abort; every such row is still correctly repointed. Default mode is
+ * dry-run: it computes and prints the full plan, including anything
+ * already satisfied (SKIP). Nothing is written unless --apply is
+ * passed, and the entire write is one DB transaction. Re-running
  * (dry-run or --apply) is idempotent — every entity is matched by a
  * natural key before deciding to create it.
  */
@@ -110,13 +115,6 @@ class UatMasterDataRepair extends Command
             $this->components->warn('DRY-RUN ONLY — no data was created, updated, or deleted. Re-run with --apply to write.');
 
             return self::SUCCESS;
-        }
-
-        $conflicted = collect($foodPlan)->where('amount_conflict', true);
-        if ($conflicted->isNotEmpty()) {
-            $this->components->error('ABORTED — no writes performed. The following Food name(s) have matched FeePrice rows that disagree on amount, so this command refuses to guess which price is correct: '.$conflicted->pluck('name')->implode(', '));
-
-            return self::FAILURE;
         }
 
         $this->applyAll($transportPlan, $foodPlan, $uniformPlan, $installmentPlan);
@@ -189,15 +187,27 @@ class UatMasterDataRepair extends Command
             }
 
             $existingPlan = MealPlan::where('name_ru', $name)->first();
-            $amounts = $matches->pluck('amount')->unique();
 
             $plan[] = [
                 'name' => $name,
                 'status' => $existingPlan ? 'MEAL PLAN ALREADY EXISTS' : 'CREATE MEAL PLAN',
                 'meal_type' => self::FOOD_MEAL_TYPE_MAP[$name]['meal_type'],
                 'period' => self::FOOD_MEAL_TYPE_MAP[$name]['period'],
+                // MealPlan.price is NOT authoritative for billing — every
+                // invoice resolves its price from FeePrice directly (see
+                // InvoiceCalculationService::priceFoodDailyLine()), which
+                // legitimately supports multiple FeePrice rows for the
+                // same Food identity within one academic year at
+                // different amounts across non-overlapping date ranges
+                // (a tested, first-class feature — see
+                // FoodDailyBillingTest's tariff-segmentation tests).
+                // Differing amounts across $matches are therefore never
+                // an identity conflict for this repair — this deterministic
+                // "first match" pick (the same established convention
+                // already used for the pre-existing 3 Food names) only
+                // seeds a cosmetic display field; it never affects what
+                // any invoice actually charges.
                 'price' => $matches->first()->getRawOriginal('amount'),
-                'amount_conflict' => $amounts->count() > 1,
                 'existing_meal_plan_id' => $existingPlan?->id,
                 'fee_price_updates' => $matches->map(fn (FeePrice $p) => [
                     'fee_price_id' => $p->id,
@@ -292,7 +302,7 @@ class UatMasterDataRepair extends Command
             foreach ($entry['fee_price_updates'] as $update) {
                 $rows[] = [
                     $entry['name'],
-                    $entry['status'].($entry['amount_conflict'] ? ' [amounts differ across matched rows]' : ''),
+                    $entry['status'],
                     "fee_price #{$update['fee_price_id']}: option_value BEFORE = '{$update['before_option_value']}'",
                     $update['already_linked'] ? 'already linked, no change' : "AFTER = numeric MealPlan id (amount {$update['amount']} EGP unchanged)",
                 ];

@@ -5,6 +5,7 @@ namespace Tests\Feature\Finance;
 use App\Models\AcademicCalendar;
 use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Models\FinanceCollection;
 use App\Models\InvoiceItem;
 use App\Models\MealPlan;
 use App\Services\Finance\FinanceConfigurationReadinessService;
@@ -29,8 +30,10 @@ use Illuminate\Support\Str;
  * AcademicYear20262027PriceCorrectiveTest: this file focuses on the
  * cross-cutting proofs the migration itself must satisfy — readiness
  * audit before/after, historical InvoiceItem safety, Quick
- * Registration + Unified Collection exposing all six choices through
- * the unchanged generic mechanism, and the amount-conflict abort guard.
+ * Registration + Unified Collection exposing (and correctly pricing)
+ * all six choices through the unchanged generic mechanism, legitimate
+ * date-segmented differing amounts never being treated as an identity
+ * conflict, and a partial-linkage mixed state being handled safely.
  */
 class FoodPhase4BLegacyMealPlanMigrationTest extends FinanceOperationsTestCase
 {
@@ -154,27 +157,107 @@ class FoodPhase4BLegacyMealPlanMigrationTest extends FinanceOperationsTestCase
         }
     }
 
-    // ----- 4. Ambiguous candidates (amount_conflict) abort before any write --
+    // ----- 4. Legitimate date-segmented differing amounts for the SAME Food
+    //          identity are NOT an identity conflict — both rows must be
+    //          migrated, each keeping its own amount and date range exactly
+    //          (regression for the removed amount_conflict abort, which
+    //          incorrectly treated this already-supported Food pricing
+    //          pattern — see FoodDailyBillingTest's tariff-segmentation
+    //          tests — as an unresolvable ambiguity) ----------------------
 
-    public function test_apply_aborts_with_no_writes_when_a_legacy_name_has_conflicting_amounts(): void
+    public function test_a_legacy_name_with_legitimate_date_segmented_different_amounts_migrates_both_rows(): void
     {
-        $this->seedAllSixLegacyRows();
-        // A second 'Суп' row at a different amount — an unresolvable ambiguity.
-        FeePrice::create([
-            'fee_id' => $this->food->id, 'academic_year_id' => $this->year->id, 'amount' => '25.00', 'currency' => 'EGP',
-            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+        $rows = $this->seedAllSixLegacyRows();
+        // Replace the single full-year 'Суп' row with two non-overlapping,
+        // differently-priced segments — a mid-year price change, exactly
+        // the pattern InvoiceCalculationService::priceFoodDailyLine()
+        // already resolves via date-range filtering (see
+        // FoodDailyBillingTest::test_mid_month_tariff_change_...).
+        $rows['Суп']->delete();
+        $earlySegment = FeePrice::create([
+            'fee_id' => $this->food->id, 'academic_year_id' => $this->year->id, 'amount' => '20.00', 'currency' => 'EGP',
+            'start_date' => '2026-08-01', 'end_date' => '2026-12-31', 'is_active' => true,
             'option_type' => 'meal_plan', 'option_value' => 'Суп', 'payment_period' => 'daily',
         ]);
-        $optionValuesBefore = FeePrice::where('fee_id', $this->food->id)->pluck('option_value', 'id')->all();
+        $lateSegment = FeePrice::create([
+            'fee_id' => $this->food->id, 'academic_year_id' => $this->year->id, 'amount' => '25.00', 'currency' => 'EGP',
+            'start_date' => '2027-01-01', 'end_date' => '2027-06-30', 'is_active' => true,
+            'option_type' => 'meal_plan', 'option_value' => 'Суп', 'payment_period' => 'daily',
+        ]);
 
         $exitCode = Artisan::call('finance:uat-master-data-repair', ['--year' => $this->year->name, '--apply' => true]);
         $output = Artisan::output();
 
-        $this->assertSame(1, $exitCode, 'a conflicted apply must fail closed');
-        $this->assertStringContainsString('ABORTED', $output);
-        $this->assertStringContainsString('Суп', $output);
-        $this->assertSame(0, MealPlan::count(), 'no MealPlan may be created when any Food name is ambiguous');
-        $this->assertSame($optionValuesBefore, FeePrice::where('fee_id', $this->food->id)->pluck('option_value', 'id')->all(), 'no option_value may be rewritten when the apply aborts');
+        $this->assertSame(0, $exitCode, 'legitimate date-segmented differing amounts must never abort the run: '.$output);
+        $plan = MealPlan::where('name_ru', 'Суп')->sole();
+        $this->assertSame(MealPlan::TYPE_LUNCH, $plan->meal_type);
+
+        $early = FeePrice::findOrFail($earlySegment->id);
+        $late = FeePrice::findOrFail($lateSegment->id);
+        $this->assertSame((string) $plan->id, $early->option_value, 'the early segment must be repointed to the same MealPlan');
+        $this->assertSame((string) $plan->id, $late->option_value, 'the late segment must be repointed to the same MealPlan');
+        $this->assertSame('20.00', $early->amount, 'the early segment amount must be preserved exactly');
+        $this->assertSame('25.00', $late->amount, 'the late segment amount must be preserved exactly');
+        $this->assertSame('2026-08-01', $early->start_date->toDateString());
+        $this->assertSame('2026-12-31', $early->end_date->toDateString());
+        $this->assertSame('2027-01-01', $late->start_date->toDateString());
+        $this->assertSame('2027-06-30', $late->end_date->toDateString());
+        $this->assertSame(2, FeePrice::where('fee_id', $this->food->id)->where('option_value', (string) $plan->id)->count(), 'no replacement FeePrice row may be created — both original rows must be reused');
+
+        // Idempotent rerun: no duplicate MealPlan, no further writes.
+        Artisan::call('finance:uat-master-data-repair', ['--year' => $this->year->name, '--apply' => true]);
+        $this->assertSame(1, MealPlan::where('name_ru', 'Суп')->count());
+        $this->assertSame('20.00', FeePrice::findOrFail($earlySegment->id)->amount);
+        $this->assertSame('25.00', FeePrice::findOrFail($lateSegment->id)->amount);
+    }
+
+    // ----- 4b. Mixed state: a legitimate partial-linkage scenario — the
+    //           MealPlan already exists and one intended FeePrice row is
+    //           already relinked (e.g. from an interrupted prior run),
+    //           while a sibling row under the SAME name is still legacy
+    //           text. The existing plan must be reused (never duplicated),
+    //           the already-linked row must be left alone, and only the
+    //           still-legacy sibling gets repointed -----------------------
+
+    public function test_a_partially_linked_legacy_name_reuses_the_existing_plan_and_only_repoints_the_unlinked_sibling(): void
+    {
+        $rows = $this->seedAllSixLegacyRows();
+        $secondBlyudoBefore = $rows['Второе блюдо'];
+
+        // Simulate an interrupted prior run: the MealPlan already exists
+        // and one FeePrice row is already relinked to it...
+        $plan = MealPlan::create(['name_ru' => 'Второе блюдо', 'meal_type' => MealPlan::TYPE_LUNCH, 'period' => MealPlan::PERIOD_DAILY, 'price' => '80.00', 'is_active' => true]);
+        $secondBlyudoBefore->update(['option_value' => (string) $plan->id]);
+        // ...while a sibling row under the same name is still legacy text.
+        $unlinkedSibling = FeePrice::create([
+            'fee_id' => $this->food->id, 'academic_year_id' => $this->year->id, 'amount' => '80.00', 'currency' => 'EGP',
+            'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'is_active' => true,
+            'option_type' => 'meal_plan', 'option_value' => 'Второе блюдо', 'payment_period' => 'daily',
+        ]);
+        $feePriceCountBefore = FeePrice::count();
+
+        $exitCode = Artisan::call('finance:uat-master-data-repair', ['--year' => $this->year->name, '--apply' => true]);
+
+        $this->assertSame(0, $exitCode);
+        $this->assertSame(1, MealPlan::where('name_ru', 'Второе блюдо')->count(), 'the existing MealPlan must be reused, never duplicated');
+        $this->assertSame($plan->id, MealPlan::where('name_ru', 'Второе блюдо')->sole()->id, 'the SAME MealPlan row must be reused, not recreated');
+
+        $alreadyLinked = FeePrice::findOrFail($secondBlyudoBefore->id);
+        $this->assertSame((string) $plan->id, $alreadyLinked->option_value, 'the already-linked row must be left exactly as it was');
+        $this->assertSame('80.00', $alreadyLinked->amount);
+
+        $nowLinked = FeePrice::findOrFail($unlinkedSibling->id);
+        $this->assertSame((string) $plan->id, $nowLinked->option_value, 'the still-legacy sibling must be repointed to the SAME plan');
+        $this->assertSame('80.00', $nowLinked->amount);
+
+        $this->assertSame($feePriceCountBefore, FeePrice::count(), 'no FeePrice row may be created or deleted');
+
+        // Idempotent rerun.
+        Artisan::call('finance:uat-master-data-repair', ['--year' => $this->year->name, '--apply' => true]);
+        $this->assertSame(1, MealPlan::where('name_ru', 'Второе блюдо')->count());
+        $this->assertSame($feePriceCountBefore, FeePrice::count());
+        $this->assertSame((string) $plan->id, FeePrice::findOrFail($secondBlyudoBefore->id)->option_value);
+        $this->assertSame((string) $plan->id, FeePrice::findOrFail($unlinkedSibling->id)->option_value);
     }
 
     // ----- 5. Historical InvoiceItem safety: an already-issued invoice's
@@ -290,6 +373,47 @@ class FoodPhase4BLegacyMealPlanMigrationTest extends FinanceOperationsTestCase
         foreach (self::ALL_SIX_NAMES as $name) {
             $this->assertStringContainsString($name, $html, "{$name} must be offered as a selectable meal plan");
         }
+    }
+
+    /**
+     * Closes the P2 coverage gap: proves Unified Collection's own store()
+     * submission path — not just its dropdown listing — resolves a newly
+     * migrated Food name's price from FeePrice, exactly like Quick
+     * Registration, through the same ServiceSelectionNormalizer →
+     * InvoiceIssuanceService → InvoiceCalculationService chain. No
+     * Unified Collection production code is touched by this test.
+     */
+    public function test_unified_collection_store_resolves_price_from_fee_price_not_meal_plan_price_for_a_newly_migrated_name(): void
+    {
+        $rows = $this->seedAllSixLegacyRows();
+        $this->migrate();
+        $plan = MealPlan::where('name_ru', 'Суп')->sole();
+        // Deliberately corrupt the non-authoritative display field so a
+        // resolved amount equal to it (rather than to FeePrice.amount)
+        // would be caught by the assertion below.
+        $plan->update(['price' => '999.99']);
+
+        $response = $this->actingAs($this->accountant)->post(
+            route('dashboard.students.unified-collection.store', $this->student),
+            [
+                'idempotency_token' => (string) Str::uuid(),
+                'academic_year_id' => $this->year->id,
+                'payment_method' => 'cash',
+                'cash_account_id' => $this->cash->id,
+                'new_services' => [[
+                    'fee_id' => $this->food->id, 'quantity' => 1, 'receive_now_amount' => $rows['Суп']->amount,
+                    'meal_plan_id' => $plan->id,
+                    'food_duration_mode' => 'day', 'food_date' => '2026-09-01',
+                ]],
+            ]
+        );
+
+        $collection = FinanceCollection::query()->sole();
+        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $invoice = $collection->linkedInvoices()->sole();
+        $item = $invoice->items->sole();
+        $this->assertSame($rows['Суп']->amount, $item->amount, 'Unified Collection must resolve price from FeePrice, never from the non-authoritative MealPlan.price');
+        $this->assertNotSame('999.99', $item->amount);
     }
 
     // ----- 9. The 3 already-migrated names keep working exactly as before

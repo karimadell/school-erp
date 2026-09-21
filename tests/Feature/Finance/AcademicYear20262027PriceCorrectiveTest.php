@@ -156,6 +156,186 @@ class AcademicYear20262027PriceCorrectiveTest extends TestCase
         $this->assertFalse(Fee::findOrFail(8)->is_active);
     }
 
+    // ===== A/B: AcademicYear whitespace-insensitive identity match =========
+
+    public function test_a_spaced_academic_year_name_is_still_recognized_as_2026_2027(): void
+    {
+        $this->year->update(['name' => '2026 / 2027']);
+
+        $result = app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, false);
+
+        $this->assertNotEmpty($result['changes']);
+    }
+
+    public function test_a_spaced_but_genuinely_different_year_is_still_rejected(): void
+    {
+        $this->otherYear->update(['name' => '2027 / 2028']);
+
+        $this->expectException(RuntimeException::class);
+        app(AcademicYear20262027PriceCorrectiveService::class)->run($this->otherYear->id, false);
+    }
+
+    // ===== C-M: Food payment_period NULL -> daily corrective ===============
+
+    /** Reshapes the 3 legacy Food rows to mirror the real verified UAT shape: NULL payment_period, option_value textual or numeric. */
+    private function reshapeLegacyFoodRows(bool $numericOptionValue): array
+    {
+        $rows = [];
+        foreach (['Суп', 'Второе блюдо', 'Напиток'] as $name) {
+            $price = FeePrice::where('fee_id', 11)->where('item', $name)->sole();
+            $optionValue = $numericOptionValue ? (string) MealPlan::where('name_ru', $name)->sole()->id : $name;
+            $price->update(['payment_period' => null, 'option_value' => $optionValue]);
+            $rows[$name] = $price->fresh();
+        }
+
+        return $rows;
+    }
+
+    public function test_dry_run_proposes_daily_and_target_amount_for_textual_option_value_legacy_rows_with_zero_writes(): void
+    {
+        $rows = $this->reshapeLegacyFoodRows(numericOptionValue: false);
+        $before = $this->databaseState();
+
+        $result = app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, false);
+
+        $this->assertSame($before, $this->databaseState(), 'dry-run must cause zero writes');
+        $report = collect($result['food_report'])->keyBy('name');
+        foreach (['Суп' => '50.00', 'Второе блюдо' => '100.00', 'Напиток' => '10.00'] as $name => $target) {
+            $entry = $report[$name];
+            $this->assertSame($rows[$name]->id, $entry['fee_price_id']);
+            $this->assertSame('NULL', $entry['payment_period_before']);
+            $this->assertSame('daily', $entry['payment_period_after']);
+            $this->assertSame($rows[$name]->amount, $entry['amount_before']);
+            $this->assertSame($target, $entry['amount_after']);
+        }
+    }
+
+    public function test_apply_sets_daily_and_target_amount_for_textual_option_value_legacy_rows(): void
+    {
+        $rows = $this->reshapeLegacyFoodRows(numericOptionValue: false);
+
+        app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+
+        foreach (['Суп' => '50.00', 'Второе блюдо' => '100.00', 'Напиток' => '10.00'] as $name => $target) {
+            $row = FeePrice::findOrFail($rows[$name]->id);
+            $this->assertSame('daily', $row->payment_period);
+            $this->assertSame($target, $row->amount);
+            $this->assertSame($name, $row->option_value, 'option_value must remain untouched — Phase 4B, not this corrective, owns it');
+        }
+    }
+
+    public function test_numeric_meal_plan_option_value_resolves_and_corrects_identically(): void
+    {
+        $rows = $this->reshapeLegacyFoodRows(numericOptionValue: true);
+
+        app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+
+        foreach (['Суп' => '50.00', 'Второе блюдо' => '100.00', 'Напиток' => '10.00'] as $name => $target) {
+            $row = FeePrice::findOrFail($rows[$name]->id);
+            $this->assertSame('daily', $row->payment_period);
+            $this->assertSame($target, $row->amount);
+            $this->assertTrue(is_numeric($row->option_value), 'option_value must remain numeric — untouched by this corrective');
+        }
+    }
+
+    public function test_already_daily_rows_are_reported_and_left_unchanged(): void
+    {
+        // Default fixture shape: all six already 'daily'.
+        $result = app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, false);
+
+        $periodChanges = collect($result['changes'])->filter(fn ($c) => str_starts_with($c['key'], 'food_payment_period.'));
+        $this->assertCount(0, $periodChanges, 'no payment_period change should be proposed when every row is already daily');
+    }
+
+    public function test_unexpected_non_daily_non_null_payment_period_aborts(): void
+    {
+        FeePrice::where('fee_id', 11)->where('item', 'Суп')->update(['payment_period' => 'weekly']);
+        $before = $this->databaseState();
+
+        try {
+            app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+            $this->fail('Expected a RuntimeException for the unexpected payment_period.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('unexpected payment_period', $e->getMessage());
+        }
+        $this->assertSame($before, $this->databaseState(), 'a conflicting payment_period must abort with zero writes');
+    }
+
+    public function test_duplicate_canonical_food_candidate_aborts(): void
+    {
+        $food = Fee::findOrFail(11);
+        $this->price($food, $this->year, ['amount' => '99.00', 'payment_period' => null, 'item' => 'Суп']);
+        $before = $this->databaseState();
+
+        try {
+            app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+            $this->fail('Expected a RuntimeException for the duplicate candidate.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('Duplicate Food tariff', $e->getMessage());
+        }
+        $this->assertSame($before, $this->databaseState(), 'an ambiguous duplicate must abort with zero writes');
+    }
+
+    public function test_missing_canonical_food_candidate_aborts(): void
+    {
+        FeePrice::where('fee_id', 11)->where('item', 'Напиток')->delete();
+        $before = $this->databaseState();
+
+        try {
+            app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+            $this->fail('Expected a RuntimeException for the missing candidate.');
+        } catch (RuntimeException $e) {
+            $this->assertStringContainsString('not found uniquely', $e->getMessage());
+        }
+        $this->assertSame($before, $this->databaseState(), 'a missing canonical item must abort with zero writes');
+    }
+
+    public function test_a_food_validation_failure_leaves_no_partial_food_writes_among_the_other_five(): void
+    {
+        $rows = $this->reshapeLegacyFoodRows(numericOptionValue: false);
+        // Суп is now valid (NULL, correctable); poison a different, otherwise-valid row.
+        FeePrice::where('fee_id', 11)->where('item', 'Второе блюдо')->update(['payment_period' => 'monthly']);
+        $before = $this->databaseState();
+
+        try {
+            app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+            $this->fail('Expected a RuntimeException.');
+        } catch (RuntimeException) {
+        }
+
+        $this->assertSame($before, $this->databaseState(), 'no Food row may be partially written when any one of the six fails validation');
+        $this->assertSame('NULL', FeePrice::findOrFail($rows['Суп']->id)->payment_period ?? 'NULL');
+    }
+
+    public function test_a_second_apply_after_correcting_null_payment_period_is_idempotent(): void
+    {
+        $this->reshapeLegacyFoodRows(numericOptionValue: false);
+        app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+
+        $state = $this->databaseState();
+        $second = app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+
+        $this->assertSame([], $second['changes']);
+        $this->assertSame($state, $this->databaseState());
+    }
+
+    public function test_unrelated_fee_price_rows_remain_unchanged_by_the_null_payment_period_correction(): void
+    {
+        $this->reshapeLegacyFoodRows(numericOptionValue: false);
+        // Genuinely out of this run's scope: a different academic year, and
+        // a non-canonical Food row that happens to also have a NULL
+        // payment_period — the correction must never touch either.
+        $otherYearFood = $this->price(Fee::findOrFail(11), $this->otherYear, ['amount' => '5.00', 'payment_period' => null, 'item' => 'Совсем другое блюдо']);
+        $strayFood = $this->price(Fee::findOrFail(11), $this->year, ['amount' => '9.00', 'payment_period' => 'daily', 'item' => 'Совсем другое блюдо']);
+        $otherYearBefore = $otherYearFood->only(['id', 'amount', 'payment_period', 'change_reason']);
+        $strayBefore = $strayFood->only(['id', 'amount', 'payment_period', 'change_reason']);
+
+        app(AcademicYear20262027PriceCorrectiveService::class)->run($this->year->id, true);
+
+        $this->assertSame($otherYearBefore, FeePrice::findOrFail($otherYearFood->id)->only(['id', 'amount', 'payment_period', 'change_reason']));
+        $this->assertSame($strayBefore, FeePrice::findOrFail($strayFood->id)->only(['id', 'amount', 'payment_period', 'change_reason']));
+    }
+
     private function seedAuthoritativeShape(): void
     {
         $registration = $this->fee(1, 'Регистрационный взнос', Fee::CATEGORY_REGISTRATION, 'once', true);

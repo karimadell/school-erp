@@ -50,7 +50,7 @@ class AcademicYear20262027PriceCorrectiveService
         DB::beginTransaction();
         try {
             $year = AcademicYear::query()->lockForUpdate()->find($yearId);
-            if (! $year || $year->name !== self::TARGET_YEAR_NAME) {
+            if (! $year || AcademicYear::normalizeName($year->name) !== AcademicYear::normalizeName(self::TARGET_YEAR_NAME)) {
                 throw new RuntimeException("AcademicYear id={$yearId} must exist and be named ".self::TARGET_YEAR_NAME.'.');
             }
 
@@ -135,27 +135,53 @@ class AcademicYear20262027PriceCorrectiveService
     {
         $fee = $this->oneOperationalFee(Fee::CATEGORY_FOOD);
         $plans = MealPlan::whereIn('name_ru', array_keys(self::FOOD))->get()->keyBy('id');
-        $rows = FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $year->id)->where('is_active', true)->get();
+        $rows = FeePrice::where('fee_id', $fee->id)->where('academic_year_id', $year->id)->where('is_active', true)->lockForUpdate()->get();
         $mapped = [];
         foreach ($rows as $row) {
-            if ($row->payment_period !== Fee::PERIOD_DAILY) {
-                throw new RuntimeException("Food FeePrice #{$row->id} is not daily.");
-            }
             $name = is_numeric($row->option_value)
                 ? $plans->get((int) $row->option_value)?->name_ru
                 : ($row->option_value ?: $row->item);
-            if (isset(self::FOOD[$name])) {
-                if (isset($mapped[$name])) {
-                    throw new RuntimeException("Duplicate Food tariff: {$name}.");
+            if (! isset(self::FOOD[$name])) {
+                // Not one of the six canonical Food items — the pre-existing,
+                // unrelated invariant still applies unchanged: any other
+                // active Food row for this Fee/year must already be daily.
+                if ($row->payment_period !== Fee::PERIOD_DAILY) {
+                    throw new RuntimeException("Food FeePrice #{$row->id} is not daily.");
                 }
-                $mapped[$name] = $row;
+
+                continue;
             }
+            // A canonical Food row's payment_period is only ever tolerated
+            // as exactly 'daily' (nothing to do) or NULL (a known UAT
+            // master-data gap this corrective is allowed to close). Any
+            // other value (e.g. 'weekly', 'monthly') is a genuine conflict
+            // this corrective must never silently paper over.
+            if (! in_array($row->payment_period, [Fee::PERIOD_DAILY, null], true)) {
+                throw new RuntimeException("Food FeePrice #{$row->id} has an unexpected payment_period '{$row->payment_period}' (expected 'daily' or null).");
+            }
+            if (isset($mapped[$name])) {
+                throw new RuntimeException("Duplicate Food tariff: {$name}.");
+            }
+            $mapped[$name] = $row;
         }
         if (array_diff_key(self::FOOD, $mapped) || count($mapped) !== 6) {
             throw new RuntimeException('The six expected Food tariffs were not found uniquely.');
         }
         foreach (self::FOOD as $name => $amount) {
-            $this->setPrice($mapped[$name], $amount, $summary, $apply, 'food.'.$name);
+            $price = $mapped[$name];
+            $amountBefore = (string) $price->amount;
+            $periodBefore = $price->payment_period;
+            $this->setPrice($price, $amount, $summary, $apply, 'food.'.$name);
+            $this->setFoodPaymentPeriod($price, $summary, $apply, 'food_payment_period.'.$name);
+            $summary['food_report'][] = [
+                'fee_price_id' => $price->id,
+                'name' => $name,
+                'option_value' => $price->option_value,
+                'payment_period_before' => $periodBefore ?? 'NULL',
+                'payment_period_after' => Fee::PERIOD_DAILY,
+                'amount_before' => $amountBefore,
+                'amount_after' => $amount,
+            ];
         }
         foreach (array_keys(self::FOOD) as $name) {
             $plan = MealPlan::where('name_ru', $name)->lockForUpdate()->sole();
@@ -266,6 +292,23 @@ class AcademicYear20262027PriceCorrectiveService
         }
         foreach ($expected as $k => $amount) {
             $this->setPrice($mapped[$k], $amount, $summary, $apply, $prefix.'.'.$k);
+        }
+    }
+
+    /**
+     * The only Food-specific mutation beyond amount: a NULL payment_period
+     * on one of the six canonical rows (a known UAT master-data gap) is
+     * closed to 'daily'. Non-canonical rows and any already-'daily' row
+     * are never touched — validated as such before this is ever called
+     * (see updateFood()). Never sets change_reason: unlike an amount
+     * correction, this is an identity-shape repair, not a price change.
+     */
+    private function setFoodPaymentPeriod(FeePrice $price, array &$summary, bool $apply, string $key): void
+    {
+        $before = $price->payment_period ?? 'NULL';
+        $this->change($summary, $key, $before, Fee::PERIOD_DAILY);
+        if ($apply && $price->payment_period !== Fee::PERIOD_DAILY) {
+            $price->update(['payment_period' => Fee::PERIOD_DAILY]);
         }
     }
 

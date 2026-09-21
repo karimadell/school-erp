@@ -86,6 +86,17 @@ class AcademicYear extends Model
     }
 
     /**
+     * Whitespace-insensitive identity match for a year's own name (e.g.
+     * "2026/2027" and "2026 / 2027" mean the same academic year). Shared by
+     * every tool that resolves/validates an AcademicYear by its display
+     * name, so they can never disagree about what a given name means.
+     */
+    public static function normalizeName(string $name): string
+    {
+        return preg_replace('/\s+/', '', $name);
+    }
+
+    /**
      * At most one AcademicYear may be active at a time (zero is allowed).
      * Activating this year must atomically deactivate every other active
      * year — locked and updated inside the same transaction as this row's

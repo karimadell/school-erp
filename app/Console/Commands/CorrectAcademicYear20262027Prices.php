@@ -26,6 +26,18 @@ class CorrectAcademicYear20262027Prices extends Command
             return self::FAILURE;
         }
         $this->table(['Key', 'Before', 'After'], array_map(fn ($c) => [$c['key'], $c['before'], $c['after']], $preview['changes']));
+
+        if (! empty($preview['food_report'])) {
+            $this->table(
+                ['FeePrice ID', 'Food item', 'option_value', 'payment_period before', 'payment_period after', 'amount before', 'amount after'],
+                array_map(fn ($r) => [
+                    $r['fee_price_id'], $r['name'], $r['option_value'],
+                    $r['payment_period_before'], $r['payment_period_after'],
+                    $r['amount_before'], $r['amount_after'],
+                ], $preview['food_report']),
+            );
+        }
+
         if (! $this->option('apply')) {
             $this->info('Dry-run: zero writes.');
 

@@ -183,14 +183,32 @@ class ChargeAndCollectService
      * FoodBillableDayCalculator::resolveFromDurationSelection() entry point
      * real issuance uses (never re-derived, never a second calculation), then
      * checks it against every ServiceCoverage this student already holds for
-     * this same Food Fee, drawn from any invoice that is not cancelled
-     * (a voided Food invoice's coverage never blocks a legitimate
-     * re-purchase for the same dates). An overlap fails safely — the same
-     * DuplicateOpenInvoiceException type the controller already knows how to
-     * render (a friendly Russian message plus a direct link to the
-     * conflicting invoice), never an HTTP 500, and never a partially
-     * persisted Invoice/Payment/ServiceCoverage (this runs before issuance,
-     * inside the same transaction).
+     * this same Food Fee AND this same MealPlan, drawn from any invoice that
+     * is not cancelled (a voided Food invoice's coverage never blocks a
+     * legitimate re-purchase for the same dates).
+     *
+     * Owner-approved Stolovaya P1 corrective: a student may legitimately buy
+     * several DIFFERENT meal plans on the same day (e.g. Обед + Напиток) —
+     * every Food MealPlan shares one Fee, so scoping this guard by fee_id
+     * alone treated any two different meals on the same date as the same
+     * purchase. The identity is corrected to fee + MealPlan, matched via the
+     * `option_value` ServiceCoverageService::recordWithBasisPrice() already
+     * stamps onto every Food coverage row from the resolved FeePrice's own
+     * option_value (the Phase 4B canonical MealPlan-id identity) — no new
+     * column, no migration, since this identity was already persisted and
+     * simply not read here. Only an EXACT match on the same MealPlan still
+     * blocks (Обед + Обед same date) — this is unchanged for the
+     * single-meal-plan-per-purchase shape every other Food entry point
+     * (Charge & Collect's own Add Service form, Quick Registration, Unified
+     * Collection) already has, since they only ever submit one meal_plan_id
+     * per call, so this correction is transparent to them.
+     *
+     * An overlap fails safely — the same DuplicateOpenInvoiceException type
+     * the controller already knows how to render (a friendly Russian message
+     * naming the conflicting meal plus a direct link to the conflicting
+     * invoice), never an HTTP 500, and never a partially persisted
+     * Invoice/Payment/ServiceCoverage (this runs before issuance, inside the
+     * same transaction).
      *
      * @param  array<string, mixed>  $data
      *
@@ -207,9 +225,17 @@ class ChargeAndCollectService
         $year = AcademicYear::findOrFail((int) $data['academic_year_id']);
         $resolution = $this->foodDays->resolveFromDurationSelection($year, $item);
 
+        // Always populated for a Food item — StoreChargeAndCollectRequest
+        // requires meal_plan_id for Food and stamps it here as option_value
+        // (the same string ServiceCoverage.option_value ends up holding),
+        // so this is a real equality match against already-persisted data,
+        // never a fuzzy/derived one.
+        $mealPlanOptionValue = (string) ($item['option_value'] ?? '');
+
         $overlap = ServiceCoverage::query()
             ->where('student_id', $student->id)
             ->where('fee_id', $feeId)
+            ->where('option_value', $mealPlanOptionValue)
             // whereDate() (not a plain where()) — coverage_start/coverage_end
             // are stored with a time component, so a raw string '<='/'>='
             // against a date-only value ("2026-09-01" vs "2026-09-01
@@ -227,10 +253,11 @@ class ChargeAndCollectService
 
         if ($overlap) {
             $existingInvoice = $overlap->invoiceItem->invoice;
+            $mealPlanName = MealPlan::query()->find($item['meal_plan_id'] ?? null)?->name_ru ?? 'Выбранное питание';
             throw new DuplicateOpenInvoiceException(
                 $existingInvoice->id,
                 (string) $existingInvoice->display_number,
-                "Питание на выбранный период уже оформлено для этого ученика (счёт {$existingInvoice->display_number}). Выберите другой период или примите оплату по существующему счёту.",
+                "«{$mealPlanName}» на выбранную дату уже оформлено для этого ученика (счёт {$existingInvoice->display_number}). Выберите другую дату/питание или примите оплату по существующему счёту.",
             );
         }
     }

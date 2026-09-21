@@ -472,6 +472,7 @@ Route::middleware(['auth', 'administrative'])
                 Route::get('/', 'index')->name('index');
                 Route::get('donation', 'donation')->name('donation');
                 Route::get('buffet', 'buffet')->name('buffet');
+                Route::get('stolovaya', 'stolovaya')->name('stolovaya');
                 Route::get('other', 'other')->name('other');
                 // Finance landing page corrective — student search/billing
                 // relocated here from the Финансы landing page; same
@@ -540,6 +541,13 @@ Route::middleware(['auth', 'administrative'])
         // one atomic action; permission-gated in FinanceOperationsController).
         Route::get('students/{student}/charge', [FinanceOperationsController::class, 'chargeCreate'])->name('students.charge.create');
         Route::post('students/{student}/charge', [FinanceOperationsController::class, 'chargeStore'])->name('students.charge.store');
+
+        // Столовая (Student, Phase 1) — permission-gated inside
+        // StolovayaController itself (manage invoices), the same gate as
+        // charge/collect above. A thin entry point over the same
+        // ChargeAndCollectService — never a second accounting engine.
+        Route::get('students/{student}/stolovaya', [\App\Http\Controllers\Dashboard\StolovayaController::class, 'create'])->name('students.stolovaya.create');
+        Route::post('students/{student}/stolovaya', [\App\Http\Controllers\Dashboard\StolovayaController::class, 'store'])->name('students.stolovaya.store');
         Route::get('invoices/{invoice}/payments/create', [FinanceOperationsController::class, 'createPayment'])->name('invoices.payments.create');
         Route::post('invoices/{invoice}/payments', [FinanceOperationsController::class, 'storePayment'])->name('invoices.payments.store');
         Route::get('payments/{invoicePayment}/receipt', [FinanceOperationsController::class, 'receipt'])->name('payments.receipt');

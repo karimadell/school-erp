@@ -56,4 +56,16 @@ class IncomeEntryController extends Controller
     {
         return redirect()->route('dashboard.finance.income.revenue.create');
     }
+
+    // Столовая (Student, Phase 1) — daily meal charges are Student Food
+    // accounting (Invoice/Payment/CashTransaction via ChargeAndCollectService),
+    // never RevenueEntry, so this does NOT redirect into the Revenue flow
+    // like buffet()/donation()/other() above. It reuses the exact same
+    // student search screen the "Оплата ученика"/"Услуга" cards already
+    // use — no new search UI — whose rows carry a "Столовая" action into
+    // StolovayaController::create() once a student is chosen.
+    public function stolovaya(): RedirectResponse
+    {
+        return redirect()->route('dashboard.finance.income.students');
+    }
 }

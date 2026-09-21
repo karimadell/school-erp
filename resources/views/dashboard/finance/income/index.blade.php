@@ -72,6 +72,23 @@
             </a>
         </div>
 
+        {{-- Столовая (Student, Phase 1) — daily meal charges are Student
+             Food accounting, gated the same as "Оплата ученика"/"Услуга"
+             above (manage invoices), not the view-invoices-only gate the
+             Buffet/Donation/Other cards use. --}}
+        @can('manage invoices')
+        <div class="col-md-6 col-xl-4">
+            <a href="{{ route('dashboard.finance.income.stolovaya') }}" class="text-decoration-none">
+                <div class="card border-0 shadow-sm h-100 income-type-card">
+                    <div class="card-body">
+                        <div class="fw-semibold fs-5 mb-1">{{ __('finance_workspace.income_type_stolovaya') }}</div>
+                        <div class="text-muted small">{{ __('finance_workspace.income_type_stolovaya_hint') }}</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        @endcan
+
         <div class="col-md-6 col-xl-4">
             <a href="{{ route('dashboard.finance.income.other') }}" class="text-decoration-none">
                 <div class="card border-0 shadow-sm h-100 income-type-card">

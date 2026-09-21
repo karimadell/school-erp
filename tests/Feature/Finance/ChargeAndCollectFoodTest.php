@@ -244,6 +244,51 @@ class ChargeAndCollectFoodTest extends FinanceOperationsTestCase
         $this->assertSame(2, Invoice::count());
     }
 
+    // ----- D-bis. Same-day, different MealPlans are independent purchases ----
+    // Stolovaya P1 corrective: guardAgainstOverlappingFoodCoverage() now
+    // scopes by fee + MealPlan (via the ServiceCoverage.option_value the
+    // pricing pipeline already stamps), not fee alone — so a student may
+    // buy several different meals the same day through this SAME existing
+    // Add Service Food entry point (chargeStore()), not just through the
+    // new Stolovaya screen. Genuine duplicates (same MealPlan, same day)
+    // must still be rejected — proven right after.
+
+    public function test_different_meal_plans_on_the_same_day_are_both_allowed(): void
+    {
+        $drink = MealPlan::create([
+            'name_ru' => 'Напиток', 'meal_type' => 'both', 'period' => 'daily',
+            'price' => '999.00', 'is_active' => true,
+        ]);
+        FeePrice::create([
+            'fee_id' => $this->food->id, 'academic_year_id' => $this->year->id,
+            'payment_period' => 'daily', 'option_type' => 'meal_plan', 'option_value' => (string) $drink->id,
+            'amount' => '10.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+        ]);
+
+        $this->charge()->assertSessionHasNoErrors(); // Полный рацион, 2026-09-01, 100.00
+
+        $second = $this->charge([
+            'meal_plan_id' => $drink->id,
+            'idempotency_key' => (string) Str::uuid(),
+        ]);
+        $second->assertSessionHasNoErrors();
+
+        $this->assertSame(2, Invoice::count());
+        $this->assertSame(2, ServiceCoverage::count());
+        $this->assertSame(['10.00', '100.00'], Invoice::query()->orderBy('total_amount')->pluck('total_amount')->all());
+    }
+
+    public function test_same_meal_plan_twice_on_the_same_day_is_still_rejected_and_names_the_meal(): void
+    {
+        $this->charge()->assertSessionHasNoErrors(); // Полный рацион
+
+        $response = $this->charge(['idempotency_key' => (string) Str::uuid()]);
+
+        $response->assertSessionHasErrors('fee_id');
+        $this->assertStringContainsString('Полный рацион', session('errors')->first('fee_id'));
+        $this->assertSame(1, Invoice::count());
+    }
+
     // ----- E. Overlapping range is rejected safely ---------------------------
 
     public function test_overlapping_food_range_is_rejected_without_partial_persistence(): void

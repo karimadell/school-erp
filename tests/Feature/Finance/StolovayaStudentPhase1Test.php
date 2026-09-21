@@ -231,16 +231,54 @@ class StolovayaStudentPhase1Test extends FinanceOperationsTestCase
         $this->assertSame('250.00', $this->money($this->cash->fresh()->balance));
     }
 
-    // 9. Existing Food overlap guard remains effective.
+    // 9. Existing Food overlap guard remains effective for a genuine
+    // duplicate (same student + same MealPlan + same date), and the
+    // rejection message names the specific meal — never implies an
+    // unrelated meal conflicted (Stolovaya P1 corrective).
     public function test_overlapping_same_day_purchase_is_rejected(): void
     {
-        $this->charge()->assertSessionHasNoErrors();
+        $this->charge()->assertSessionHasNoErrors(); // Комплексное питание
 
         $response = $this->charge(['idempotency_key' => (string) Str::uuid()]);
 
         $response->assertSessionHasErrors('fee_id');
         $response->assertSessionHas('existing_invoice_id');
+        $this->assertStringContainsString('Комплексное питание', session('errors')->first('fee_id'));
         $this->assertSame(1, Invoice::count());
+    }
+
+    // Stolovaya P1 corrective (owner-approved business rule): a student may
+    // buy several DIFFERENT meal plans the same day — the overlap guard is
+    // scoped by MealPlan (fee + option_value + date), not by fee alone.
+    public function test_different_meal_plans_on_the_same_day_are_both_allowed(): void
+    {
+        $this->charge()->assertSessionHasNoErrors(); // Комплексное питание, 250.00
+
+        $second = $this->charge([
+            'meal_plan_id' => $this->secondMealPlan->id,
+            'idempotency_key' => (string) Str::uuid(),
+        ]);
+
+        $second->assertSessionHasNoErrors();
+        $this->assertSame(2, Invoice::count());
+        $this->assertSame(2, ServiceCoverage::count());
+        $this->assertSame(['100.00', '250.00'], Invoice::query()->orderBy('total_amount')->pluck('total_amount')->all());
+    }
+
+    // Same MealPlan, a different date, is a legitimate separate purchase —
+    // unaffected by the P1 corrective (the date-range check is untouched).
+    public function test_same_meal_plan_on_a_different_date_is_allowed(): void
+    {
+        $this->charge()->assertSessionHasNoErrors(); // 2026-09-01
+
+        $second = $this->charge([
+            'food_date' => '2026-09-02',
+            'idempotency_key' => (string) Str::uuid(),
+        ]);
+
+        $second->assertSessionHasNoErrors();
+        $this->assertSame(2, Invoice::count());
+        $this->assertSame(2, ServiceCoverage::count());
     }
 
     // 10. Buffet behavior remains unchanged — this feature touches neither

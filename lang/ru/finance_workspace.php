@@ -38,6 +38,8 @@ return [
     'income_type_donation_hint' => 'Благотворительное поступление, не связанное с учеником.',
     'income_type_buffet' => 'Буфет',
     'income_type_buffet_hint' => 'Сдача выручки за день от школьного буфета.',
+    'income_type_stolovaya' => 'Столовая',
+    'income_type_stolovaya_hint' => 'Разовое питание ученика — начисление на конкретный день.',
     'income_type_other' => 'Прочий приход',
     'income_type_other_hint' => 'Любое иное поступление денежных средств.',
 
@@ -66,4 +68,21 @@ return [
     'add_service_activity_hint' => 'Экскурсии, мероприятия и поездки.',
     'add_service_other' => 'Прочие услуги',
     'add_service_other_hint' => 'Учебные материалы и другие услуги ученику.',
+
+    // Столовая (Student, Phase 1) — dedicated daily-meal screen.
+    'stolovaya_page_title' => 'Столовая',
+    'stolovaya_page_hint' => 'Разовое питание — начисление за конкретный день.',
+    'stolovaya_type_label' => 'Тип',
+    'stolovaya_type_student' => 'Ученик',
+    'stolovaya_date_label' => 'Дата',
+    'stolovaya_meal_label' => 'Питание',
+    'stolovaya_meal_placeholder' => 'Выберите питание',
+    'stolovaya_quantity_label' => 'Количество',
+    'stolovaya_unit_price_label' => 'Цена',
+    'stolovaya_total_label' => 'Итого',
+    'stolovaya_settlement_label' => 'Оплата',
+    'stolovaya_settlement_paid_now' => 'Оплатить сейчас',
+    'stolovaya_settlement_unpaid' => 'Не оплачивать (в долг)',
+    'stolovaya_no_food_fee' => 'Услуга «Питание» не настроена — обратитесь к администратору.',
+    'stolovaya_row_action' => 'Столовая',
 ];

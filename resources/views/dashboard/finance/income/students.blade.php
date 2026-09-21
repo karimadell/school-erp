@@ -111,6 +111,7 @@
                                 <div class="d-flex flex-wrap gap-1">
                                     @can('manage invoices')
                                         <a class="btn btn-sm btn-primary" href="{{ route('dashboard.students.add-service', $student) }}">{{ __('finance_uat.add_service') }}</a>
+                                        <a class="btn btn-sm btn-outline-success" href="{{ route('dashboard.students.stolovaya.create', $student) }}">{{ __('finance_workspace.stolovaya_row_action') }}</a>
                                     @endcan
                                     <a class="btn btn-sm btn-outline-primary" href="{{ route('dashboard.students.finance', $student) }}">{{ __('finance_uat.student_account') }}</a>
                                     @can('manage invoices')

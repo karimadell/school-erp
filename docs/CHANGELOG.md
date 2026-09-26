@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-09-22 — Finance: Student Stolovaya daily-meal window (Phase 1)
+
+**PR:** [#85 — feat(finance): add Student Stolovaya daily-meal window (Phase 1)](https://github.com/karimadell/school-erp/pull/85)
+**Merge commit:** `eee4d7875a3e3f07d7fa2e3221bf87240539d9ea`
+**Feature commit:** `de5cabefffec2f9660163a0efca6569dc390e7fe`
+**Corrective commit (same PR, owner-approved P1):** `6fd0cd29e4d88be3b3942250aa0b9e6dd9349683`
+
+- Adds a dedicated **Столовая** card on the Приход (income) landing page, alongside the existing **Буфет** card, opening a thin per-student daily-meal screen: student search (reuses the existing student-search screen — no new search UI), date (defaults to today), a canonical Food `MealPlan` picker limited to plans that actually have a daily `FeePrice` (`MealPlan::sellableFood()`, extracted so Charge & Collect and Stolovaya share one query instead of duplicating it), quantity fixed at 1, and paid-now/debt settlement.
+- **No new pricing or accounting engine.** `StolovayaController` never resolves a price, issues an invoice/coverage, or posts a payment itself — `StoreStolovayaChargeRequest` (a narrow subclass of the existing Charge & Collect request) server-resolves `fee_id`, forces `food_duration_mode = day` and `quantity = 1`, and the request is handed to the same `ChargeAndCollectService::chargeAndCollect()` that `FinanceOperationsController::chargeStore()` already uses. `FeePrice` remains billing-authoritative; existing idempotency protection is reused unchanged; no `RevenueEntry`/`RevenueCategory` is ever touched by this flow (Столовая income is Student Food accounting — Invoice/Payment/CashTransaction — not a Revenue-flow entry, unlike the existing Буфет/donation/other income cards).
+- Quantity is deliberately fixed at 1 for this phase: Food billing has no quantity concept independent of billable-day-count, so no client-facing multiplier was invented in the controller.
+- Employee/staff (Сотрудник) Stolovaya, salary-deduction settlement, and any `RevenueCategory` change are explicitly **out of scope** for this phase.
+- New Russian-only translation keys added under `lang/ru/finance_workspace.php` (`stolovaya_*`, `income_type_stolovaya*`) — no English/Arabic keys yet, consistent with the project's RU-first localization phasing.
+- Gated by the same `manage invoices` permission `chargeCreate()`/`chargeStore()` already require — Столовая is not a separately-permissioned surface.
+- **Owner-approved P1 corrective (same PR, commit `6fd0cd2`):** review of this PR found the pre-existing Food overlap guard (`guardAgainstOverlappingFoodCoverage()`) scoped duplicate coverage by student+fee+date only. Since every Food `MealPlan` shares one Fee, that treated two different, legitimate same-day meals (e.g. Обед + Напиток) as a conflicting duplicate. The guard is now scoped by student+fee+**MealPlan**(`option_value`)+date, reading the MealPlan identity `ServiceCoverageService` already stamps onto every Food coverage row from the resolved `FeePrice` (the Phase 4B canonical identity) — no migration needed. The same MealPlan twice on the same date is still rejected, and the rejection message now names the specific conflicting meal. This guard is shared by every Food entry point (Charge & Collect, Quick Registration, Unified Collection, and the new Stolovaya screen); non-Food overlap/duplicate-invoice behavior is untouched.
+- Tests (independently re-run on `recovery/full-work-2026-07-31` HEAD during documentation):
+  - `StolovayaStudentPhase1Test` — 16 passed (66 assertions): card visibility, page access, meal-plan filtering, FeePrice-not-MealPlan.price pricing, single-day date handling, paid-now Invoice/Payment/CashTransaction correctness, unpaid/debt correctness, idempotent resubmission, same-day-different-meal-plans allowed, same-meal-plan-different-date allowed, overlap-guard rejection (same meal, same date), Buffet unaffected, `school_food` category never referenced, unauthorized-role exclusion from both the create form and the submit endpoint.
+  - Food/Buffet regression (`FinanceFoodBuffetCategorySeparationTest`, `ChargeAndCollectFoodTest`, `ChargeAndCollectTest`, `FoodDailyBillingTest`) — 81 passed (384 assertions), no regressions.
+  - Full Finance suite — 1888 passed, 14 skipped, 2 known pre-existing unrelated baseline failures (`EnumMigrationPortabilityTest`, `TuitionPaymentPeriodAmbiguityGuardTest`), untouched by this change.
+- **Known non-blocking follow-up (not done by this change):** manual browser UAT of the Столовая card → student flow has not yet been performed.
+
 ## 2026-09-21 — Finance: 2026/2027 Food price & payment_period correction (UAT verified, closed)
 
 **Food Phase 4B merge (identity migration):** `baf859e75d38549e5edba874a6550fdffc65af6c`

@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-09-26 — Finance: Revenue route hardening (PR #87) — investigated, defensive fix shipped, UAT verified — CLOSED
+
+**PR:** [#87 — fix(finance): constrain revenue entry route binding](https://github.com/karimadell/school-erp/pull/87)
+**Merge commit (standard merge):** `ecf0485e2d8a364dd9b7a2a4efe01c9cbd10e0f8`
+**Feature commit:** `dce501d35f38964abd37fd1e3267715d771096d4`
+
+- Root-caused the `/dashboard/finance/income/revenue/index` HTTP 500 recorded as a "known separate issue" in the Employee Stolovaya Phase 2 entry below and previously tracked as a P1 in `docs/06_Roadmap.md`. The real UAT error was `SQLSTATE[22P02]: invalid input syntax for type bigint: "index"` (PostgreSQL). Finding: the canonical Revenue index route is bare `GET /dashboard/finance/income/revenue` — the route *name* `...revenue.index` is a naming convention and never implies a literal `/index` URI segment. The `/revenue/index` URL that produced the 500 was a manually mistyped raw URL; no application code anywhere generates it. **The canonical Revenue index was never broken.**
+- Applied defensive route hardening regardless: added `->whereNumber('revenueEntry')` to the `{revenueEntry}`-bound route group in `routes/web.php` (covers `show`/`attachment`/`receipt`/`post`/`reverse`/`destroy`), so the router itself rejects any malformed non-numeric identifier on these routes (clean 404) before Eloquent's implicit route-model binding ever issues a `WHERE id = ?` query — eliminating this entire failure class regardless of database engine, not just the one mistyped URL.
+- Verified the fix is meaningful, not merely asserted: the new regression suite (`RevenueEntryRouteConstraintTest`, 6 tests) reproduces the exact original `SQLSTATE[22P02]` error on a real PostgreSQL database when the fix is removed, and passes cleanly with it restored. On SQLite (this project's default test engine) both fixed and unfixed code return an identical external 404 — an inherent SQLite loose-typing limitation, not a test defect — which is why the PostgreSQL reproduction, not the SQLite run, is the decisive proof.
+- Independently reviewed before merge: exactly 2 changed files (`routes/web.php`, the new test file), no business logic/schema/migration/seeder changes, P0/P1/P2/P3 findings = 0/0/0/0.
+- Unrelated to PR #86 / Employee Cash Stolovaya (Phase 2, closed — see entry below): confirmed via diff inspection and route-mechanics tracing; no shared code path, no shared file.
+
+**Browser UAT: PASSED.** Verified live on deployed merge commit `ecf0485e2d8a364dd9b7a2a4efe01c9cbd10e0f8`:
+- Canonical `GET /dashboard/finance/income/revenue` → 200, Revenue list displays correctly. This route was already working before PR #87 and is unchanged by it — PR #87 does not "fix" the canonical index.
+- The previously-mistyped `/dashboard/finance/income/revenue/index` → now 404, in place of the PostgreSQL `QueryException`/500 recorded below.
+
+**REVENUE ROUTE HARDENING (PR #87) — UAT VERIFIED — CLOSED.** The `/dashboard/finance/income/revenue/index` item previously tracked as a P1 in `docs/06_Roadmap.md` was never a real application defect and is corrected there; the underlying malformed-URL failure mode is now eliminated at the router level.
+
 ## 2026-09-26 — Finance: Employee cash Stolovaya (Phase 2) — Browser UAT PASSED, CLOSED
 
 **PR:** [#86 — feat(finance): add Employee cash Stolovaya (Phase 2)](https://github.com/karimadell/school-erp/pull/86)
@@ -41,7 +59,7 @@ Final verified UAT delta: 3 `StaffFoodPurchase` records (IDs 1–3), 3 Employee 
 
 **EMPLOYEE CASH STOLOVAYA PHASE 2 — BROWSER UAT PASSED — CLOSED.**
 
-**Known separate issue (not caused by, and not blocking, this closure):** `/dashboard/finance/income/revenue/index` currently returns an HTTP 500 on UAT. Root cause has **not** been established (no server-log access was available during this investigation) — code-level tracing confirms the executing controller action and view are unmodified by PR #86, but this is not proof of an unrelated cause either. It did **not** block any part of the Employee Stolovaya create/preview/post/receipt workflow. Tracked as a separate, open investigation item — see `docs/06_Roadmap.md`.
+**Known separate issue (not caused by, and not blocking, this closure):** `/dashboard/finance/income/revenue/index` currently returns an HTTP 500 on UAT. Root cause has **not** been established (no server-log access was available during this investigation) — code-level tracing confirms the executing controller action and view are unmodified by PR #86, but this is not proof of an unrelated cause either. It did **not** block any part of the Employee Stolovaya create/preview/post/receipt workflow. Tracked as a separate, open investigation item — see `docs/06_Roadmap.md`. *(Resolved: see the 2026-09-26 "Revenue route hardening (PR #87)" entry above — this was a manually mistyped URL, not an application defect; the canonical Revenue index was never broken.)*
 
 **Non-blocking follow-ups (do not reopen Phase 2 for these):**
 - `RevenueService::createTrusted()` public-method visibility — protected today only by convention and one architectural test, not a runtime guard. Recorded as technical debt, not redesigned.

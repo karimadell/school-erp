@@ -23,8 +23,13 @@ use Database\Seeders\RevenueCategorySeeder;
 class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
 {
     // 1, 2, 3. Both new categories are seeded exactly once, idempotently.
-    // A. school_food seeded INACTIVE (reserved for the not-yet-built
-    // Staff Food feature). B. buffet seeded ACTIVE (its shortcut is live).
+    // A. school_food seeded ACTIVE — Stolovaya Phase 2 (Employee cash
+    // purchases) shipped, so the "reserved until that feature exists"
+    // condition from the pre-go-live seeder comment is now satisfied
+    // (previously seeded INACTIVE; see the Phase 2 activation migration
+    // 2026_09_26_120100_activate_school_food_revenue_category for how an
+    // already-provisioned/UAT database gets flipped). B. buffet seeded
+    // ACTIVE (its shortcut has been live since before this).
     public function test_school_food_and_buffet_categories_are_seeded_idempotently(): void
     {
         (new RevenueCategorySeeder)->run();
@@ -37,7 +42,7 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertCount(1, $buffet);
         $this->assertSame('Школьное питание', $schoolFood->first()->name_ru);
         $this->assertSame('Буфет', $buffet->first()->name_ru);
-        $this->assertFalse($schoolFood->first()->is_active);
+        $this->assertTrue($schoolFood->first()->is_active);
         $this->assertTrue($buffet->first()->is_active);
     }
 
@@ -64,16 +69,24 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertSame('Прочие доходы', RevenueCategory::where('code', RevenueCategory::CODE_OTHER)->value('name_ru'));
     }
 
-    // D. The generic (unlocked) revenue form must not offer the inactive
-    // school_food category — it never appears among "active" choices.
-    public function test_generic_revenue_form_does_not_offer_inactive_school_food(): void
+    // D (Stolovaya Phase 2 update). school_food is now active, so — same
+    // as Buffet already does — it DOES appear among the generic
+    // (unlocked) revenue form's active-category choices. This is the
+    // intended, accepted consequence of activation (see the Phase 2
+    // discovery/approval record), not a regression: nothing in the owner
+    // decision asked for it to stay hidden from the generic form once the
+    // feature it was reserved for actually exists. The dedicated Employee
+    // Stolovaya workflow (EmployeeStolovayaController et al.) is a
+    // separate, additional entry point — it does not replace or lock this
+    // generic form the way Buffet's own shortcut does.
+    public function test_generic_revenue_form_offers_active_school_food_category(): void
     {
         (new RevenueCategorySeeder)->run();
 
         $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.revenue.create'));
 
         $response->assertOk();
-        $response->assertDontSee('Школьное питание');
+        $response->assertSee('Школьное питание');
     }
 
     // 6. The Buffet shortcut resolves to, and locks, only the buffet category.
@@ -150,8 +163,11 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertNotSame($cafeteria->id, $entry->revenue_category_id);
     }
 
-    // G. A crafted Buffet POST carrying the (inactive) school_food
-    // category id also still persists Buffet, never school_food.
+    // G. A crafted Buffet POST carrying the school_food category id also
+    // still persists Buffet, never school_food — unaffected by whether
+    // school_food is active or not (Stolovaya Phase 2 activated it; the
+    // server-side category lock this test proves was never conditioned
+    // on that in the first place).
     public function test_crafted_buffet_post_with_school_food_id_still_persists_buffet(): void
     {
         (new RevenueCategorySeeder)->run();

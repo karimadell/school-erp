@@ -85,4 +85,18 @@ return [
     'stolovaya_settlement_unpaid' => 'Не оплачивать (в долг)',
     'stolovaya_no_food_fee' => 'Услуга «Питание» не настроена — обратитесь к администратору.',
     'stolovaya_row_action' => 'Столовая',
+
+    // Столовая (Employee, Phase 2) — dedicated employee cash-purchase
+    // screen, separate from the Student one above.
+    'stolovaya_employee_card_label' => 'Столовая (сотрудник)',
+    'stolovaya_employee_card_hint' => 'Разовое питание сотрудника — оплата наличными.',
+    'stolovaya_employee_page_title' => 'Столовая — сотрудник',
+    'stolovaya_employee_type_label' => 'Сотрудник',
+    'stolovaya_employee_placeholder' => 'Выберите сотрудника',
+    'stolovaya_employee_cash_only_hint' => 'В этой фазе питание сотрудника оформляется только наличными.',
+    'stolovaya_employee_submit' => 'Оформить и принять оплату',
+    'stolovaya_employee_no_employees' => 'Нет доступных сотрудников с активной ролью.',
+    'stolovaya_employee_receipt_title' => 'Питание сотрудника оформлено',
+    'stolovaya_employee_receipt_employee' => 'Сотрудник',
+    'stolovaya_employee_receipt_revenue_ref' => 'Номер записи о доходе',
 ];

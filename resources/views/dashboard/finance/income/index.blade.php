@@ -89,6 +89,23 @@
         </div>
         @endcan
 
+        {{-- Столовая (Employee, Phase 2) — a separate card/route from the
+             Student one above, never a branch inside it. Gated by the
+             dedicated 'manage employee stolovaya' permission, not
+             'manage invoices'. --}}
+        @can('manage employee stolovaya')
+        <div class="col-md-6 col-xl-4">
+            <a href="{{ route('dashboard.employee-stolovaya.create') }}" class="text-decoration-none">
+                <div class="card border-0 shadow-sm h-100 income-type-card">
+                    <div class="card-body">
+                        <div class="fw-semibold fs-5 mb-1">{{ __('finance_workspace.stolovaya_employee_card_label') }}</div>
+                        <div class="text-muted small">{{ __('finance_workspace.stolovaya_employee_card_hint') }}</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        @endcan
+
         <div class="col-md-6 col-xl-4">
             <a href="{{ route('dashboard.finance.income.other') }}" class="text-decoration-none">
                 <div class="card border-0 shadow-sm h-100 income-type-card">

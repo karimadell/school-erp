@@ -17,14 +17,19 @@ class RevenueCategorySeeder extends Seeder
             // Owner-approved Finance category separation (pre-go-live) —
             // legacy CODE_CAFETERIA above is left completely untouched;
             // these are two new, distinct categories, never a rename or
-            // reclassification of it. school_food is seeded INACTIVE —
-            // reserved for the not-yet-built Staff Food feature, and must
-            // not be operator-selectable through the generic RevenueEntry
-            // workflow until that feature exists (same "reserve the
-            // identity, don't expose it yet" pattern already used by
-            // EnrollmentModeSeeder for family/external/no_enrollment).
-            // Buffet's own shortcut is live now, so it seeds active.
-            ['code' => RevenueCategory::CODE_SCHOOL_FOOD, 'name_ru' => 'Школьное питание', 'is_active' => false],
+            // reclassification of it. school_food was originally seeded
+            // INACTIVE — reserved for the not-yet-built Staff Food
+            // feature (same "reserve the identity, don't expose it yet"
+            // pattern already used by EnrollmentModeSeeder for
+            // family/external/no_enrollment). Stolovaya Phase 2 (Employee
+            // cash purchases) now exists, so that reservation condition is
+            // satisfied and it seeds ACTIVE from here on. An
+            // already-provisioned database (this seeder already ran once
+            // with is_active=false, and firstOrCreate() never updates an
+            // existing row) is activated separately by
+            // 2026_09_26_120100_activate_school_food_revenue_category.
+            // Buffet's own shortcut has been live since before this.
+            ['code' => RevenueCategory::CODE_SCHOOL_FOOD, 'name_ru' => 'Школьное питание', 'is_active' => true],
             ['code' => RevenueCategory::CODE_BUFFET, 'name_ru' => 'Буфет', 'is_active' => true],
         ] as $category) {
             RevenueCategory::firstOrCreate(

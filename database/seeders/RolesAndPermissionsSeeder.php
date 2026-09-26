@@ -121,6 +121,20 @@ class RolesAndPermissionsSeeder extends Seeder
             // granted explicitly, only to the roles that actually need
             // it.
             'register students for year',
+            // Stolovaya Phase 2 (Employee cash purchases) — deliberately
+            // NOT 'manage revenues'/'post revenues'. Those two remain
+            // generic RevenueEntry create/post authority (Buffet,
+            // Donation, Other income, revenue-category administration);
+            // granting them to cashier just to unlock this one narrow
+            // workflow would widen cashier into the entire generic
+            // Revenue surface, which the owner explicitly rejected. This
+            // permission gates ONLY EmployeeStolovayaController/
+            // EmployeeFoodPurchaseService, which internally calls
+            // RevenueService::createTrusted() — a trusted entry point
+            // that deliberately skips the generic check because THIS
+            // permission is the one already checked at this narrower
+            // boundary (see RevenueService::createTrusted() docblock).
+            'manage employee stolovaya',
 
             // Leadership oversight
             'view audit logs',
@@ -205,6 +219,11 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage revenues',
             'post revenues',
             'reverse revenues',
+            // Stolovaya Phase 2 — the accountant is also an operational
+            // actor for this narrow cash-sale workflow, same as they
+            // already are for Buffet/Donation/Other via 'manage
+            // revenues'/'post revenues' above.
+            'manage employee stolovaya',
             'manage student service subscriptions',
             'void invoices',
             'refund payments',
@@ -281,6 +300,13 @@ class RolesAndPermissionsSeeder extends Seeder
             'view cash sessions',
             'open cash sessions',
             'close cash sessions',
+            // Stolovaya Phase 2 (Employee cash purchases) — the whole
+            // point of this narrow, dedicated permission (as opposed to
+            // 'manage revenues'/'post revenues') is that a cashier can
+            // run this one specific front-desk workflow without gaining
+            // the generic Revenue create/post/administer surface those
+            // two permissions would otherwise open up.
+            'manage employee stolovaya',
         ]);
 
         // 5. Teacher — Teacher Portal only. No admin-panel permissions of

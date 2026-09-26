@@ -548,6 +548,20 @@ Route::middleware(['auth', 'administrative'])
         // ChargeAndCollectService — never a second accounting engine.
         Route::get('students/{student}/stolovaya', [\App\Http\Controllers\Dashboard\StolovayaController::class, 'create'])->name('students.stolovaya.create');
         Route::post('students/{student}/stolovaya', [\App\Http\Controllers\Dashboard\StolovayaController::class, 'store'])->name('students.stolovaya.store');
+
+        // Столовая (Employee, Phase 2) — a separate, sibling controller to
+        // the Student Stolovaya block above (never a shared/branching
+        // controller — see EmployeeStolovayaController's own docblock).
+        // Permission-gated inside the controller itself (manage employee
+        // stolovaya), deliberately NOT 'manage invoices' (Student) or
+        // 'manage revenues'/'post revenues' (generic Revenue/Buffet).
+        Route::prefix('employee-stolovaya')->name('employee-stolovaya.')->controller(\App\Http\Controllers\Dashboard\EmployeeStolovayaController::class)->group(function () {
+            Route::get('create', 'create')->name('create');
+            Route::post('/', 'store')->name('store');
+            Route::get('price', 'price')->name('price');
+            Route::get('{staffFoodPurchase}', 'show')->name('show');
+        });
+
         Route::get('invoices/{invoice}/payments/create', [FinanceOperationsController::class, 'createPayment'])->name('invoices.payments.create');
         Route::post('invoices/{invoice}/payments', [FinanceOperationsController::class, 'storePayment'])->name('invoices.payments.store');
         Route::get('payments/{invoicePayment}/receipt', [FinanceOperationsController::class, 'receipt'])->name('payments.receipt');

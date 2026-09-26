@@ -30,6 +30,16 @@ use Illuminate\Validation\ValidationException;
  * cash_transactions' own unique constraints (revenue_entry_id,
  * reversed_revenue_entry_id — see the migration that added them) as the
  * database-level backstop against a concurrent duplicate.
+ *
+ * Authorization: create()/post()/reverse()/deleteDraft() are the generic,
+ * fully-gated entry points ('manage revenues'/'post revenues'/'reverse
+ * revenues') — the only ones RevenueEntryController (and any other
+ * generic caller) may ever use. createTrusted() is a separate, narrowly-
+ * named exception for an orchestrating domain service that has already
+ * authorized its own specific workflow at its own boundary — see its own
+ * docblock. It shares every accounting invariant with create() (same
+ * persist()/postToLedger() code), it just skips the generic ability
+ * check.
  */
 class RevenueService
 {
@@ -51,6 +61,44 @@ class RevenueService
             abort_unless($actor->can('post revenues'), 403);
         }
 
+        return $this->persist($data, $status, $actor);
+    }
+
+    /**
+     * Trusted internal entry point for an orchestrating domain service
+     * that has ALREADY authorized this specific workflow at its own,
+     * narrower boundary — e.g. EmployeeFoodPurchaseService checking
+     * 'manage employee stolovaya' before ever reaching here (Stolovaya
+     * Phase 2 — Employee cash purchases). Deliberately skips the generic
+     * 'manage revenues'/'post revenues' check every other caller of this
+     * service must pass, exactly mirroring how ChargeAndCollectService/
+     * InvoiceIssuanceService/ServiceCoverageService already work for
+     * Student Food — none of them re-check a generic ability either, they
+     * trust the controller-level gate that authorized the specific
+     * workflow. RevenueEntryController and every other generic caller
+     * still exclusively use create()/post() above, completely unchanged —
+     * this method does not weaken, bypass, or replace their checks in any
+     * way, it is an additional, narrowly-named entry point.
+     *
+     * Always creates AND immediately posts in one call — Employee
+     * Stolovaya has no draft workflow, it is a point-of-sale cash sale —
+     * sharing the exact same validation/transaction/ledger-posting code
+     * (persist()/postToLedger()) create() uses, never a second posting
+     * implementation. $data must not include 'status'; it is always
+     * treated as STATUS_POSTED.
+     *
+     * MUST NEVER be called from a controller directly, or from any code
+     * path reachable by an operator who has not already been checked
+     * against a workflow-specific permission at the orchestrating
+     * service's own boundary.
+     */
+    public function createTrusted(array $data, User $actor): RevenueEntry
+    {
+        return $this->persist($data, RevenueEntry::STATUS_POSTED, $actor);
+    }
+
+    private function persist(array $data, string $status, User $actor): RevenueEntry
+    {
         $this->assertCoreFieldsPresent($data);
 
         if (empty($data['created_by'])) {

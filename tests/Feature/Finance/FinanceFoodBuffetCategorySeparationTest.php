@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\RevenueService;
 use Database\Seeders\RevenueCategorySeeder;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Pre-go-live Finance category separation (owner-approved): School Food
@@ -23,8 +24,13 @@ use Database\Seeders\RevenueCategorySeeder;
 class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
 {
     // 1, 2, 3. Both new categories are seeded exactly once, idempotently.
-    // A. school_food seeded INACTIVE (reserved for the not-yet-built
-    // Staff Food feature). B. buffet seeded ACTIVE (its shortcut is live).
+    // A. school_food seeded ACTIVE — Stolovaya Phase 2 (Employee cash
+    // purchases) shipped, so the "reserved until that feature exists"
+    // condition from the pre-go-live seeder comment is now satisfied
+    // (previously seeded INACTIVE; see the Phase 2 activation migration
+    // 2026_09_26_120100_activate_school_food_revenue_category for how an
+    // already-provisioned/UAT database gets flipped). B. buffet seeded
+    // ACTIVE (its shortcut has been live since before this).
     public function test_school_food_and_buffet_categories_are_seeded_idempotently(): void
     {
         (new RevenueCategorySeeder)->run();
@@ -37,7 +43,7 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertCount(1, $buffet);
         $this->assertSame('Школьное питание', $schoolFood->first()->name_ru);
         $this->assertSame('Буфет', $buffet->first()->name_ru);
-        $this->assertFalse($schoolFood->first()->is_active);
+        $this->assertTrue($schoolFood->first()->is_active);
         $this->assertTrue($buffet->first()->is_active);
     }
 
@@ -64,9 +70,19 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertSame('Прочие доходы', RevenueCategory::where('code', RevenueCategory::CODE_OTHER)->value('name_ru'));
     }
 
-    // D. The generic (unlocked) revenue form must not offer the inactive
-    // school_food category — it never appears among "active" choices.
-    public function test_generic_revenue_form_does_not_offer_inactive_school_food(): void
+    // D (Stolovaya Phase 2 corrective — supersedes the earlier "offers
+    // active school_food category" version of this test). Owner decision:
+    // school_food is a CONTROLLED revenue category — even though it is
+    // now active, it must NEVER appear in the generic (unlocked) "Прочий
+    // приход" form's category choices. Every NEW operational school_food
+    // RevenueEntry must originate through the dedicated Employee
+    // Stolovaya workflow (StaffFoodPurchase -> RevenueService::
+    // createTrusted()), never through this free-choice selector. Every
+    // other active category (donation, fine, other, and — per its own
+    // separate locked shortcut — buffet) remains offered exactly as
+    // before; only school_food's stable code is excluded (see
+    // RevenueEntryController::formOptions()).
+    public function test_generic_revenue_form_never_offers_school_food_category(): void
     {
         (new RevenueCategorySeeder)->run();
 
@@ -74,6 +90,38 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
 
         $response->assertOk();
         $response->assertDontSee('Школьное питание');
+        // Every other active category remains offered.
+        $response->assertSee('Пожертвования');
+        $response->assertSee('Штрафы');
+        $response->assertSee('Прочие доходы');
+    }
+
+    // Server-side enforcement (the UI exclusion above is not sufficient on
+    // its own): a crafted POST to the generic RevenueEntry store endpoint
+    // carrying school_food's id — with NO locked "type" discriminator, so
+    // applyLockedCategory() never touches it — must be rejected before
+    // RevenueService::create() is ever called, creating zero RevenueEntry
+    // and zero CashTransaction. Never silently remapped to another
+    // category — a real, visible validation error.
+    public function test_crafted_generic_revenue_post_with_school_food_category_is_rejected(): void
+    {
+        (new RevenueCategorySeeder)->run();
+        $schoolFood = RevenueCategory::where('code', RevenueCategory::CODE_SCHOOL_FOOD)->sole();
+        $entriesBefore = RevenueEntry::count();
+        $transactionsBefore = CashTransaction::count();
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.finance.income.revenue.store'), [
+            'revenue_category_id' => $schoolFood->id,
+            'amount' => '150.00',
+            'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id,
+            'payment_method' => 'cash',
+            'status' => RevenueEntry::STATUS_POSTED,
+        ]);
+
+        $response->assertSessionHasErrors('revenue_category_id');
+        $this->assertSame($entriesBefore, RevenueEntry::count(), 'No RevenueEntry was created.');
+        $this->assertSame($transactionsBefore, CashTransaction::count(), 'No CashTransaction was created.');
     }
 
     // 6. The Buffet shortcut resolves to, and locks, only the buffet category.
@@ -150,8 +198,11 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->assertNotSame($cafeteria->id, $entry->revenue_category_id);
     }
 
-    // G. A crafted Buffet POST carrying the (inactive) school_food
-    // category id also still persists Buffet, never school_food.
+    // G. A crafted Buffet POST carrying the school_food category id also
+    // still persists Buffet, never school_food — unaffected by whether
+    // school_food is active or not (Stolovaya Phase 2 activated it; the
+    // server-side category lock this test proves was never conditioned
+    // on that in the first place).
     public function test_crafted_buffet_post_with_school_food_id_still_persists_buffet(): void
     {
         (new RevenueCategorySeeder)->run();
@@ -300,5 +351,54 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
         $this->actingAs($reception)
             ->get(route('dashboard.finance.income.revenue.create', ['type' => 'buffet']))
             ->assertForbidden();
+    }
+
+    // Stolovaya Phase 2 corrective — high-value coverage the independent
+    // review found missing: the activation migration's own up() behavior,
+    // exercised directly (RefreshDatabase's normal fresh-migrate flow
+    // never lets "a row already existed, inactive, before this migration
+    // was ever written" occur naturally, since the migration is always
+    // present from the start of a fresh test database).
+
+    // A1. Existing inactive school_food row: activation flips it, no
+    // duplicate, buffet/cafeteria untouched.
+    public function test_activation_migration_flips_a_preexisting_inactive_school_food_row(): void
+    {
+        $buffet = DB::table('revenue_categories')->where('code', RevenueCategory::CODE_BUFFET)->first()
+            ?: ['id' => DB::table('revenue_categories')->insertGetId(['code' => RevenueCategory::CODE_BUFFET, 'name_ru' => 'Буфет', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()])];
+        $cafeteriaId = DB::table('revenue_categories')->where('code', RevenueCategory::CODE_CAFETERIA)->value('id')
+            ?: DB::table('revenue_categories')->insertGetId(['code' => RevenueCategory::CODE_CAFETERIA, 'name_ru' => 'Кафетерий', 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]);
+
+        DB::table('revenue_categories')->where('code', RevenueCategory::CODE_SCHOOL_FOOD)->delete();
+        DB::table('revenue_categories')->insert([
+            'code' => RevenueCategory::CODE_SCHOOL_FOOD, 'name_ru' => 'Школьное питание',
+            'is_active' => false, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $migration = require database_path('migrations/2026_09_26_120100_activate_school_food_revenue_category.php');
+        $migration->up();
+
+        $this->assertTrue((bool) DB::table('revenue_categories')->where('code', RevenueCategory::CODE_SCHOOL_FOOD)->value('is_active'));
+        $this->assertSame(1, DB::table('revenue_categories')->where('code', RevenueCategory::CODE_SCHOOL_FOOD)->count(), 'No duplicate row.');
+        $this->assertTrue((bool) DB::table('revenue_categories')->where('id', is_array($buffet) ? $buffet['id'] : $buffet->id)->value('is_active'), 'Buffet unchanged (still active).');
+        $this->assertTrue((bool) DB::table('revenue_categories')->where('id', $cafeteriaId)->value('is_active'), 'Cafeteria unchanged (still active).');
+    }
+
+    // A2. Fresh-install path: migration safely no-ops when the row does
+    // not exist yet, and later seeding creates it active (proving the
+    // full lifecycle, not just the migration in isolation).
+    public function test_activation_migration_noops_on_fresh_install_then_seeding_creates_it_active(): void
+    {
+        DB::table('revenue_categories')->where('code', RevenueCategory::CODE_SCHOOL_FOOD)->delete();
+        $this->assertSame(0, DB::table('revenue_categories')->where('code', RevenueCategory::CODE_SCHOOL_FOOD)->count());
+
+        $migration = require database_path('migrations/2026_09_26_120100_activate_school_food_revenue_category.php');
+        $migration->up();
+
+        $this->assertSame(0, DB::table('revenue_categories')->where('code', RevenueCategory::CODE_SCHOOL_FOOD)->count(), 'Migration alone creates nothing.');
+
+        (new RevenueCategorySeeder)->run();
+
+        $this->assertTrue((bool) RevenueCategory::where('code', RevenueCategory::CODE_SCHOOL_FOOD)->value('is_active'), 'Seeding on a fresh install creates it already active.');
     }
 }

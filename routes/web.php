@@ -484,7 +484,22 @@ Route::middleware(['auth', 'administrative'])
                 // only (no Filament, no standalone sidebar entry). Reached
                 // exclusively from donation()/other() above, which
                 // redirect here with the appropriate category context.
-                Route::prefix('revenue')->name('revenue.')->controller(RevenueEntryController::class)->group(function () {
+                // Route hardening: {revenueEntry} is numeric-only
+                // (matching revenue_entries.id, a bigint PK) — a
+                // malformed/non-numeric segment (e.g. a stray "/index" or
+                // any other typo) now fails as a clean 404 at the router,
+                // before ever reaching Eloquent's implicit route-model
+                // binding. Previously an unconstrained {revenueEntry}
+                // let a non-numeric segment reach a raw `WHERE id = ?`
+                // query, which PostgreSQL rejects with SQLSTATE[22P02]
+                // ("invalid input syntax for type bigint") — an ugly 500
+                // instead of a 404. Applies only to routes inside this
+                // group that actually use a {revenueEntry} parameter
+                // (show/attachment/receipt/post/reverse/destroy); index/
+                // create/store have no such parameter and are unaffected.
+                // URIs, route names, controller actions, and authorization
+                // middleware are all unchanged.
+                Route::prefix('revenue')->name('revenue.')->controller(RevenueEntryController::class)->whereNumber('revenueEntry')->group(function () {
                     Route::get('/', 'index')->name('index');
                     Route::get('create', 'create')->name('create');
                     Route::post('/', 'store')->name('store');

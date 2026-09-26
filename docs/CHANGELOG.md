@@ -4,7 +4,7 @@
 
 ---
 
-## 2026-09-22 — Finance: Student Stolovaya daily-meal window (Phase 1)
+## 2026-09-22 — Finance: Student Stolovaya daily-meal window (Phase 1) — Browser UAT PASSED, CLOSED
 
 **PR:** [#85 — feat(finance): add Student Stolovaya daily-meal window (Phase 1)](https://github.com/karimadell/school-erp/pull/85)
 **Merge commit:** `eee4d7875a3e3f07d7fa2e3221bf87240539d9ea`
@@ -22,7 +22,31 @@
   - `StolovayaStudentPhase1Test` — 16 passed (66 assertions): card visibility, page access, meal-plan filtering, FeePrice-not-MealPlan.price pricing, single-day date handling, paid-now Invoice/Payment/CashTransaction correctness, unpaid/debt correctness, idempotent resubmission, same-day-different-meal-plans allowed, same-meal-plan-different-date allowed, overlap-guard rejection (same meal, same date), Buffet unaffected, `school_food` category never referenced, unauthorized-role exclusion from both the create form and the submit endpoint.
   - Food/Buffet regression (`FinanceFoodBuffetCategorySeparationTest`, `ChargeAndCollectFoodTest`, `ChargeAndCollectTest`, `FoodDailyBillingTest`) — 81 passed (384 assertions), no regressions.
   - Full Finance suite — 1888 passed, 14 skipped, 2 known pre-existing unrelated baseline failures (`EnumMigrationPortabilityTest`, `TuitionPaymentPeriodAmbiguityGuardTest`), untouched by this change.
-- **Known non-blocking follow-up (not done by this change):** manual browser UAT of the Столовая card → student flow has not yet been performed.
+
+**Browser UAT: PASSED / CLOSED.**
+
+Manual browser UAT was performed against deployment of merge commit `eee4d7875a3e3f07d7fa2e3221bf87240539d9ea` (UAT environment `env-a280cfcb-7231-4ecd-8173-0dccce3ffd8c`, deployment `depl-a2cd6979-6e70-4c54-81f0-12f8acfac0c6`). Student: ID 4 — Проверкина04 Анна.
+
+Verified scenarios:
+
+1. **2026-09-22 — Обед**, 150 EGP, paid cash. Invoice 27 / `INV-2026-000027`, InvoiceItem 93, ServiceCoverage 27, `option_value=3`, FeePrice 32, Payment 18, CashTransaction 23.
+2. **2026-09-22 — Напиток**, 10 EGP, paid cash, allowed on the same date as Обед (same-day, different-MealPlan overlap-guard corrective verified live). Invoice 28 / `INV-2026-000028`, ServiceCoverage 28, `option_value=6`, Payment 19; global CashTransaction count increased correctly (the exact second CashTransaction id was not independently captured in the final UAT evidence and is not recorded here).
+3. **Duplicate Обед on 2026-09-22** — correctly rejected with a meal-specific Russian message referencing `INV-2026-000027`. Zero financial delta.
+4. **2026-09-23 — Суп**, 50 EGP, unpaid/debt. Invoice 29 / `INV-2026-000029`, ServiceCoverage 29, `option_value=4`, no Payment, no CashTransaction.
+
+Final verified UAT delta: Invoices 0 → 3, ServiceCoverages 0 → 3, Payments 0 → 2, CashTransactions (global) 20 → 22, RevenueEntries (global) 2 → 2 (untouched). Total charged 210 EGP; total collected 160 EGP; outstanding debt 50 EGP.
+
+Architectural facts reconfirmed live in this UAT run: `FeePrice` is authoritative for pricing; quantity is fixed at 1 in Phase 1; different MealPlans for the same student/date are allowed; the same MealPlan for the same student/date is blocked; Student Food uses Invoice/InvoiceItem/ServiceCoverage plus optional Payment/CashTransaction; Student Stolovaya never creates a `RevenueEntry`; Buffet remains a separate, unaffected flow.
+
+**STUDENT STOLOVAYA PHASE 1 — BROWSER UAT PASSED — CLOSED.**
+
+**Non-blocking follow-ups (do not reopen Phase 1 for these):**
+- Food Fee uniqueness guard.
+- Inactive `MealPlan` edge case.
+- `MealPlan::sellableFood()` FeePrice academic-year/`is_active` scoping.
+- Quick Registration meal-filter duplication/refactor (share logic with `sellableFood()`).
+- Client-side preview/date-state robustness — UAT observed a malformed manual date edit could temporarily leave the submit button in a stale disabled client-side state until page reload; no server submission or financial residue occurred.
+- This Phase 1 UAT covers only the Stolovaya card → student flow; other Food workflows (Quick Registration, Unified Collection) are not marked complete by this run and retain their own open browser-UAT item (see `docs/06_Roadmap.md`).
 
 ## 2026-09-21 — Finance: 2026/2027 Food price & payment_period correction (UAT verified, closed)
 

@@ -16,7 +16,7 @@
 - Overlap protection exists for Food coverage (same student/Food fee, date-range overlap rejected safely).
 - `AcademicCalendar` / `FoodBillableDayCalculator` logic is reused for every Food purchase path (Quick Registration and Charge & Collect) — no second pricing engine.
 - Food 2026/2027 master data & pricing corrective (Phase 4B `option_value` identity migration + `finance:correct-food-2026-2027` price/`payment_period` correction) is closed, UAT-verified, and idempotent. See `docs/CHANGELOG.md` (2026-09-21 entry). The legacy whole-year command `finance:correct-2026-2027-prices` remains unfixed and is not the operational Food path.
-- Student Stolovaya daily-meal window (Phase 1): a dedicated Столовая card and per-student single-day meal screen, reusing the existing Food accounting path (`ChargeAndCollectService`) end-to-end — no second pricing/accounting engine, no `RevenueEntry`. Includes an owner-approved corrective so the Food overlap guard is scoped by MealPlan, allowing legitimate different-meal same-day purchases while still rejecting the same meal twice on the same date. See `docs/CHANGELOG.md` (2026-09-22 entry).
+- **Student Stolovaya daily-meal window (Phase 1) — CLOSED, Browser UAT PASSED:** a dedicated Столовая card and per-student single-day meal screen, reusing the existing Food accounting path (`ChargeAndCollectService`) end-to-end with authoritative `FeePrice` pricing — no second pricing/accounting engine, no `RevenueEntry`. Paid-cash and unpaid/debt flows both verified live in browser UAT; same-day different-MealPlan purchases verified allowed live; same-day duplicate-MealPlan rejection verified live with zero financial delta; `RevenueEntry` confirmed untouched throughout. Browser UAT passed on deployed SHA `eee4d7875a3e3f07d7fa2e3221bf87240539d9ea`. See `docs/CHANGELOG.md` (2026-09-22 entry).
 
 ### Still open / next
 
@@ -24,9 +24,9 @@
 - Classic `StudentInvoiceController` invoice creation still needs idempotency / duplicate-submit protection (Charge & Collect and Quick Registration already have it; the classic invoice-creation path does not).
 
 **P2**
-- Browser-based UAT of the modern Food purchase flows (Quick Registration / Unified Collection) against the corrected 2026/2027 prices has not yet been performed.
-- Manual browser UAT of the new Столовая card → student flow (Stolovaya Phase 1) has not yet been performed.
-- Employee/staff (Сотрудник) Stolovaya — cash or salary-deduction settlement — is not yet built; explicitly out of scope for Phase 1.
+- Browser-based UAT of the modern Food purchase flows (Quick Registration / Unified Collection) against the corrected 2026/2027 prices has not yet been performed. (Student Stolovaya Phase 1's own browser UAT is closed — see Completed above — but that does not cover these other Food workflows.)
+- **Next Stolovaya item — Phase 2: Employee cash Stolovaya.** Buffet remains a separate flow. Employee salary-deduction settlement is explicitly **not** part of Phase 2; it remains a later **Phase 3**, pending payroll deduction/reversal lifecycle design.
+- Stolovaya Phase 1 non-blocking technical follow-ups (do not reopen Phase 1 for these): Food Fee uniqueness guard; inactive `MealPlan` edge case; `MealPlan::sellableFood()` FeePrice academic-year/`is_active` scoping; Quick Registration meal-filter duplication/refactor; client-side preview/date-state robustness (UAT observed a malformed manual date edit could leave the submit button in a stale disabled state until page reload, with no server submission or financial residue).
 - Existing Student tab on the Quick Registration screen remains primarily a search-and-redirect card, not a guided in-place workflow — discoverability issue, not a functional gap.
 - Returning-student / new-academic-year workflow is only partially integrated: `Enrollment` support exists, but re-enrolling a student into a new academic year and charging that year's services is not yet one guided Finance workflow.
 - Classic Uniform purchase needs better quantity / multiple-item support (Quick Registration's multi-item Uniform selection is not yet mirrored elsewhere).

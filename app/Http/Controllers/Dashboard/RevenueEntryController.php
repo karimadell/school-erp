@@ -116,6 +116,7 @@ class RevenueEntryController extends Controller
 
         $data = $this->validateRevenue($request);
         $data = $this->applyLockedCategory($request, $data);
+        $this->forbidControlledCategory($data);
         $data = $this->applyAttachment($request, $data);
 
         $entry = $this->revenues->create($data, $request->user());
@@ -153,6 +154,39 @@ class RevenueEntryController extends Controller
         }
 
         return $data;
+    }
+
+    /**
+     * Stolovaya Phase 2 corrective (data-integrity boundary, owner-
+     * approved): school_food is a CONTROLLED revenue category — every NEW
+     * operational school_food RevenueEntry must originate through the
+     * dedicated Employee Stolovaya domain workflow
+     * (EmployeeFoodPurchaseService -> RevenueService::createTrusted() ->
+     * StaffFoodPurchase), never through this generic, unstructured
+     * controller. Runs AFTER applyLockedCategory() — a locked (buffet/
+     * donation) submission's revenue_category_id has already been
+     * forcibly overridden to its own real category by then and can never
+     * equal school_food's id, so this only ever fires for the unlocked
+     * ("Прочий приход") path, exactly where an operator could otherwise
+     * freely pick school_food from the (now-excluded, see formOptions())
+     * dropdown or simply craft the id directly.
+     *
+     * Deliberately does NOT touch RevenueService — this is a boundary
+     * check in the generic controller, before RevenueService::create() is
+     * ever called, so a rejection here creates zero RevenueEntry and zero
+     * CashTransaction. It does not weaken, remap, or bypass anything —
+     * EmployeeFoodPurchaseService never calls this controller at all, so
+     * the trusted domain path is entirely unaffected.
+     */
+    private function forbidControlledCategory(array $data): void
+    {
+        $schoolFoodId = RevenueCategory::query()->where('code', RevenueCategory::CODE_SCHOOL_FOOD)->value('id');
+
+        if ($schoolFoodId && (int) ($data['revenue_category_id'] ?? null) === (int) $schoolFoodId) {
+            throw ValidationException::withMessages([
+                'revenue_category_id' => 'Категория «Школьное питание» управляется отдельно — оформите питание сотрудника через «Столовая (сотрудник)».',
+            ]);
+        }
     }
 
     public function show(RevenueEntry $revenueEntry): View
@@ -308,7 +342,21 @@ class RevenueEntryController extends Controller
     private function formOptions(): array
     {
         return [
-            'categories' => RevenueCategory::query()->where('is_active', true)->orderBy('name_ru')->get(),
+            // Stolovaya Phase 2 corrective (data-integrity boundary):
+            // school_food is a CONTROLLED category — every NEW operational
+            // school_food RevenueEntry must originate through Employee
+            // Stolovaya (StaffFoodPurchase -> RevenueService::createTrusted()),
+            // never through this generic, unstructured "Прочий приход"
+            // selector. Excluded by its stable `code` (never the mutable
+            // name_ru — see RevenueCategory's own class docblock). Every
+            // other active category (buffet, donation, fine, other,
+            // cafeteria) is unaffected — buffet's own dedicated locked
+            // shortcut is untouched by this exclusion too, since it never
+            // renders this dropdown at all (see the create view).
+            'categories' => RevenueCategory::query()
+                ->where('is_active', true)
+                ->where('code', '!=', RevenueCategory::CODE_SCHOOL_FOOD)
+                ->orderBy('name_ru')->get(),
             'cashAccounts' => CashAccount::query()->where('is_active', true)->orderBy('name')->get(),
             'methodLabels' => $this->methodLabels(),
         ];

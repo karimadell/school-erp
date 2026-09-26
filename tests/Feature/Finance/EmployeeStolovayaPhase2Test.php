@@ -308,6 +308,41 @@ class EmployeeStolovayaPhase2Test extends FinanceOperationsTestCase
         $this->assertSame(CashTransaction::METHOD_CASH, $transaction->payment_method);
     }
 
+    // Corrective pass — high-value coverage found missing by independent
+    // review: a crafted owner-role cash account must be rejected (the
+    // service's excludingOwner() scope was correct but untested through
+    // this HTTP path).
+    public function test_owner_cash_account_is_rejected(): void
+    {
+        $owner = CashAccount::owner() ?: CashAccount::create([
+            'name' => 'Владелец', 'type' => CashAccount::TYPE_OWNER_CASH,
+            'role' => CashAccount::ROLE_OWNER, 'balance' => '0.00', 'is_active' => true,
+        ]);
+
+        $response = $this->purchase($this->accountant, ['cash_account_id' => $owner->id]);
+
+        $response->assertSessionHasErrors('cash_account_id');
+        $this->assertSame(0, StaffFoodPurchase::count());
+        $this->assertSame(0, RevenueEntry::count());
+        $this->assertSame(0, CashTransaction::count());
+    }
+
+    // Corrective pass — high-value coverage found missing by independent
+    // review: a normal cash purchase without a required open cash session
+    // must be rejected (inherited unchanged from RevenueService::
+    // postToLedger(), but previously unproven through this specific route).
+    public function test_closed_cash_session_rejects_the_purchase(): void
+    {
+        $this->closeCashSession();
+
+        $response = $this->purchase($this->accountant);
+
+        $response->assertSessionHasErrors();
+        $this->assertSame(0, StaffFoodPurchase::count());
+        $this->assertSame(0, RevenueEntry::count());
+        $this->assertSame(0, CashTransaction::count());
+    }
+
     // 24. StaffFoodPurchase snapshots every required structured field.
     public function test_staff_food_purchase_snapshots_all_required_fields(): void
     {

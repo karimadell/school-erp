@@ -19,6 +19,13 @@ use Illuminate\Support\Facades\Schema;
  * submission is expected to carry one (the create form always renders a
  * fresh UUID), so there is no legacy/optional caller to stay compatible
  * with.
+ *
+ * unit_price/total_amount corrective (pre-merge, table not yet deployed
+ * anywhere — edited in place rather than via a follow-up migration):
+ * decimal(12,2), matching revenue_entries.amount/cash_transactions.amount
+ * exactly — total_amount is written verbatim into both of those, so it
+ * must share their precision/headroom, not fee_prices.amount's narrower
+ * decimal(10,2) (which was the original, mismatched choice here).
  */
 return new class extends Migration
 {
@@ -34,8 +41,8 @@ return new class extends Migration
             $table->string('option_value');
             $table->date('food_date');
             $table->unsignedInteger('quantity');
-            $table->decimal('unit_price', 10, 2);
-            $table->decimal('total_amount', 10, 2);
+            $table->decimal('unit_price', 12, 2);
+            $table->decimal('total_amount', 12, 2);
             $table->uuid('idempotency_key')->unique();
             $table->string('idempotency_hash', 64);
             $table->foreignId('created_by')->constrained('users');

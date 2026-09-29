@@ -252,8 +252,25 @@ class FinanceWorkspaceSimplificationTest extends FinanceOperationsTestCase
             ->get(route('dashboard.finance.income.revenue.create'))
             ->assertOk();
         // The "other" entry point offers a real category choice — every
-        // active category appears as a selectable option, not a locked one.
+        // active category WITHOUT its own dedicated card/workflow appears
+        // as a selectable option, not a locked one. Finance income
+        // workflow UX corrective: school_food/buffet/donation each now
+        // have their own dedicated card, so — unlike every other active
+        // category — they are deliberately excluded here (see
+        // RevenueEntryController::controlledCategoryCodes() and
+        // FinanceFoodBuffetCategorySeparationTest's dedicated coverage of
+        // that exclusion).
+        $controlledCodes = [
+            \App\Models\RevenueCategory::CODE_SCHOOL_FOOD,
+            \App\Models\RevenueCategory::CODE_BUFFET,
+            \App\Models\RevenueCategory::CODE_DONATION,
+        ];
         foreach (\App\Models\RevenueCategory::query()->where('is_active', true)->get() as $category) {
+            if (in_array($category->code, $controlledCodes, true)) {
+                $otherForm->assertDontSee($category->name_ru);
+
+                continue;
+            }
             $otherForm->assertSee($category->name_ru);
         }
     }

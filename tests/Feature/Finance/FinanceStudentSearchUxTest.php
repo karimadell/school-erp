@@ -4,6 +4,7 @@ namespace Tests\Feature\Finance;
 
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
+use App\Models\Student;
 
 /**
  * Search/UX corrective — /dashboard/finance/income/students becomes a
@@ -155,5 +156,151 @@ class FinanceStudentSearchUxTest extends FinanceOperationsTestCase
         $this->assertSame($invoiceCountBefore, Invoice::count());
         $this->assertSame($paymentCountBefore, InvoicePayment::count());
         $this->assertSame('1200.00', $invoice->fresh()->total_amount);
+    }
+
+    /*
+     * Finance income workflow UX corrective — ?context=payment|service is
+     * a purely presentational discriminator on this SAME route/controller/
+     * query (see FinanceOperationsController::students()). It changes only
+     * which of the two already-canonical row actions (Принять оплату →
+     * Unified Collection, Добавить услугу → the Add Service picker) is
+     * styled as primary vs secondary, plus the page title/hint. No new
+     * route, no accounting-domain change, no permission change.
+     */
+
+    public function test_payment_context_shows_the_payment_specific_title_and_hint(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'payment']));
+
+        $response->assertOk();
+        $response->assertSee(__('finance_workspace.income_students_title_payment'));
+        $response->assertSee(__('finance_workspace.income_students_hint_payment'));
+        $response->assertDontSee(__('finance_workspace.income_students_title_service'));
+    }
+
+    public function test_service_context_shows_the_service_specific_title_and_hint(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'service']));
+
+        $response->assertOk();
+        $response->assertSee(__('finance_workspace.income_students_title_service'));
+        $response->assertSee(__('finance_workspace.income_students_hint_service'));
+        $response->assertDontSee(__('finance_workspace.income_students_title_payment'));
+    }
+
+    public function test_payment_context_renders_accept_payment_as_the_primary_row_action(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'payment']));
+
+        $response->assertOk();
+        // Принять оплату: solid/primary styling.
+        $response->assertSee('class="btn btn-sm btn-success" href="'.route('dashboard.students.unified-collection.create', $this->student).'"', false);
+        // Добавить услугу: outline/secondary styling, still present and
+        // still the exact same canonical route — never removed, never a
+        // different destination.
+        $response->assertSee('class="btn btn-sm btn-outline-primary" href="'.route('dashboard.students.add-service', $this->student).'"', false);
+    }
+
+    public function test_service_context_renders_add_service_as_the_primary_row_action(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'service']));
+
+        $response->assertOk();
+        // Добавить услугу: solid/primary styling.
+        $response->assertSee('class="btn btn-sm btn-primary" href="'.route('dashboard.students.add-service', $this->student).'"', false);
+        // Принять оплату: outline/secondary styling, still present and
+        // still the exact same canonical route.
+        $response->assertSee('class="btn btn-sm btn-outline-success" href="'.route('dashboard.students.unified-collection.create', $this->student).'"', false);
+    }
+
+    public function test_no_context_preserves_todays_neutral_row_action_styling(): void
+    {
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.students'));
+
+        $response->assertOk();
+        $response->assertSee('class="btn btn-sm btn-primary" href="'.route('dashboard.students.add-service', $this->student).'"', false);
+        $response->assertSee('class="btn btn-sm btn-success" href="'.route('dashboard.students.unified-collection.create', $this->student).'"', false);
+        $response->assertSee(__('finance_workspace.income_students_title'));
+    }
+
+    public function test_invalid_arbitrary_context_safely_normalizes_to_neutral(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'delete-everything']));
+
+        $response->assertOk();
+        $response->assertSee(__('finance_workspace.income_students_hint'));
+        // The payment/service hints are NOT substrings of the neutral
+        // title/hint (unlike the titles, which share a common prefix), so
+        // this is the reliable signal that the context was ignored/
+        // normalized, not merely a title coincidence.
+        $response->assertDontSee(__('finance_workspace.income_students_hint_payment'));
+        $response->assertDontSee(__('finance_workspace.income_students_hint_service'));
+        // The exact same today's-neutral styling, not a crash or a
+        // half-applied context.
+        $response->assertSee('class="btn btn-sm btn-primary" href="'.route('dashboard.students.add-service', $this->student).'"', false);
+        $response->assertSee('class="btn btn-sm btn-success" href="'.route('dashboard.students.unified-collection.create', $this->student).'"', false);
+    }
+
+    public function test_stolovaya_entry_point_keeps_neutral_context_behavior(): void
+    {
+        // IncomeEntryController::stolovaya() redirects here with no
+        // "context" at all — must keep exactly today's neutral rendering,
+        // never be forced into payment/service framing.
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.stolovaya'));
+        $response->assertRedirect(route('dashboard.finance.income.students'));
+
+        $followed = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.students'));
+        $followed->assertOk();
+        $followed->assertSee(__('finance_workspace.income_students_title'));
+    }
+
+    public function test_context_survives_a_search_round_trip_via_a_hidden_field(): void
+    {
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'payment', 'q' => 'Иванов']));
+
+        $response->assertOk();
+        $response->assertSee('<input type="hidden" name="context" value="payment">', false);
+    }
+
+    public function test_context_survives_pagination(): void
+    {
+        for ($i = 0; $i < 25; $i++) {
+            Student::create([
+                'last_name_ru' => 'Тест'.$i,
+                'first_name_ru' => 'Ученик',
+                'phone' => '+201000000'.sprintf('%03d', $i),
+                'class_id' => $this->student->class_id,
+                'status' => 'registration_completed',
+            ]);
+        }
+
+        $response = $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'payment']));
+
+        $response->assertOk();
+        preg_match_all('/href="([^"]*page=2[^"]*)"/', $response->getContent(), $matches);
+        $this->assertNotEmpty($matches[1], 'Expected a page-2 pagination link to exist (26 students, 25 per page).');
+        $this->assertStringContainsString('context=payment', urldecode($matches[1][0]));
+    }
+
+    public function test_row_action_route_targets_remain_canonical_in_every_context(): void
+    {
+        foreach ([null, 'payment', 'service'] as $context) {
+            $params = $context ? ['context' => $context] : [];
+            $response = $this->actingAs($this->accountant)
+                ->get(route('dashboard.finance.income.students', $params));
+
+            $response->assertOk();
+            $response->assertSee(route('dashboard.students.unified-collection.create', $this->student), false);
+            $response->assertSee(route('dashboard.students.add-service', $this->student), false);
+            $response->assertSee(route('dashboard.students.stolovaya.create', $this->student), false);
+            $response->assertSee(route('dashboard.students.finance', $this->student), false);
+        }
     }
 }

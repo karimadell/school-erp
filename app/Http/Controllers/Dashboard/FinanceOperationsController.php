@@ -73,9 +73,27 @@ class FinanceOperationsController extends Controller
      * Account page (student()) exactly as before; this screen now only
      * needs each student's own summary (already provided by
      * StudentFinanceSummaryService) to show outstanding/overdue per row.
+     *
+     * Finance income workflow UX corrective — this screen is reached from
+     * several different Приход cards ("Оплата ученика", "Услуга /
+     * дополнительный сбор", and — via IncomeEntryController::stolovaya() —
+     * "Столовая") that represent different operator intents but must
+     * never fork into duplicated controllers/routes/accounting logic for
+     * that. ?context= is a purely presentational discriminator, read here
+     * and passed straight through to the view unchanged: it decides which
+     * of the two already-canonical row actions (Принять оплату / Добавить
+     * услугу — both unchanged, still routing to Unified Collection / the
+     * Add Service picker exactly as before) is shown as primary, nothing
+     * else. Only the two recognized values are ever honored — any other
+     * value (missing, mistyped, or an arbitrary crafted string) safely
+     * normalizes to null/neutral, the exact behavior every existing caller
+     * (Столовая included) already gets and must keep getting.
      */
     public function students(Request $request): View
     {
+        $context = $request->string('context')->toString();
+        $context = in_array($context, ['payment', 'service'], true) ? $context : null;
+
         $students = Student::query()->with(['currentEnrollment.academicYear', 'currentEnrollment.schoolClass', 'invoices.payments'])
             ->when($request->filled('q'), function ($query) use ($request) {
                 $term = trim((string) $request->input('q'));
@@ -102,6 +120,7 @@ class FinanceOperationsController extends Controller
         return view('dashboard.finance.income.students', [
             'students' => $students,
             'years' => AcademicYear::orderByDesc('start_date')->get(),
+            'context' => $context,
         ]);
     }
 

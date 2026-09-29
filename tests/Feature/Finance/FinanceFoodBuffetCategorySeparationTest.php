@@ -90,8 +90,27 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
 
         $response->assertOk();
         $response->assertDontSee('Школьное питание');
-        // Every other active category remains offered.
-        $response->assertSee('Пожертвования');
+        // Every category with no dedicated card remains offered (buffet
+        // and donation are also excluded — see the next test — since they
+        // now have dedicated cards too).
+        $response->assertSee('Штрафы');
+        $response->assertSee('Прочие доходы');
+    }
+
+    // Finance income workflow UX corrective — generalizes the exclusion
+    // above: buffet and donation each already have their own dedicated
+    // card (see IncomeEntryController::buffet()/donation()), so neither
+    // may be freely picked from the generic "Прочий приход" dropdown
+    // either. Every category with no dedicated card remains offered.
+    public function test_generic_revenue_form_never_offers_buffet_or_donation_category(): void
+    {
+        (new RevenueCategorySeeder)->run();
+
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.revenue.create'));
+
+        $response->assertOk();
+        $response->assertDontSee('Буфет');
+        $response->assertDontSee('Пожертвования');
         $response->assertSee('Штрафы');
         $response->assertSee('Прочие доходы');
     }
@@ -112,6 +131,54 @@ class FinanceFoodBuffetCategorySeparationTest extends FinanceOperationsTestCase
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.finance.income.revenue.store'), [
             'revenue_category_id' => $schoolFood->id,
+            'amount' => '150.00',
+            'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id,
+            'payment_method' => 'cash',
+            'status' => RevenueEntry::STATUS_POSTED,
+        ]);
+
+        $response->assertSessionHasErrors('revenue_category_id');
+        $this->assertSame($entriesBefore, RevenueEntry::count(), 'No RevenueEntry was created.');
+        $this->assertSame($transactionsBefore, CashTransaction::count(), 'No CashTransaction was created.');
+    }
+
+    // Finance income workflow UX corrective — same server-side enforcement
+    // as school_food above, generalized to buffet: a crafted generic POST
+    // (no "type" discriminator, so applyLockedCategory() never touches it)
+    // carrying buffet's id must be rejected before RevenueService::create()
+    // is ever called, creating zero RevenueEntry and zero CashTransaction.
+    public function test_crafted_generic_revenue_post_with_buffet_category_is_rejected(): void
+    {
+        (new RevenueCategorySeeder)->run();
+        $buffet = RevenueCategory::where('code', RevenueCategory::CODE_BUFFET)->sole();
+        $entriesBefore = RevenueEntry::count();
+        $transactionsBefore = CashTransaction::count();
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.finance.income.revenue.store'), [
+            'revenue_category_id' => $buffet->id,
+            'amount' => '150.00',
+            'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id,
+            'payment_method' => 'cash',
+            'status' => RevenueEntry::STATUS_POSTED,
+        ]);
+
+        $response->assertSessionHasErrors('revenue_category_id');
+        $this->assertSame($entriesBefore, RevenueEntry::count(), 'No RevenueEntry was created.');
+        $this->assertSame($transactionsBefore, CashTransaction::count(), 'No CashTransaction was created.');
+    }
+
+    // Same as above, for donation.
+    public function test_crafted_generic_revenue_post_with_donation_category_is_rejected(): void
+    {
+        (new RevenueCategorySeeder)->run();
+        $donation = RevenueCategory::where('code', RevenueCategory::CODE_DONATION)->sole();
+        $entriesBefore = RevenueEntry::count();
+        $transactionsBefore = CashTransaction::count();
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.finance.income.revenue.store'), [
+            'revenue_category_id' => $donation->id,
             'amount' => '150.00',
             'revenue_date' => today()->toDateString(),
             'cash_account_id' => $this->cash->id,

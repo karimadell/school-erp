@@ -171,4 +171,26 @@ class StudentWorkflowEntryPointsTest extends FinanceOperationsTestCase
         $this->get(route('dashboard.finance.workspace'))->assertOk();
         $this->get(route('dashboard.finance.income.index'))->assertOk();
     }
+
+    // Finance income workflow UX corrective — the two landing cards that
+    // both reach the shared student-search screen now carry a distinct
+    // ?context= discriminator so the operator's entry intent survives
+    // onto that screen (see FinanceStudentSearchUxTest for the screen's
+    // own context behavior). No new route; the destination is the exact
+    // same dashboard.finance.income.students URL either way.
+    public function test_payment_card_links_to_student_search_with_payment_context(): void
+    {
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.index'));
+
+        $response->assertOk();
+        $response->assertSee(route('dashboard.finance.income.students', ['context' => 'payment']), false);
+    }
+
+    public function test_service_card_links_to_student_search_with_service_context(): void
+    {
+        $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.index'));
+
+        $response->assertOk();
+        $response->assertSee(route('dashboard.finance.income.students', ['context' => 'service']), false);
+    }
 }

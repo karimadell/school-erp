@@ -2,10 +2,29 @@
 @section('content')
 <div class="container-fluid py-4">
 
+    @php
+        // Finance income workflow UX corrective — $context is already
+        // normalized to null|'payment'|'service' by
+        // FinanceOperationsController::students(); this view only ever
+        // switches display copy/row-action emphasis on it, never routing,
+        // authorization, or query logic.
+        $context = $context ?? null;
+        $titleKey = match ($context) {
+            'payment' => 'finance_workspace.income_students_title_payment',
+            'service' => 'finance_workspace.income_students_title_service',
+            default => 'finance_workspace.income_students_title',
+        };
+        $hintKey = match ($context) {
+            'payment' => 'finance_workspace.income_students_hint_payment',
+            'service' => 'finance_workspace.income_students_hint_service',
+            default => 'finance_workspace.income_students_hint',
+        };
+    @endphp
+
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
         <div>
-            <h1 class="h3 mb-1">{{ __('finance_workspace.income_students_title') }}</h1>
-            <p class="text-muted mb-0">{{ __('finance_workspace.income_students_hint') }}</p>
+            <h1 class="h3 mb-1">{{ __($titleKey) }}</h1>
+            <p class="text-muted mb-0">{{ __($hintKey) }}</p>
         </div>
         <a href="{{ route('dashboard.finance.income.index') }}" class="btn btn-outline-secondary">← {{ __('expenses.back') }}</a>
     </div>
@@ -15,6 +34,12 @@
     <div class="card border-0 shadow-sm mb-4">
         <div class="card-body">
             <form method="GET">
+                {{-- Preserves the entry intent across a search/filter
+                     round-trip; pagination already preserves it on its own
+                     via paginate()->withQueryString() in the controller. --}}
+                @if($context)
+                    <input type="hidden" name="context" value="{{ $context }}">
+                @endif
                 <div class="row g-2 align-items-end">
                     <div class="col-lg-9">
                         <label class="form-label small text-muted">Ученик</label>
@@ -62,7 +87,7 @@
                                 <input class="form-check-input" type="checkbox" name="overdue" value="1" id="overdue-only" @checked(request('overdue'))>
                                 <label class="form-check-label" for="overdue-only">Только просроченные</label>
                             </div>
-                            <a href="{{ route('dashboard.finance.income.students') }}" class="btn btn-sm btn-outline-secondary">Сбросить фильтры</a>
+                            <a href="{{ route('dashboard.finance.income.students', $context ? ['context' => $context] : []) }}" class="btn btn-sm btn-outline-secondary">Сбросить фильтры</a>
                         </div>
                     </div>
                 </div>
@@ -110,17 +135,36 @@
                             <td>
                                 <div class="d-flex flex-wrap gap-1">
                                     @can('manage invoices')
-                                        <a class="btn btn-sm btn-primary" href="{{ route('dashboard.students.add-service', $student) }}">{{ __('finance_uat.add_service') }}</a>
+                                        {{-- Finance income workflow UX corrective — same two
+                                             already-canonical actions/routes as always (Unified
+                                             Cashier Workspace for Принять оплату, the Add Service
+                                             picker for Добавить услугу); only which one renders
+                                             as the solid/primary button and which renders
+                                             outlined/secondary changes, based on the entry
+                                             intent ($context). Neutral/no context keeps today's
+                                             original order and styling unchanged. --}}
+                                        @if($context === 'payment')
+                                            <a class="btn btn-sm btn-success" href="{{ route('dashboard.students.unified-collection.create', $student) }}">Принять оплату</a>
+                                            <a class="btn btn-sm btn-outline-primary" href="{{ route('dashboard.students.add-service', $student) }}">{{ __('finance_uat.add_service') }}</a>
+                                        @elseif($context === 'service')
+                                            <a class="btn btn-sm btn-primary" href="{{ route('dashboard.students.add-service', $student) }}">{{ __('finance_uat.add_service') }}</a>
+                                            <a class="btn btn-sm btn-outline-success" href="{{ route('dashboard.students.unified-collection.create', $student) }}">Принять оплату</a>
+                                        @else
+                                            <a class="btn btn-sm btn-primary" href="{{ route('dashboard.students.add-service', $student) }}">{{ __('finance_uat.add_service') }}</a>
+                                        @endif
                                         <a class="btn btn-sm btn-outline-success" href="{{ route('dashboard.students.stolovaya.create', $student) }}">{{ __('finance_workspace.stolovaya_row_action') }}</a>
                                     @endcan
                                     <a class="btn btn-sm btn-outline-primary" href="{{ route('dashboard.students.finance', $student) }}">{{ __('finance_uat.student_account') }}</a>
                                     @can('manage invoices')
-                                        {{-- Unified Cashier Workspace (PR C1) — replaces the old
-                                             conditional single-invoice/finance-page fallback: the
-                                             workspace already shows every outstanding obligation
-                                             plus lets the operator add a new service, so it fully
-                                             subsumes both previous destinations. --}}
-                                        <a class="btn btn-sm btn-success" href="{{ route('dashboard.students.unified-collection.create', $student) }}">Принять оплату</a>
+                                        @if(! in_array($context, ['payment', 'service'], true))
+                                            {{-- Unified Cashier Workspace (PR C1) — replaces the old
+                                                 conditional single-invoice/finance-page fallback: the
+                                                 workspace already shows every outstanding obligation
+                                                 plus lets the operator add a new service, so it fully
+                                                 subsumes both previous destinations. Rendered above
+                                                 instead, ordered by intent, when $context is set. --}}
+                                            <a class="btn btn-sm btn-success" href="{{ route('dashboard.students.unified-collection.create', $student) }}">Принять оплату</a>
+                                        @endif
                                     @endcan
                                 </div>
                             </td>

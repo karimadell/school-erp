@@ -11,6 +11,16 @@ return [
     'income_students_title' => 'Оплата ученика / Услуги',
     'income_students_hint' => 'Найдите ученика, чтобы принять оплату или выставить счёт за услугу.',
 
+    // Finance income workflow UX corrective — context-specific title/hint
+    // for the same canonical student-search screen above, shown only when
+    // reached via ?context=payment|service (see FinanceOperationsController::
+    // students()); the neutral strings above remain the fallback for every
+    // other caller (e.g. Столовая).
+    'income_students_title_payment' => 'Оплата ученика',
+    'income_students_hint_payment' => 'Найдите ученика, чтобы принять оплату по существующему счёту или задолженности.',
+    'income_students_title_service' => 'Услуга / дополнительный сбор',
+    'income_students_hint_service' => 'Найдите ученика, чтобы начислить и оформить новую дополнительную услугу.',
+
     // Top operational summary cards (Finance Workspace UX corrective).
     'income_today' => 'Приход сегодня',
     'expense_today' => 'Расход сегодня',

@@ -27,8 +27,14 @@
         @endcan
 
         @can('manage invoices')
+            {{-- Finance income workflow UX corrective — ?context=payment is
+                 a purely presentational discriminator on the SAME canonical
+                 student-search route as the Услуга card below; it changes
+                 only which already-existing row action renders as primary
+                 (see FinanceOperationsController::students() and
+                 students.blade.php). No new route, no duplicated logic. --}}
             <div class="col-md-6 col-xl-4">
-                <a href="{{ route('dashboard.finance.income.students') }}" class="text-decoration-none">
+                <a href="{{ route('dashboard.finance.income.students', ['context' => 'payment']) }}" class="text-decoration-none">
                     <div class="card border-0 shadow-sm h-100 income-type-card">
                         <div class="card-body">
                             <div class="fw-semibold fs-5 mb-1">{{ __('finance_workspace.income_type_payment') }}</div>
@@ -39,7 +45,7 @@
             </div>
 
             <div class="col-md-6 col-xl-4">
-                <a href="{{ route('dashboard.finance.income.students') }}" class="text-decoration-none">
+                <a href="{{ route('dashboard.finance.income.students', ['context' => 'service']) }}" class="text-decoration-none">
                     <div class="card border-0 shadow-sm h-100 income-type-card">
                         <div class="card-body">
                             <div class="fw-semibold fs-5 mb-1">{{ __('finance_workspace.income_type_service') }}</div>

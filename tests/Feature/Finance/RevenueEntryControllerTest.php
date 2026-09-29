@@ -70,7 +70,16 @@ class RevenueEntryControllerTest extends FinanceOperationsTestCase
         $this->assertSame(0, RevenueEntry::query()->count());
     }
 
-    // Donation entry point locks the category server-side, not just visually.
+    // Donation entry point locks the category server-side, not just
+    // visually. Finance income workflow UX corrective: donation is now a
+    // CONTROLLED category (see RevenueEntryController::
+    // controlledCategoryCodes()), so reaching it requires the actual
+    // dedicated entry point's own "type=donation" discriminator — a bare
+    // revenue_category_id with no "type" (this test's original payload)
+    // is the generic/unlocked path and must now be rejected instead; see
+    // FinanceFoodBuffetCategorySeparationTest's
+    // test_crafted_generic_revenue_post_with_donation_category_is_rejected
+    // for that coverage.
     public function test_donation_create_locks_category_server_side(): void
     {
         $user = $this->user('reception');
@@ -78,6 +87,7 @@ class RevenueEntryControllerTest extends FinanceOperationsTestCase
 
         $this->actingAs($user)
             ->post(route('dashboard.finance.income.revenue.store'), $this->payload([
+                'type' => 'donation',
                 'revenue_category_id' => $this->donation->id,
                 'payer_name' => 'Иванов И.И.',
             ]))

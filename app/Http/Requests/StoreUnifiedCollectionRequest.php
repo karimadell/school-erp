@@ -2,8 +2,10 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Enrollment;
+use App\Models\Student;
 use App\Services\Admissions\RegistrationEnrollmentModePolicy;
-use App\Services\Finance\NewSaleFeePolicy;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -123,12 +125,36 @@ class StoreUnifiedCollectionRequest extends FormRequest
         ];
     }
 
+    /**
+     * Decided from the student's ACTUAL Enrollment state for the submitted
+     * year, never from the payload alone: FinanceCollectionService ignores
+     * annual_registration when an Enrollment already exists, so trusting a
+     * submitted annual_registration would let an enrolled student be sold
+     * year-setup-only services (tuition, registration). Year setup applies
+     * only when there is no Enrollment yet AND annual registration is
+     * actually being established in this same collection.
+     */
+    private function newServicesEligibilityContext(): string
+    {
+        $student = $this->route('student');
+        $enrolled = $student instanceof Student
+            && Enrollment::query()
+                ->where('student_id', $student->id)
+                ->where('academic_year_id', $this->integer('academic_year_id'))
+                ->exists();
+
+        return ! $enrolled && $this->filled('annual_registration')
+            ? StudentServiceEligibilityPolicy::CONTEXT_YEAR_SETUP
+            : StudentServiceEligibilityPolicy::CONTEXT_ADDITIONAL_SERVICE;
+    }
+
     public function after(): array
     {
         return [function (Validator $validator): void {
             try {
-                app(NewSaleFeePolicy::class)->assertEligibleIds(
+                app(StudentServiceEligibilityPolicy::class)->assertEligibleIds(
                     collect($this->input('new_services', []))->pluck('fee_id'),
+                    $this->newServicesEligibilityContext(),
                     'new_services',
                 );
             } catch (ValidationException $exception) {

@@ -9,7 +9,9 @@ use App\Models\Grade;
 use App\Models\SchoolClass;
 use App\Models\Stage;
 use App\Models\Student;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
 
 class StoreSchoolEnrollmentRequest extends FormRequest
@@ -93,6 +95,21 @@ class StoreSchoolEnrollmentRequest extends FormRequest
                     })->exists();
                 if ($invalidTariff) {
                     $validator->errors()->add('fee_price_ids', 'Одна из выбранных услуг недоступна для этого учебного года.');
+                }
+            }
+
+            // Enrollment is year setup: every selected tariff's Fee must be
+            // eligible in that catalog (no activities, legacy tuition, test
+            // or inactive Fees), the same rule create() lists by.
+            try {
+                app(StudentServiceEligibilityPolicy::class)->assertEligibleIds(
+                    FeePrice::query()->whereIn('id', (array) $this->input('fee_price_ids', []))->pluck('fee_id'),
+                    StudentServiceEligibilityPolicy::CONTEXT_YEAR_SETUP,
+                    'fee_price_ids',
+                );
+            } catch (ValidationException $exception) {
+                foreach ($exception->errors()['fee_price_ids'] ?? [] as $message) {
+                    $validator->errors()->add('fee_price_ids', $message);
                 }
             }
         }];

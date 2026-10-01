@@ -11,6 +11,7 @@ use App\Models\FeePrice;
 use App\Models\EnrollmentMode;
 use App\Models\Stage;
 use App\Services\Admissions\SchoolEnrollmentService;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
 
@@ -30,7 +31,7 @@ class SchoolEnrollmentController extends Controller
         ]);
     }
 
-    public function create(): View
+    public function create(StudentServiceEligibilityPolicy $eligibility): View
     {
         $years = AcademicYear::query()->where('is_active', true)->orderByDesc('start_date')->get();
         $selectedYear = $years->first();
@@ -44,7 +45,9 @@ class SchoolEnrollmentController extends Controller
                 ->where('currency', 'EGP')->where('is_active', true)
                 ->whereDate('start_date', '<=', $pricingDate)
                 ->where(fn ($query) => $query->whereNull('end_date')->orWhereDate('end_date', '>=', $pricingDate))
-                ->whereHas('fee', fn ($query) => $query->where('is_active', true))
+                // Enrollment is year setup — the same catalog
+                // StoreSchoolEnrollmentRequest asserts server-side.
+                ->whereHas('fee', fn ($query) => $eligibility->applyYearSetup($query))
                 ->orderBy('fee_id')->orderBy('amount')->get();
         }
 

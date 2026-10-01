@@ -17,7 +17,7 @@ use App\Models\Student;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
-use App\Services\Finance\NewSaleFeePolicy;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use App\Support\FinanceShareRecipient;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
@@ -51,11 +51,14 @@ class InvoiceController extends Controller
         return view('dashboard.invoices.index', compact('invoices', 'showUnpaidQuickRegistration'));
     }
 
-    public function create(InvoiceCalculationService $calculator, NewSaleFeePolicy $feePolicy): View
+    public function create(InvoiceCalculationService $calculator, StudentServiceEligibilityPolicy $eligibility): View
     {
         // Food V1 requires a bounded monthly range and the teaching-day
         // calculator, which this legacy one-time form cannot express.
-        $feesQuery = $feePolicy->apply(Fee::with('prices'))->where('category', '!=', Fee::CATEGORY_FOOD);
+        // Year-setup catalog (activities, legacy tuition and test Fees
+        // excluded; canonical tuition kept) — the same rule StoreInvoiceRequest
+        // enforces server-side.
+        $feesQuery = $eligibility->applyYearSetup(Fee::with('prices'))->where('category', '!=', Fee::CATEGORY_FOOD);
 
         if (Schema::hasColumn('fees', 'is_active')) {
             $feesQuery->where('is_active', 1);

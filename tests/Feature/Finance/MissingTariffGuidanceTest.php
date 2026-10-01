@@ -3,6 +3,7 @@
 namespace Tests\Feature\Finance;
 
 use App\Models\EnrollmentMode;
+use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\Grade;
 use App\Models\Invoice;
@@ -40,6 +41,25 @@ class MissingTariffGuidanceTest extends FinanceOperationsTestCase
         return ['fee_id' => $this->fee->id, 'grade_group' => 'Подготовительный класс', 'payment_period' => 'yearly'];
     }
 
+    /**
+     * Unified Collection's new services (enrolled student) are ordinary
+     * additional services, so tuition is no longer offered there
+     * (StudentServiceEligibilityPolicy). An ordinary Fee whose only tariff
+     * is monthly, requested yearly, reproduces the same generic "no
+     * matching tariff" case on that path (a price exists, just not for the
+     * requested dimension — exactly like missingPriceItem() for tuition).
+     */
+    private function unpricedAdditionalServiceItem(): array
+    {
+        $fee = Fee::create(['name_ru' => 'Кружок без цены', 'category' => Fee::CATEGORY_OTHER, 'amount' => '1.00', 'is_active' => true]);
+        FeePrice::create([
+            'fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'payment_period' => 'monthly',
+            'amount' => '100.00', 'currency' => 'EGP', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
+        ]);
+
+        return ['fee_id' => $fee->id, 'payment_period' => 'yearly'];
+    }
+
     // 13. Unified Collection: no writes, clear message, authorized link
     // with correct trusted context.
     public function test_unified_collection_missing_tariff_shows_message_and_link_for_authorized_user(): void
@@ -49,12 +69,13 @@ class MissingTariffGuidanceTest extends FinanceOperationsTestCase
             'invoice_items' => DB::table('invoice_items')->count(),
         ];
 
+        $item = $this->unpricedAdditionalServiceItem();
         $response = $this->actingAs($this->accountant)->post(
             route('dashboard.students.unified-collection.store', $this->student),
             [
                 'idempotency_token' => (string) Str::uuid(),
                 'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
-                'new_services' => [array_merge($this->missingPriceItem(), ['quantity' => 1, 'receive_now_amount' => '100.00'])],
+                'new_services' => [array_merge($item, ['quantity' => 1, 'receive_now_amount' => '100.00'])],
             ]
         );
 
@@ -66,7 +87,7 @@ class MissingTariffGuidanceTest extends FinanceOperationsTestCase
         $this->assertNotNull($link);
         $this->assertStringContainsString('/dashboard/finance/tariffs/create', $link);
         $this->assertStringNotContainsString('/admin/fee-prices', $link);
-        $this->assertStringContainsString('fee_id='.$this->fee->id, $link);
+        $this->assertStringContainsString('fee_id='.$item['fee_id'], $link);
         $this->assertStringContainsString('academic_year_id='.$this->year->id, $link);
         $this->assertStringContainsString('enrollment_mode=full_time', $link);
     }
@@ -83,7 +104,7 @@ class MissingTariffGuidanceTest extends FinanceOperationsTestCase
             [
                 'idempotency_token' => (string) Str::uuid(),
                 'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
-                'new_services' => [array_merge($this->missingPriceItem(), ['quantity' => 1, 'receive_now_amount' => '100.00'])],
+                'new_services' => [array_merge($this->unpricedAdditionalServiceItem(), ['quantity' => 1, 'receive_now_amount' => '100.00'])],
             ]
         );
 

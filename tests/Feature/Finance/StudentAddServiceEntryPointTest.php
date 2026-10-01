@@ -87,9 +87,13 @@ class StudentAddServiceEntryPointTest extends FinanceOperationsTestCase
         $response = $this->actingAs($this->accountant)->get(route('dashboard.students.add-service', $this->student));
 
         $response->assertOk();
-        foreach (['Обучение', 'Трансфер', 'Школьная форма', 'Дополнительные занятия', 'Мероприятия и поездки', 'Прочие услуги'] as $label) {
+        foreach (['Обучение', 'Трансфер', 'Школьная форма', 'Дополнительные занятия', 'Прочие услуги'] as $label) {
             $response->assertSee($label);
         }
+        // Owner decision (PR 1, student service eligibility): activities and
+        // excursions are not offered as an ordinary added service.
+        $response->assertDontSee('Мероприятия и поездки');
+        $response->assertDontSee(__('finance_workspace.add_service_activity_hint'));
         // Every non-Food tile shares the exact same destination — Classic
         // Invoice already lets the accountant pick one or several services
         // together in a single invoice; the tiles only help the accountant

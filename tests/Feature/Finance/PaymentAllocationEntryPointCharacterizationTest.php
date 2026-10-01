@@ -125,7 +125,11 @@ class PaymentAllocationEntryPointCharacterizationTest extends MassBillingTestCas
     public function test_charge_and_collect_is_structurally_single_item_and_auto_allocates(): void
     {
         $student = $this->enrolledStudent(suffix: 'ChargeSingle');
-        $fee = $this->registrationFee('500.00');
+        // Charge & Collect sells ordinary additional services only
+        // (StudentServiceEligibilityPolicy) — an ordinary Fee priced exactly
+        // like registrationFee('500.00').
+        $fee = Fee::create(['name_ru' => 'Продлёнка', 'category' => Fee::CATEGORY_OTHER, 'amount' => '1.00', 'is_active' => true]);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'amount' => '500.00', 'currency' => 'EGP', 'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'payment_period' => 'yearly', 'is_active' => true]);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.students.charge.store', $student), [
             'academic_year_id' => $this->year->id, 'fee_id' => $fee->id, 'quantity' => 1,

@@ -9,7 +9,7 @@ use App\Models\Fee;
 use App\Models\PaymentPlan;
 use App\Models\Student;
 use App\Services\Finance\InvoiceIssuanceService;
-use App\Services\Finance\NewSaleFeePolicy;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -24,11 +24,14 @@ class StudentInvoiceController extends Controller
         $this->middleware('permission:manage invoices');
     }
 
-    public function create(Student $student, NewSaleFeePolicy $feePolicy): View
+    public function create(Student $student, StudentServiceEligibilityPolicy $eligibility): View
     {
         $student->load(['currentEnrollment.academicYear', 'currentEnrollment.grade', 'currentEnrollment.serviceSubscriptions.fee']);
         $year = $student->currentEnrollment?->academicYear;
-        $fees = $feePolicy->apply(Fee::active())->where('category', '!=', Fee::CATEGORY_FOOD)->with(['prices' => fn ($query) => $query
+        // Year-setup catalog: Classic is the sanctioned path for tuition
+        // with installments/discounts, so canonical tuition stays available
+        // while activities, legacy tuition and test Fees do not.
+        $fees = $eligibility->applyYearSetup(Fee::query())->where('category', '!=', Fee::CATEGORY_FOOD)->with(['prices' => fn ($query) => $query
             ->when($year, fn ($query) => $query->where('academic_year_id', $year->id))
             ->where('is_active', true)->orderByDesc('start_date')])->orderBy('category')->orderBy('name_ru')->get();
 

@@ -17,11 +17,9 @@ class QuickStudentRegistrationPaymentUxTest extends QuickRegistrationUxTestCase
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1.00']],
         ]))->assertSessionHasErrors(['cash_account_id', 'payment_method']);
 
-        // cash always resolves to the canonical operating account
-        // (CashAccount::resolvePaymentAccountId) regardless of any
-        // cash_account_id submitted, so the only way left to exercise an
-        // inactive-account rejection is to deactivate that canonical
-        // account itself.
+        // With nothing submitted, cash resolves to the actor's own eligible
+        // drawer (PR 4, CashDrawerResolver), so the inactive-account case is
+        // exercised by deactivating that drawer itself.
         CashAccount::operating()->update(['is_active' => false]);
         // Finance UAT corrective (P0) — the first call above already
         // succeeded and created a real "Иванов Иван" Student, so resubmitting
@@ -35,8 +33,11 @@ class QuickStudentRegistrationPaymentUxTest extends QuickRegistrationUxTestCase
             'student_last_name_ru' => 'Сидоров',
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1.00']],
             'payment_method' => 'cash',
-        ]))->assertSessionHasErrors('cash_account_id');
-        $this->assertSame('Выбранная касса неактивна.', session('errors')->first('cash_account_id'));
+        ]))->assertSessionHasErrors('payment_method');
+        // PR 4 — cash is resolved to one of the actor's own eligible drawers
+        // (CashDrawerResolver); an inactive account is never eligible, so the
+        // actor has none and the cash receipt is refused.
+        $this->assertSame(\App\Services\Finance\CashDrawerResolver::NO_OWN_SESSION, session('errors')->first('payment_method'));
     }
 
     public function test_overpayment_is_rejected_in_russian(): void

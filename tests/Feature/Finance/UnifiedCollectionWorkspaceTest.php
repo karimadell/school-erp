@@ -344,14 +344,26 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
 
     // ----- 17. Cash canonicalization through HTTP -----
 
-    public function test_cash_submission_resolves_canonical_account_through_http(): void
+    // PR 4 — the form disables the drawer select for cash, so nothing is
+    // submitted and the actor's single own drawer is auto-selected; a drawer
+    // the actor has no open session on is rejected (never silently
+    // overridden) with zero writes.
+    public function test_cash_submission_resolves_the_actors_own_drawer_through_http(): void
     {
         $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
         $invoice = $this->issueSimpleInvoice('1000.00');
 
-        $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
+        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
             'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
+        ])->assertSessionHasErrors('payment_method');
+        $this->assertSame(0, FinanceCollection::count());
+        $this->assertSame(0, InvoicePayment::count());
+
+        $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
+            'idempotency_token' => (string) Str::uuid(),
+            'academic_year_id' => $this->year->id, 'payment_method' => 'cash',
             'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
         ]);
 
@@ -359,7 +371,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         $response->assertRedirect(route('dashboard.collections.receipt', $collection));
         $payment = InvoicePayment::query()->sole();
         $this->assertSame($this->cash->id, $payment->cash_account_id);
-        $this->assertNotSame($decoy->id, $payment->cash_account_id);
+        $this->assertSame($this->cashSession->id, $payment->cashTransaction->cash_session_id);
     }
 
     // ----- 18. Failed later line rolls back the whole HTTP operation -----

@@ -4,7 +4,6 @@ namespace App\Services\Finance;
 
 use App\Exceptions\DuplicateOpenInvoiceException;
 use App\Models\AcademicYear;
-use App\Models\CashAccount;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\Invoice;
@@ -55,6 +54,7 @@ class ChargeAndCollectService
         private InvoicePaymentService $payments,
         private FoodBillableDayCalculator $foodDays,
         private StudentServiceSubscriptionService $subscriptions,
+        private CashDrawerResolver $drawers,
     ) {
     }
 
@@ -135,7 +135,7 @@ class ChargeAndCollectService
             if (bccomp($collect, '0.00', 2) > 0) {
                 $payment = $this->payments->record(
                     invoiceId: $invoice->id,
-                    cashAccountId: CashAccount::resolvePaymentAccountId((string) $data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null),
+                    cashAccountId: $this->drawers->paymentAccountId((string) $data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null, $actor),
                     amount: $collect,
                     paymentMethod: (string) $data['payment_method'],
                     idempotencyKey: (string) $data['idempotency_key'],

@@ -103,6 +103,7 @@ class FinanceCollectionService
         private MixedPaymentCollectionOrchestrator $orchestrator,
         private RegistrationEnrollmentModePolicy $modePolicy,
         private NewSaleFeePolicy $feePolicy,
+        private CashDrawerResolver $drawers,
     ) {}
 
     /**
@@ -134,21 +135,24 @@ class FinanceCollectionService
             $this->modePolicy->resolve((int) ($data['annual_registration']['enrollment_mode_id'] ?? 0));
         }
 
-        // §7 corrective pass — canonical cash-account resolution, resolved
-        // ONCE and used everywhere a cash account matters: the collection
-        // row itself, every existing-obligation payment, every new-charge
-        // payment. A 'cash' payment_method always resolves to the
-        // canonical operating account regardless of what (if anything)
-        // the caller submitted — the exact same policy
-        // QuickStudentRegistrationService/ChargeAndCollectService already
-        // enforce; this is not a second, divergent cash policy.
-        $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
-
         // Normalizes every line's receive_now_amount to a validated 2dp
         // money string (rejecting negative amounts, defaulting a missing
         // key to '0.00' rather than raising a raw PHP warning) BEFORE
         // hashing or processing, so both see the exact same values.
         $data = $this->normalizeLines($data);
+
+        // §7 corrective pass + PR 4 — the cash account, resolved ONCE and
+        // used everywhere a cash account matters: the collection row
+        // itself, every existing-obligation payment, every new-charge
+        // payment. For cash that money is actually received, it is the
+        // actor's own eligible drawer (CashDrawerResolver — never another
+        // user's session, never owner cash); other methods keep their
+        // canonical routing. A charge-only collection receives no cash, so
+        // it needs no drawer and keeps the plain canonical mapping.
+        $submittedAccountId = isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null;
+        $cashAccountId = $this->receivesMoney($data)
+            ? $this->drawers->paymentAccountId($data['payment_method'], $submittedAccountId, $actor)
+            : CashAccount::resolvePaymentAccountId($data['payment_method'], $submittedAccountId);
 
         $outerToken = $data['idempotency_token'] ?? (string) Str::uuid();
         $idempotencyKey = DeterministicIdempotencyKey::derive($outerToken, self::IDEMPOTENCY_NAMESPACE, 'collection');
@@ -277,6 +281,12 @@ class FinanceCollectionService
         if (empty($data['existing_obligations']) && empty($data['new_services'])) {
             throw ValidationException::withMessages(['services' => 'Укажите хотя бы одну оплачиваемую услугу или начисление.']);
         }
+    }
+
+    private function receivesMoney(array $data): bool
+    {
+        return collect([...$data['existing_obligations'], ...$data['new_services']])
+            ->contains(fn (array $line) => bccomp($line['receive_now_amount'], '0.00', 2) > 0);
     }
 
     /**

@@ -7,6 +7,8 @@ use App\Models\CashSession;
 use App\Models\CashTransaction;
 use App\Models\RevenueCategory;
 use App\Models\RevenueEntry;
+use App\Models\User;
+use App\Services\Finance\CashDrawerResolver;
 use App\Services\Finance\CashSessionService;
 use App\Services\Finance\RevenueService;
 use RuntimeException;
@@ -26,6 +28,9 @@ class RevenueAtomicCreationTest extends FinanceOperationsTestCase
         $this->cafeteria = RevenueCategory::firstOrCreate(['code' => RevenueCategory::CODE_CAFETERIA], ['name_ru' => 'Кафетерий', 'is_active' => true]);
     }
 
+    // PR 4: postToLedger() binds its cash session through
+    // CashDrawerResolver::sessionForReceipt(), while reversal still uses
+    // CashSessionService::activeFor() — the failure is injected at both.
     private function bindBrokenCashSessionService(): void
     {
         $this->app->bind(CashSessionService::class, function () {
@@ -39,11 +44,21 @@ class RevenueAtomicCreationTest extends FinanceOperationsTestCase
                 }
             };
         });
+        $this->app->bind(CashDrawerResolver::class, function () {
+            return new class extends CashDrawerResolver
+            {
+                public function sessionForReceipt(CashAccount $account, ?User $actor, string $field = 'cash_account_id'): CashSession
+                {
+                    throw new RuntimeException('Simulated unexpected ledger-posting failure.');
+                }
+            };
+        });
     }
 
     private function repairCashSessionService(): void
     {
         $this->app->bind(CashSessionService::class, fn () => new CashSessionService());
+        $this->app->bind(CashDrawerResolver::class, fn () => new CashDrawerResolver());
     }
 
     protected function tearDown(): void

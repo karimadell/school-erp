@@ -47,18 +47,14 @@ abstract class FinanceOperationsTestCase extends TestCase
         $this->enrollment = Enrollment::create(['student_id'=>$this->student->id,'academic_year_id'=>$this->year->id,'enrollment_mode_id'=>$mode->id,'stage_id'=>$stage->id,'grade_id'=>$grade->id,'class_id'=>$class->id,'academic_year'=>$this->year->name,'enrollment_date'=>'2026-08-01','enrolled_at'=>'2026-08-01','status'=>'active','is_active'=>true]);
         $this->fee = Fee::create(['name_ru'=>'Обучение','category'=>'tuition','amount'=>'1.00','is_active'=>true]);
         FeePrice::create(['fee_id'=>$this->fee->id,'academic_year_id'=>$this->year->id,'grade_id'=>$grade->id,'payment_period'=>'yearly','amount'=>'1200.00','currency'=>'EGP','start_date'=>'2026-08-01','end_date'=>'2027-06-30','is_active'=>true]);
-        // Cash Operations Phase 4: cash payments made through the HTTP layer
-        // (storePayment/chargeStore/etc.) always resolve to the canonical
-        // operating account server-side now, regardless of any
-        // cash_account_id a request submits — see
-        // CashAccount::resolvePaymentAccountId(). The shared fixture must
-        // open its session on that same canonical account, not an
-        // arbitrary named one, or every cash collection in this suite
-        // would fail with "no open session" against the wrong drawer.
+        // PR 4: a cash receipt goes into one of the ACTOR'S OWN eligible
+        // drawers — an active cash account with an open session they opened
+        // (CashDrawerResolver). The shared fixture gives the accountant that
+        // shift on the operating drawer, so with nothing submitted cash
+        // resolves there. Tests that need the no-open-session path close it
+        // first (see closeCashSession()); a test acting as another user opens
+        // that user's own session instead.
         $this->cash = CashAccount::operating();
-        // Phase 3: a cash collection now requires an open shift, so the shared
-        // fixture opens one on the primary drawer. Tests that need the
-        // no-open-session path close it first (see closeCashSession()).
         $this->cashSession = app(\App\Services\Finance\CashSessionService::class)->open($this->cash, $this->accountant);
     }
 

@@ -314,6 +314,8 @@ class FinanceOperationsController extends Controller
         return view('dashboard.finance.payments.create', [
             'invoice' => $invoice,
             'cashAccounts' => CashAccount::where('is_active', true)->excludingOwner()->orderBy('name')->get(),
+            // PR 4: only the actor's own eligible drawers are offered for cash.
+            'ownCashDrawerIds' => app(\App\Services\Finance\CashDrawerResolver::class)->eligibleSessions(request()->user())->pluck('cash_account_id')->map(fn ($id) => (int) $id)->all(),
             'idempotencyKey' => (string) Str::uuid(),
             'allocationClean' => $allocationClean,
             'remainingByItem' => $remainingByItem,
@@ -354,10 +356,12 @@ class FinanceOperationsController extends Controller
         // drawer is used exactly as submitted. bank/instapay keep the exact
         // same canonical-routing call as before, untouched; card was never
         // routed through it either way.
+        // PR 4: the selected drawer must be one of the actor's own eligible
+        // drawers (active cash account with an open session they opened) —
+        // CashDrawerResolver; non-cash methods keep their canonical routing.
         $paymentMethod = (string) $request->input('payment_method');
-        $cashAccountId = $paymentMethod === \App\Models\CashTransaction::METHOD_CASH
-            ? $request->integer('cash_account_id')
-            : CashAccount::resolvePaymentAccountId($paymentMethod, $request->integer('cash_account_id'));
+        $cashAccountId = app(\App\Services\Finance\CashDrawerResolver::class)
+            ->paymentAccountId($paymentMethod, $request->integer('cash_account_id') ?: null, $request->user());
 
         $payment = $service->record(
             invoiceId: $invoice->id,

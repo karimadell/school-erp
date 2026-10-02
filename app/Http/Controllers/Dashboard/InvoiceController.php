@@ -16,6 +16,7 @@ use App\Models\MealPlan;
 use App\Models\Student;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
+use App\Services\Finance\CashDrawerResolver;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\StudentServiceEligibilityPolicy;
 use App\Support\DeterministicIdempotencyKey;
@@ -201,7 +202,7 @@ class InvoiceController extends Controller
 
                     $payments->record(
                         invoiceId: $invoice->id,
-                        cashAccountId: CashAccount::resolvePaymentAccountId($data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null),
+                        cashAccountId: app(CashDrawerResolver::class)->paymentAccountId($data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null, $actor),
                         paymentMethod: $data['payment_method'],
                         amount: $initialPayment,
                         idempotencyKey: $paymentKey,

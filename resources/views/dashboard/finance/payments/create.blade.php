@@ -308,7 +308,7 @@
         </div>
 
         <div class="col-md-4"><label class="form-label">Способ оплаты</label><select name="payment_method" id="payment-method" class="form-select" required><option value="cash">Наличные</option><option value="card">Банковская карта</option><option value="bank">Банковский перевод</option><option value="instapay">InstaPay</option></select></div>
-        <div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" id="cash-account" class="form-select" required><option value="">Выберите кассу</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" data-cash-drawer="{{ $account->type === \App\Models\CashAccount::TYPE_CASH ? '1' : '0' }}">{{ $account->name }}</option>@endforeach</select><div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div><div class="form-text" id="cash-account-manual-hint">Выберите кассу, в которую фактически поступили наличные.</div></div>
+        <div class="col-md-4"><label class="form-label">Касса</label><select name="cash_account_id" id="cash-account" class="form-select" required><option value="">Выберите кассу</option>@foreach($cashAccounts as $account)<option value="{{ $account->id }}" data-cash-drawer="{{ in_array($account->id, $ownCashDrawerIds ?? [], true) ? '1' : '0' }}">{{ $account->name }}</option>@endforeach</select><div class="form-text d-none" id="cash-account-auto-hint">Касса определяется автоматически по способу оплаты.</div><div class="form-text" id="cash-account-manual-hint">Выберите кассу, в которую фактически поступили наличные.</div></div>
         <div class="col-12"><label class="form-label">Примечание</label><textarea name="notes" class="form-control">{{ old('notes') }}</textarea></div>
         <div class="col-12"><div class="small text-muted mb-3">Дата и время платежа фиксируются системой при проведении.</div><button type="submit" class="btn btn-success" id="submit-payment-btn" disabled>Принять оплату</button></div>
     </div></form>
@@ -339,6 +339,13 @@
             option.hidden = hide;
             if (hide && option.selected) account.value = '';
         });
+
+        // PR 4: exactly one own open drawer → preselect it (the server still
+        // validates the drawer and its session at posting time).
+        const ownDrawers = options.filter(option => option.value !== '' && option.dataset.cashDrawer === '1');
+        if (isCash && account.value === '' && ownDrawers.length === 1) {
+            account.value = ownDrawers[0].value;
+        }
     }
     method.addEventListener('change', sync);
     sync();

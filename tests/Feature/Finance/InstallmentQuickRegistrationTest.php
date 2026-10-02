@@ -34,6 +34,8 @@ class InstallmentQuickRegistrationTest extends QuickRegistrationUxTestCase
         $plan->installments()->create(['name_ru'=>'Первый','sequence'=>1,'offset_days'=>0,'percentage'=>'10']);
         $plan->installments()->create(['name_ru'=>'Второй','sequence'=>2,'offset_days'=>30,'percentage'=>'90']);
         $cash=CashAccount::create(['name'=>'Касса','type'=>'cash','is_active'=>true]);
+        // PR 4: cash is only received through the actor's own open session.
+        app(\App\Services\Finance\CashSessionService::class)->open($cash, $this->accountant);
         $payload=$this->payload($structure,$fee,['payment_type'=>'plan','payment_plan_id'=>$plan->id,'cash_account_id'=>$cash->id,'payment_method'=>'cash','services'=>[['fee_id'=>$fee->id,'quantity'=>1,'paid_now'=>'200.00']]]);
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'),$payload)->assertSessionHasErrors('services');
         // Phase 2 transaction/atomicity rule: this failure happens *after*

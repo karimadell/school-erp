@@ -18,6 +18,7 @@ use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\StudentServiceEligibilityPolicy;
+use App\Support\DeterministicIdempotencyKey;
 use App\Support\FinanceShareRecipient;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\RedirectResponse;
@@ -31,6 +32,8 @@ use Illuminate\View\View;
 class InvoiceController extends Controller
 {
     use HasMissingTariffGuidance;
+
+    private const IDEMPOTENCY_NAMESPACE = 'classic-invoice';
 
     public function __construct()
     {
@@ -75,6 +78,8 @@ class InvoiceController extends Controller
             'fees' => $fees,
             'mealPlans' => MealPlan::active()->orderBy('name_ru')->get(),
             'priceRows' => $this->currentPriceRows($fees, $academicYears, $calculator),
+            // One stable token per rendered form — see store().
+            'idempotencyKey' => (string) Str::uuid(),
         ]);
     }
 
@@ -143,13 +148,34 @@ class InvoiceController extends Controller
         // invoice_fee compatibility pivot are all now InvoiceIssuanceService's
         // responsibility — this controller only composes issuance with the
         // optional initial payment, exactly like ChargeAndCollectService does.
+        //
+        // Idempotency: both child keys are derived from the form's one stable
+        // token, so a double submit replays the same Invoice (issue()'s own
+        // payload hash) and the same InvoicePayment (record()'s own payload
+        // hash) instead of writing them twice.
+        $issueKey = DeterministicIdempotencyKey::derive($data['idempotency_key'], self::IDEMPOTENCY_NAMESPACE, 'issue');
+        $paymentKey = DeterministicIdempotencyKey::derive($data['idempotency_key'], self::IDEMPOTENCY_NAMESPACE, 'payment');
+
         try {
-            $invoice = DB::transaction(function () use ($data, $issuer, $payments, $actor, $ip, $userAgent) {
+            $invoice = DB::transaction(function () use ($data, $issuer, $payments, $actor, $ip, $userAgent, $issueKey, $paymentKey) {
                 $student = Student::findOrFail($data['student_id']);
-                $invoice = $issuer->issue($student, $data, $actor, $ip, $userAgent);
+                $invoice = $issuer->issue($student, $data, $actor, $ip, $userAgent, idempotencyKey: $issueKey);
 
                 $initialPayment = (string) ($data['initial_payment_amount'] ?? '0');
-                if (bccomp($initialPayment, '0.00', 2) > 0) {
+                $wantsInitialPayment = bccomp($initialPayment, '0.00', 2) > 0;
+
+                // issue()'s hash covers the invoice only, never the initial
+                // payment. On a replay, the original submission's payment
+                // intent is fixed by whether its payment exists (invoice and
+                // payment commit together in this one transaction), so a retry
+                // that adds or drops the initial payment is a different
+                // submission — rejected rather than paying a replayed invoice.
+                if (! $invoice->wasRecentlyCreated
+                    && $wantsInitialPayment !== InvoicePayment::query()->where('idempotency_key', $paymentKey)->exists()) {
+                    throw ValidationException::withMessages(['idempotency_key' => 'Ключ повторного запроса уже использован для другого оформления счёта.']);
+                }
+
+                if ($wantsInitialPayment) {
                     // Finance V2, Phase 1B — a brand-new invoice never has prior
                     // payments, so it is always "allocation-clean"; a multi-item
                     // invoice being paid immediately must have its initial
@@ -178,7 +204,7 @@ class InvoiceController extends Controller
                         cashAccountId: CashAccount::resolvePaymentAccountId($data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null),
                         paymentMethod: $data['payment_method'],
                         amount: $initialPayment,
-                        idempotencyKey: (string) Str::uuid(),
+                        idempotencyKey: $paymentKey,
                         actor: $actor,
                         reference: 'Первоначальная оплата по счёту '.$invoice->display_number,
                         allocations: $allocations,

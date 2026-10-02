@@ -83,13 +83,12 @@ class StoreInvoiceRequest extends FormRequest
             // for where 'calendar' is accepted.
             'payment_type' => ['required', 'in:one_time,plan'],
             'payment_plan_id' => ['nullable', 'required_if:payment_type,plan', 'integer', 'exists:payment_plans,id'],
-            // Finance Workspace corrective PR #1: this FormRequest is shared
-            // with the legacy InvoiceController::store() (route
-            // dashboard.invoices.store), whose own create form has no
-            // idempotency field and is out of this pass's scope — the
-            // required key applies only to the Classic Student Invoice
-            // route (dashboard.students.invoices.store) it was added for.
-            'idempotency_key' => [$this->routeIs('dashboard.students.invoices.store') ? 'required' : 'nullable', 'uuid'],
+            // Required on both routes that share this FormRequest: the
+            // Classic Student Invoice (dashboard.students.invoices.store)
+            // and the legacy /invoices/create (dashboard.invoices.store).
+            // Each create form renders one stable per-page token, so a
+            // double submit replays instead of issuing a second invoice.
+            'idempotency_key' => ['required', 'uuid'],
             'subtotal' => ['prohibited'],
             'total_amount' => ['prohibited'],
             'paid_amount' => ['prohibited'],

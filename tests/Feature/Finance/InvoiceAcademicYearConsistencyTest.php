@@ -13,6 +13,7 @@ use App\Models\Student;
 use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class InvoiceAcademicYearConsistencyTest extends TestCase
@@ -50,6 +51,7 @@ class InvoiceAcademicYearConsistencyTest extends TestCase
             'due_date' => '2026-09-01',
             'fees' => [$this->fee->id],
             'cash_account_id' => $this->account->id,
+            'idempotency_key' => (string) Str::uuid(),
         ], $overrides);
     }
 

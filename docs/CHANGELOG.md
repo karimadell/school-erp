@@ -4,9 +4,19 @@
 
 ---
 
-## 2026-10-01 — Finance: Student service eligibility (PR 1 of the frozen Finance corrective plan) — implemented, pending independent review
+## 2026-10-02 — Finance: Legacy `/invoices/create` idempotency (PR 2 of the frozen Finance corrective plan) — implemented, pending independent review
 
-**Branch:** `fix/finance-student-service-eligibility` (from `recovery/full-work-2026-07-31` @ `5612eb8`). Not merged.
+**Branch:** `fix/legacy-invoice-create-idempotency` (from `recovery/full-work-2026-07-31` @ `d9d4c2e`). Not merged.
+
+- **Gap closed:** the legacy `/invoices/create` screen (`InvoiceController::store()`, route `dashboard.invoices.store`) had no request token — it issued without an idempotency key and paid any initial payment with a fresh `Str::uuid()` per request, so a double submit could create a duplicate Invoice and, with an initial payment, a duplicate InvoicePayment and CashTransaction.
+- **Fix (existing infrastructure only):** `InvoiceController::create()` renders one UUID per form (hidden `idempotency_key`); `StoreInvoiceRequest` now requires `idempotency_key` (`required|uuid`) on both routes that share it. `store()` derives two child keys with `DeterministicIdempotencyKey` (`classic-invoice` / `issue` and `classic-invoice` / `payment`) and passes them to the unchanged `InvoiceIssuanceService::issue()` and `InvoicePaymentService::record()`, inside the existing single transaction.
+- **Replay contract:** same token + same payload → the same Invoice and the same initial payment, zero new writes (a note-only difference still replays, as `issue()`'s hash deliberately excludes notes). Same token + changed invoice payload → rejected by `issue()`'s payload hash; changed initial-payment amount → rejected by `record()`'s payload hash. Because `issue()`'s hash covers the invoice only, a same-token retry that **adds or drops** the initial payment is rejected by a small guard in the controller (invoice and payment commit together, so the original intent is fixed by whether its derived payment key exists). All rejections write nothing. New token → a genuinely new submission. Missing/malformed token → validation error, zero writes.
+- **Not changed:** the Classic *Student* Invoice (`StudentInvoiceController`) — already protected since `19c5622`, and its passing of the raw form token to `issue()` is untouched; `InvoiceIssuanceService`, `InvoicePaymentService`, pricing, discounts, installments, allocation, receipts, cash-account resolution and CashSession behavior; models, migrations, routes, permissions.
+- Tests: new `LegacyInvoiceCreateIdempotencyTest` (12 tests: form token, replay with/without initial payment and with a multi-item split payment, note-only replay, changed invoice / changed amount / added / dropped payment rejected with zero writes across invoices, items, pivot, installments, payments, allocations, cash transactions and audit logs, new token, missing and malformed token). Existing legacy-route tests now send a token (fixture-only change); the one `ClassicInvoiceTuitionModeDerivationTest` call that nulled the token on the legacy route now keeps it, so it still reaches the eligibility check it asserts.
+
+## 2026-10-01 — Finance: Student service eligibility (PR 1 of the frozen Finance corrective plan) — merged
+
+**Branch:** `fix/finance-student-service-eligibility` (from `recovery/full-work-2026-07-31` @ `5612eb8`). Merged as PR #89 (standard merge `d9d4c2e`).
 
 - Adds `App\Services\Finance\StudentServiceEligibilityPolicy` — the single authority for which Fees may be **newly sold** to a student, keyed only on stable metadata (`category`, `is_active`, `is_test_data`; never a display name or id; a Fee with no category is never eligible), with two explicit catalogs:
   - **`additionalService`** (ordinary mid-year service for an enrolled student): requires active + non-test; excludes `activity`, all tuition categories (canonical `tuition` and legacy variants, via the existing `TuitionEnrollmentModePricing::isTuitionCategory()` list) and `registration`.

@@ -55,6 +55,7 @@ class PaymentAllocationEntryPointCharacterizationTest extends MassBillingTestCas
         $feeB = $this->tuition; // already priced 1200.00 for $this->grade in MassBillingTestCase::setUp()
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'fees' => [$feeA->id, $feeB->id],
             'payment_method' => 'cash', 'cash_account_id' => $this->cashAccountForInvoicePayments()->id,
@@ -84,6 +85,7 @@ class PaymentAllocationEntryPointCharacterizationTest extends MassBillingTestCas
         $feeB = $this->tuition;
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'fees' => [$feeA->id, $feeB->id],
             'payment_method' => 'cash', 'cash_account_id' => $this->cashAccountForInvoicePayments()->id,
@@ -109,6 +111,7 @@ class PaymentAllocationEntryPointCharacterizationTest extends MassBillingTestCas
         $fee = $this->registrationFee('500.00');
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'fees' => [$fee->id],
             'payment_method' => 'cash', 'cash_account_id' => $this->cashAccountForInvoicePayments()->id,
@@ -160,6 +163,7 @@ class PaymentAllocationEntryPointCharacterizationTest extends MassBillingTestCas
         // Issue a multi-item invoice with no initial payment — clean by
         // construction (zero prior payments).
         $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'fees' => [$feeA->id, $feeB->id],
         ])->assertSessionHasNoErrors();
@@ -186,6 +190,7 @@ class PaymentAllocationEntryPointCharacterizationTest extends MassBillingTestCas
         $feeB = $this->tuition;
 
         $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'fees' => [$feeA->id, $feeB->id],
         ])->assertSessionHasNoErrors();

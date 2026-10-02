@@ -10,6 +10,7 @@ use App\Models\MealPlan;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\SchoolPriceListImportService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Phase 1 — proves the canonical dimension contract end to end: the
@@ -97,6 +98,7 @@ class CanonicalPricingContractTest extends FinanceOperationsTestCase
         ]);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $this->student->id,
             'academic_year_id' => $this->year->id,
             'due_date' => $this->year->end_date->toDateString(),

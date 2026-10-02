@@ -26,9 +26,9 @@ use Illuminate\Validation\ValidationException;
  *    invoices, School Enrollment). Canonical tuition and registration are
  *    allowed here; activities and legacy tuition variants are not.
  *
- * Both catalogs require is_active and exclude is_test_data, enforced on
- * the listing query AND on submitted fee ids (assert*), so hiding a Fee in
- * the UI is never the only protection.
+ * Both catalogs require is_active and a non-null category and exclude
+ * is_test_data, enforced on the listing query AND on submitted fee ids
+ * (assert*), so hiding a Fee in the UI is never the only protection.
  *
  * Deliberately NOT used for: collecting existing debt (an already-issued
  * invoice stays payable whatever its Fee's current eligibility), tariff
@@ -58,6 +58,9 @@ class StudentServiceEligibilityPolicy
         return $this->newSaleFeePolicy->apply($query)
             ->where('is_active', true)
             ->where('is_test_data', false)
+            // Explicit, not left to SQL NULL semantics: an uncategorized Fee
+            // is never sellable — mirrored in rejectionMessage().
+            ->whereNotNull('category')
             ->whereNotIn('category', $this->excludedCategories($context));
     }
 
@@ -105,6 +108,9 @@ class StudentServiceEligibilityPolicy
 
     private function rejectionMessage(Fee $fee, string $context): ?string
     {
+        if ($fee->category === null) {
+            return 'У услуги не указана категория — она недоступна для новых начислений.';
+        }
         if (in_array($fee->category, $this->newSaleFeePolicy->legacyTuitionCategories(), true)) {
             return 'Для новых начислений используется единая услуга «Обучение»; устаревшая отдельная услуга недоступна.';
         }

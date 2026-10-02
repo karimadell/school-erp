@@ -177,6 +177,68 @@ class StudentServiceEligibilityPolicyTest extends FinanceOperationsTestCase
         $this->assertFalse($this->policy->isEligible($activityWithAnOrdinaryName, StudentServiceEligibilityPolicy::CONTEXT_YEAR_SETUP));
     }
 
+    public function test_a_null_category_fee_is_ineligible_in_both_contexts_on_query_and_assertion(): void
+    {
+        $uncategorized = $this->fee('Без категории', Fee::CATEGORY_OTHER);
+        $uncategorized->forceFill(['category' => null])->save();
+        $this->assertNull($uncategorized->fresh()->category);
+        $this->assertTrue($uncategorized->is_active);
+        $this->assertFalse((bool) $uncategorized->fresh()->is_test_data);
+
+        foreach ([StudentServiceEligibilityPolicy::CONTEXT_ADDITIONAL_SERVICE, StudentServiceEligibilityPolicy::CONTEXT_YEAR_SETUP] as $context) {
+            $this->assertNotContains($uncategorized->id, $this->policy->apply(Fee::query(), $context)->pluck('id')->all(), "query [{$context}]");
+            $this->assertFalse($this->policy->isEligible($uncategorized->fresh(), $context), "isEligible [{$context}]");
+
+            try {
+                $this->policy->assertEligible($uncategorized->fresh(), $context, 'fees');
+                $this->fail("assertEligible must reject a null category in [{$context}]");
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('fees', $exception->errors());
+            }
+
+            try {
+                $this->policy->assertEligibleIds([$uncategorized->id], $context, 'fees');
+                $this->fail("assertEligibleIds must reject a null category in [{$context}]");
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('fees', $exception->errors());
+            }
+        }
+    }
+
+    public function test_crafted_null_category_sales_are_rejected_at_every_boundary_with_zero_writes(): void
+    {
+        $uncategorized = $this->fee('Без категории', Fee::CATEGORY_OTHER);
+        $this->price($uncategorized, '500.00');
+        $uncategorized->forceFill(['category' => null])->save();
+
+        // additionalService — Unified Collection (enrolled student).
+        $before = $this->financialSnapshot();
+        $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
+            'idempotency_token' => (string) Str::uuid(),
+            'academic_year_id' => $this->year->id, 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+            'new_services' => [['fee_id' => $uncategorized->id, 'quantity' => 1, 'receive_now_amount' => '500.00', 'payment_period' => 'yearly']],
+        ])->assertSessionHasErrors('new_services');
+        $this->assertSame($before, $this->financialSnapshot());
+
+        // additionalService — Charge & Collect.
+        $this->actingAs($this->accountant)->post(route('dashboard.students.charge.store', $this->student), [
+            'academic_year_id' => $this->year->id, 'fee_id' => $uncategorized->id, 'quantity' => 1,
+            'payment_period' => 'yearly', 'due_date' => '2027-01-01', 'pricing_date' => '2026-09-01',
+            'idempotency_key' => (string) Str::uuid(),
+            'collect_amount' => '500.00', 'payment_method' => 'cash', 'cash_account_id' => $this->cash->id,
+        ])->assertSessionHasErrors(['fee_id' => 'У услуги не указана категория — она недоступна для новых начислений.']);
+        $this->assertSame($before, $this->financialSnapshot());
+
+        // yearSetup — Classic Student Invoice.
+        $this->actingAs($this->accountant)->post(route('dashboard.students.invoices.store', $this->student), [
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'pricing_date' => '2026-09-01', 'due_date' => '2027-06-30',
+            'fees' => [$uncategorized->id], 'payment_type' => 'one_time',
+            'idempotency_key' => (string) Str::uuid(),
+        ])->assertSessionHasErrors('fees');
+        $this->assertSame($before, $this->financialSnapshot());
+    }
+
     public function test_unknown_context_fails_loudly(): void
     {
         $this->expectException(\InvalidArgumentException::class);

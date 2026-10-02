@@ -46,6 +46,7 @@
 
     <form method="POST" action="{{ route('dashboard.invoices.store') }}" id="invoice-form">
         @csrf
+        <input type="hidden" name="idempotency_key" value="{{ $idempotencyKey }}">
 
         <div class="row g-4">
             <div class="col-lg-8">

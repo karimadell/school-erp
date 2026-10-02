@@ -62,6 +62,7 @@ class FinanceV2Phase1BAllocationTest extends MassBillingTestCase
         $feeB = $this->tuition; // 1200.00
 
         $this->actingAs($this->accountant)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $student->id, 'academic_year_id' => $this->year->id,
             'due_date' => '2027-01-01', 'fees' => [$feeA->id, $feeB->id],
         ])->assertSessionHasNoErrors();

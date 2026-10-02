@@ -15,6 +15,7 @@ use App\Models\Student;
 use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -90,6 +91,7 @@ class InvoiceCreatePricePreviewTest extends TestCase
         // amount as displayed" (1803.00) succeeds instead of being
         // rejected as a false overpayment.
         $store = $this->actingAs($user)->post(route('dashboard.invoices.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'student_id' => $student->id,
             'academic_year_id' => $year->id,
             'due_date' => '2026-09-01',

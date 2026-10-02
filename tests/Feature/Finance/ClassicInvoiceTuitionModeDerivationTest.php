@@ -273,7 +273,7 @@ class ClassicInvoiceTuitionModeDerivationTest extends FinanceOperationsTestCase
 
         $this->actingAs($this->accountant)->post(
             route('dashboard.invoices.store'),
-            $this->payload(['fees' => [$externalFee->id], 'idempotency_key' => null])
+            $this->payload(['fees' => [$externalFee->id]])
         )->assertSessionHasErrors('fees');
         $this->assertSame($beforeCount, Invoice::count());
     }

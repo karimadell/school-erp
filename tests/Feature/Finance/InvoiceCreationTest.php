@@ -17,6 +17,7 @@ use App\Models\Student;
 use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class InvoiceCreationTest extends TestCase
@@ -71,6 +72,7 @@ class InvoiceCreationTest extends TestCase
             'fees' => [$this->fee->id],
             'cash_account_id' => $this->account->id,
             'initial_payment_amount' => '0.00',
+            'idempotency_key' => (string) Str::uuid(),
         ], $overrides);
     }
 

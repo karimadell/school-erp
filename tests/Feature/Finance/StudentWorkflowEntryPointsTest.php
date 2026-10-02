@@ -186,11 +186,19 @@ class StudentWorkflowEntryPointsTest extends FinanceOperationsTestCase
         $response->assertSee(route('dashboard.finance.income.students', ['context' => 'payment']), false);
     }
 
-    public function test_service_card_links_to_student_search_with_service_context(): void
+    // PR 3: the top-level «Услуга / дополнительный сбор» card is removed
+    // (service addition becomes contextual to the student in PR 5); the
+    // ?context=service route itself still works.
+    public function test_service_card_is_no_longer_on_the_landing_but_its_context_route_still_works(): void
     {
         $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.index'));
 
         $response->assertOk();
-        $response->assertSee(route('dashboard.finance.income.students', ['context' => 'service']), false);
+        $response->assertDontSee(route('dashboard.finance.income.students', ['context' => 'service']), false);
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.finance.income.students', ['context' => 'service']))
+            ->assertOk()
+            ->assertSee(__('finance_workspace.income_students_title_service'));
     }
 }

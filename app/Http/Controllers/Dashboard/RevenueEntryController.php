@@ -178,6 +178,51 @@ class RevenueEntryController extends Controller
     }
 
     /**
+     * Legacy categories kept only for history: existing rows stay readable
+     * (index/show/receipt) and the category itself is never deleted,
+     * renamed or migrated, but no NEW entry may be created with it through
+     * this generic path. 'cafeteria' is superseded by the dedicated
+     * 'buffet' (and, for meals, Stolovaya) workflows.
+     *
+     * @return array<int, string>
+     */
+    private function legacyCategoryCodes(): array
+    {
+        return [RevenueCategory::CODE_CAFETERIA];
+    }
+
+    /**
+     * Every category the generic "Прочий приход" form may never create an
+     * entry with — the single list both formOptions() (UI) and
+     * forbidControlledCategory() (server) apply, so the two cannot drift.
+     *
+     * @return array<int, string>
+     */
+    private function genericExcludedCategoryCodes(): array
+    {
+        return [...$this->controlledCategoryCodes(), ...$this->legacyCategoryCodes()];
+    }
+
+    /**
+     * The generic-excluded categories whose existing DRAFT may not be posted
+     * through post(). Buffet and Donation are not among them: their own
+     * dedicated (locked) forms legitimately create drafts, which can only be
+     * posted here, and posting one produces exactly the dedicated flow's
+     * accounting. school_food (Employee Stolovaya posts immediately via
+     * createTrusted(), never a draft) and the legacy categories have no
+     * dedicated draft, so any draft of theirs predates the generic-create
+     * exclusion and must not create a new cash effect today.
+     *
+     * @return array<int, string>
+     */
+    private function postBlockedCategoryCodes(): array
+    {
+        $dedicatedDraftCodes = array_column($this->lockedRevenueTypes(), 0);
+
+        return array_values(array_diff($this->genericExcludedCategoryCodes(), $dedicatedDraftCodes));
+    }
+
+    /**
      * Stolovaya Phase 2 corrective, generalized (owner-approved Finance
      * income workflow UX pass): school_food/buffet/donation are CONTROLLED
      * revenue categories — each already has its own dedicated operational
@@ -209,7 +254,7 @@ class RevenueEntryController extends Controller
         }
 
         $controlled = RevenueCategory::query()
-            ->whereIn('code', $this->controlledCategoryCodes())
+            ->whereIn('code', $this->genericExcludedCategoryCodes())
             ->where('id', $categoryId)
             ->first();
 
@@ -223,11 +268,16 @@ class RevenueEntryController extends Controller
             return;
         }
 
-        $message = $controlled->code === RevenueCategory::CODE_SCHOOL_FOOD
-            ? 'Категория «Школьное питание» управляется отдельно — оформите питание сотрудника через «Столовая (сотрудник)».'
-            : "Категория «{$controlled->name_ru}» управляется отдельно — используйте её собственную карточку на странице «Приход».";
+        throw ValidationException::withMessages(['revenue_category_id' => $this->excludedCategoryMessage($controlled)]);
+    }
 
-        throw ValidationException::withMessages(['revenue_category_id' => $message]);
+    private function excludedCategoryMessage(RevenueCategory $category): string
+    {
+        return match (true) {
+            $category->code === RevenueCategory::CODE_SCHOOL_FOOD => 'Категория «Школьное питание» управляется отдельно — оформите питание сотрудника через «Столовая».',
+            in_array($category->code, $this->legacyCategoryCodes(), true) => "Категория «{$category->name_ru}» устарела и недоступна для новых записей — используйте «Буфет» или подходящую категорию.",
+            default => "Категория «{$category->name_ru}» управляется отдельно — используйте её собственную карточку на странице «Приход».",
+        };
     }
 
     public function show(RevenueEntry $revenueEntry): View
@@ -268,6 +318,14 @@ class RevenueEntryController extends Controller
     public function post(Request $request, RevenueEntry $revenueEntry): RedirectResponse
     {
         $this->authorize('post', $revenueEntry);
+
+        // A draft has no CashTransaction yet; posting it creates one today.
+        // Rejected here, before RevenueService::post(), so the entry stays a
+        // draft and nothing is written — see postBlockedCategoryCodes().
+        $category = $revenueEntry->category;
+        if ($category && in_array($category->code, $this->postBlockedCategoryCodes(), true)) {
+            return back()->withErrors(['revenue_category_id' => $this->excludedCategoryMessage($category)]);
+        }
 
         try {
             $this->revenues->post($revenueEntry, $request->user());
@@ -391,14 +449,15 @@ class RevenueEntryController extends Controller
             // see controlledCategoryCodes()/forbidControlledCategory() for
             // the server-side enforcement this dropdown exclusion mirrors.
             // Excluded by stable `code` (never the mutable name_ru — see
-            // RevenueCategory's own class docblock). Every other active
-            // category (fine, other, cafeteria, …) is unaffected; buffet's
+            // RevenueCategory's own class docblock). The legacy 'cafeteria'
+            // category is excluded too (legacyCategoryCodes()). Every other
+            // active category (fine, other, …) is unaffected; buffet's
             // and donation's own dedicated locked shortcuts are untouched
             // by this exclusion too, since neither renders this dropdown
             // at all (see the create view).
             'categories' => RevenueCategory::query()
                 ->where('is_active', true)
-                ->whereNotIn('code', $this->controlledCategoryCodes())
+                ->whereNotIn('code', $this->genericExcludedCategoryCodes())
                 ->orderBy('name_ru')->get(),
             'cashAccounts' => CashAccount::query()->where('is_active', true)->orderBy('name')->get(),
             'methodLabels' => $this->methodLabels(),

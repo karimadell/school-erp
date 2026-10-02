@@ -248,11 +248,13 @@ class FinanceStudentSearchUxTest extends FinanceOperationsTestCase
 
     public function test_stolovaya_entry_point_keeps_neutral_context_behavior(): void
     {
-        // IncomeEntryController::stolovaya() redirects here with no
-        // "context" at all — must keep exactly today's neutral rendering,
-        // never be forced into payment/service framing.
+        // PR 3: the accountant may use both Stolovaya sides, so
+        // IncomeEntryController::stolovaya() shows the chooser; its Student
+        // option links here with no "context" at all — must keep exactly
+        // today's neutral rendering, never payment/service framing.
         $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.stolovaya'));
-        $response->assertRedirect(route('dashboard.finance.income.students'));
+        $response->assertOk();
+        $response->assertSee('href="'.route('dashboard.finance.income.students').'"', false);
 
         $followed = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.students'));
         $followed->assertOk();

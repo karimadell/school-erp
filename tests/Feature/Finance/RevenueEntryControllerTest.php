@@ -16,21 +16,23 @@ use App\Services\Finance\RevenueService;
  */
 class RevenueEntryControllerTest extends FinanceOperationsTestCase
 {
-    private RevenueCategory $cafeteria;
+    // An ordinary residual category the generic «Прочий приход» path may post
+    // (the legacy 'cafeteria' category is excluded from new generic posting).
+    private RevenueCategory $other;
 
     private RevenueCategory $donation;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->cafeteria = RevenueCategory::firstOrCreate(['code' => RevenueCategory::CODE_CAFETERIA], ['name_ru' => 'Кафетерий', 'is_active' => true]);
+        $this->other = RevenueCategory::firstOrCreate(['code' => RevenueCategory::CODE_OTHER], ['name_ru' => 'Прочее', 'is_active' => true]);
         $this->donation = RevenueCategory::firstOrCreate(['code' => RevenueCategory::CODE_DONATION], ['name_ru' => 'Пожертвования', 'is_active' => true]);
     }
 
     private function payload(array $overrides = []): array
     {
         return array_merge([
-            'revenue_category_id' => $this->cafeteria->id,
+            'revenue_category_id' => $this->other->id,
             'amount' => '500.00',
             'revenue_date' => today()->toDateString(),
             'cash_account_id' => $this->cash->id,

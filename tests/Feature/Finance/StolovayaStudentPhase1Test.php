@@ -119,11 +119,14 @@ class StolovayaStudentPhase1Test extends FinanceOperationsTestCase
 
     // Income landing "Столовая" redirects into the existing, unmodified
     // student search screen — no new search UI was built.
-    public function test_income_stolovaya_redirects_to_existing_student_search_screen(): void
+    // PR 3: the single Столовая card opens a chooser for an actor allowed on
+    // both sides; its Student option is still the existing student search.
+    public function test_income_stolovaya_student_option_leads_to_existing_student_search_screen(): void
     {
         $response = $this->actingAs($this->accountant)->get(route('dashboard.finance.income.stolovaya'));
 
-        $response->assertRedirect(route('dashboard.finance.income.students'));
+        $response->assertOk();
+        $response->assertSee('href="'.route('dashboard.finance.income.students').'"', false);
     }
 
     // 3. Only canonical priced Food MealPlans are offered.

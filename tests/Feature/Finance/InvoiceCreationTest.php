@@ -56,7 +56,10 @@ class InvoiceCreationTest extends TestCase
         $this->account = CashAccount::operating();
         // Phase 3: a cash collection requires an open drawer session.
         app(\App\Services\Finance\CashSessionService::class)->open($this->account, $this->user);
-        $this->fee = Fee::create(['name_ru' => 'Обучение', 'amount' => '1000.00', 'is_active' => true]);
+        // A Fee with no category is never eligible for a new sale
+        // (StudentServiceEligibilityPolicy), so this generic invoice-creation
+        // fixture carries an explicit ordinary category.
+        $this->fee = Fee::create(['name_ru' => 'Обучение', 'amount' => '1000.00', 'category' => Fee::CATEGORY_OTHER, 'is_active' => true]);
     }
 
     private function payload(array $overrides = []): array

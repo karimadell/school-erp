@@ -88,6 +88,19 @@ abstract class FinanceOperationsTestCase extends TestCase
         return $invoice;
     }
 
+    /**
+     * An ordinary additional-service Fee (category 'other') with a yearly
+     * tariff for this year — for tests whose intent is selling an ordinary
+     * service. $this->fee stays canonical tuition, which
+     * StudentServiceEligibilityPolicy only allows in year-setup contexts.
+     */
+    protected function makeAdditionalServiceFee(string $name='Продлёнка', string $amount='1200.00'): Fee
+    {
+        $fee = Fee::create(['name_ru'=>$name,'category'=>Fee::CATEGORY_OTHER,'amount'=>'1.00','is_active'=>true]);
+        FeePrice::create(['fee_id'=>$fee->id,'academic_year_id'=>$this->year->id,'payment_period'=>'yearly','amount'=>$amount,'currency'=>'EGP','start_date'=>'2026-08-01','end_date'=>'2027-06-30','is_active'=>true]);
+        return $fee;
+    }
+
     protected function user(string $role, bool $active=true): User
     {
         $user=User::factory()->create(['is_active'=>$active]); $user->assignRole($role); return $user;

@@ -6,7 +6,7 @@ use App\Models\AcademicYear;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\FeePrice;
-use App\Services\Finance\NewSaleFeePolicy;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -138,7 +138,9 @@ class StoreInvoiceRequest extends FormRequest
 
             $fees = Fee::query()->whereIn('id', collect($this->input('items'))->pluck('fee_id'))->get()->keyBy('id');
             try {
-                app(NewSaleFeePolicy::class)->assertEligibleIds($fees->keys(), 'fees');
+                app(StudentServiceEligibilityPolicy::class)->assertEligibleIds(
+                    $fees->keys(), StudentServiceEligibilityPolicy::CONTEXT_YEAR_SETUP, 'fees',
+                );
             } catch (\Illuminate\Validation\ValidationException $exception) {
                 foreach ($exception->errors()['fees'] ?? [] as $message) {
                     $validator->errors()->add('fees', $message);

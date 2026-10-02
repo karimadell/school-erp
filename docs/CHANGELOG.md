@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-10-01 — Finance: Student service eligibility (PR 1 of the frozen Finance corrective plan) — implemented, pending independent review
+
+**Branch:** `fix/finance-student-service-eligibility` (from `recovery/full-work-2026-07-31` @ `5612eb8`). Not merged.
+
+- Adds `App\Services\Finance\StudentServiceEligibilityPolicy` — the single authority for which Fees may be **newly sold** to a student, keyed only on stable metadata (`category`, `is_active`, `is_test_data`; never a display name or id; a Fee with no category is never eligible), with two explicit catalogs:
+  - **`additionalService`** (ordinary mid-year service for an enrolled student): requires active + non-test; excludes `activity`, all tuition categories (canonical `tuition` and legacy variants, via the existing `TuitionEnrollmentModePricing::isTuitionCategory()` list) and `registration`.
+  - **`yearSetup`** (establishing the year): requires active + non-test; excludes `activity` and the legacy tuition variants (`NewSaleFeePolicy`, unchanged); canonical tuition and registration stay available.
+- Applied to the listing **and** the submitted fee ids (server-side) of: Unified Collection (`additionalService` for an enrolled student; `yearSetup` only when the student has no Enrollment for that year **and** annual registration is being established — decided from the real Enrollment state, so a crafted `annual_registration` cannot unlock tuition for an enrolled student), Charge & Collect (`chargeCreate` + `StoreChargeAndCollectRequest`, which Student Stolovaya inherits — Food stays eligible), Classic Student Invoice and legacy `/invoices/create` listing (`yearSetup`, existing Food exclusion kept), Quick Registration (`QuickRegistrationFeePolicy` is now a thin `yearSetup` delegate) and School Enrollment.
+- Removes the «Мероприятия и поездки» tile from the Add Service picker. Inverts the earlier `b87aa1e` behavior: «Экскурсия в аквариум» and every activity-category Fee are no longer offered or accepted as a new sale; an **existing** activity invoice remains readable and payable as an ordinary obligation.
+- **Not changed:** every accounting engine (`InvoiceIssuanceService`, `InvoicePaymentService`, `InvoiceCalculationService`, `FinanceCollectionService`, `RevenueService`, …), Stolovaya/Employee Stolovaya code, `NewSaleFeePolicy`, tariffs (`FinanceTariffController` — activity tariffs stay maintainable), Mass Billing, models, migrations, seeders, permissions, cash routing, landing cards. No master-data change. Existing-debt collection applies no sale filter.
+- **Behavior change to note:** tuition and the registration fee can no longer be charged to an already-enrolled student through Unified Collection or Charge & Collect; the sanctioned path for that is the Classic Student Invoice (year-setup catalog, installments/discounts).
+- Tests: new `StudentServiceEligibilityPolicyTest` (20 tests: both catalog matrices, null-category rejection in both contexts, server-side rejection per context, Quick Registration delegate parity, name-independence, Unified Collection / Charge & Collect / Classic / legacy create / School Enrollment listing and crafted-POST rejection with zero writes across FinanceCollection/Invoice/InvoiceItem/ServiceCoverage/InvoicePayment/CashTransaction, canonical tuition through annual registration, registration once-per-year via Classic). Tests whose intent was "ordinary additional service" were re-fixtured from tuition/registration/activity Fees to ordinary `other` Fees (listed in the PR). Independent isolated-base verification confirmed no new test failures.
+
+## 2026-09-29 — Finance: Income workflow UX corrective (PR #88) — merged
+
+**PR:** [#88 — fix(finance): clarify income workflow intents](https://github.com/karimadell/school-erp/pull/88)
+**Merge commit (standard merge):** `5612eb8bb0837291f537a0d0a7269ee6698359a2` (parents `ffdc9e3`, `27720e1`)
+**Feature commit:** `27720e1177f9cf1838697286fd11c6d03eeb0645`
+
+*(Entry added retroactively by PR 1 — this merge had not been recorded here.)*
+
+- «Оплата ученика» / «Услуга / дополнительный сбор» cards now pass a purely presentational `?context=payment|service` to the same canonical student search (`FinanceOperationsController::students()`); it only changes which existing row action renders as primary and the page title/hint. Unknown values normalize to neutral; no new route or accounting logic.
+- `buffet` and `donation` joined `school_food` as **controlled** revenue categories: excluded from the generic «Прочий приход» category dropdown and rejected server-side (`RevenueEntryController::forbidControlledCategory()`) unless the request is genuinely that category's own locked flow — zero `RevenueEntry`/`CashTransaction` on rejection.
+- **Docs correction (recorded by PR 1):** the Roadmap previously listed Classic *Student* Invoice idempotency as an open P1; it was already fixed in `19c5622` (`ClassicInvoiceIdempotencyTest`). The real remaining gap is the legacy `/invoices/create` path, scheduled as the next isolated corrective (PR 2) — **not yet implemented**.
+
 ## 2026-09-26 — Finance: Revenue route hardening (PR #87) — investigated, defensive fix shipped, UAT verified — CLOSED
 
 **PR:** [#87 — fix(finance): constrain revenue entry route binding](https://github.com/karimadell/school-erp/pull/87)

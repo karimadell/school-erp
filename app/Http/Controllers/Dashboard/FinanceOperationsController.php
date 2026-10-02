@@ -23,6 +23,7 @@ use App\Services\Finance\InvoiceCancellationService;
 use App\Services\Finance\InvoicePaymentService;
 use App\Services\Finance\InvoiceRefundService;
 use App\Services\Finance\ServiceCoverageService;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use App\Services\Finance\StudentFinanceSummaryService;
 use App\Support\FinanceShareRecipient;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -427,11 +428,14 @@ class FinanceOperationsController extends Controller
         return view('dashboard.finance.add-service', ['student' => $student, 'activeYear' => $activeYear]);
     }
 
-    public function chargeCreate(Student $student): View
+    public function chargeCreate(Student $student, StudentServiceEligibilityPolicy $eligibility): View
     {
         $student->load(['currentEnrollment.academicYear']);
         $year = $student->currentEnrollment?->academicYear;
-        $fees = Fee::active()->with('prices')->orderBy('category')->orderBy('name_ru')->get();
+        // Ordinary additional-service catalog only — never every active Fee
+        // (StoreChargeAndCollectRequest enforces the same rule server-side).
+        $fees = $eligibility->applyAdditionalService(Fee::with('prices'))
+            ->orderBy('category')->orderBy('name_ru')->get();
 
         return view('dashboard.finance.charge.create', [
             'student' => $student,

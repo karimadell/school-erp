@@ -13,9 +13,9 @@ use App\Models\Stage;
 use App\Models\Student;
 use App\Services\Admissions\RegistrationEnrollmentModePolicy;
 use App\Services\Finance\FinanceCollectionService;
-use App\Services\Finance\NewSaleFeePolicy;
 use App\Services\Finance\StudentFinanceSummaryService;
 use App\Services\Finance\StudentObligationsViewModel;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -64,7 +64,7 @@ class UnifiedCollectionController extends Controller
         StudentObligationsViewModel $obligations,
         StudentFinanceSummaryService $summaries,
         RegistrationEnrollmentModePolicy $modePolicy,
-        NewSaleFeePolicy $feePolicy,
+        StudentServiceEligibilityPolicy $eligibility,
     ): View|RedirectResponse {
         $student->loadMissing('currentEnrollment.academicYear', 'currentEnrollment.schoolClass');
 
@@ -118,8 +118,16 @@ class UnifiedCollectionController extends Controller
         $transportRoutes = collect();
         $uniformProducts = collect();
         if ($canSelectNewServices) {
-            $fees = $feePolicy->apply(Fee::with(['prices', 'billingPeriods']))
-                ->nonTest()->active()->orderBy('category')->orderBy('name_ru')->get();
+            // An already-enrolled student is sold ordinary additional
+            // services only; a student without an Enrollment for this year
+            // can only be sold services together with annual registration,
+            // which is year setup (canonical tuition/registration allowed).
+            // Mirrors StoreUnifiedCollectionRequest's server-side context.
+            $context = $enrollment !== null
+                ? StudentServiceEligibilityPolicy::CONTEXT_ADDITIONAL_SERVICE
+                : StudentServiceEligibilityPolicy::CONTEXT_YEAR_SETUP;
+            $fees = $eligibility->apply(Fee::with(['prices', 'billingPeriods']), $context)
+                ->orderBy('category')->orderBy('name_ru')->get();
             $mealPlans = MealPlan::active()->orderBy('name_ru')->get();
             $transportRoutes = DB::table('transport_routes')->where('is_active', true)->orderBy('name')->get();
             $uniformProducts = DB::table('uniform_products')->where('is_active', true)->orderBy('name_ru')->orderBy('size')->get();

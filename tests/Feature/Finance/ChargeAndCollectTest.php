@@ -2,8 +2,6 @@
 
 namespace Tests\Feature\Finance;
 
-use App\Models\Fee;
-use App\Models\FeePrice;
 use App\Models\Invoice;
 use App\Models\InvoicePayment;
 use Illuminate\Support\Str;
@@ -19,6 +17,19 @@ use Illuminate\Support\Str;
  */
 class ChargeAndCollectTest extends FinanceOperationsTestCase
 {
+    /**
+     * Charge & Collect sells ordinary additional services only
+     * (StudentServiceEligibilityPolicy), so this suite's service is an
+     * ordinary 'other' Fee rather than the base fixture's canonical tuition.
+     * $this->invoice() then builds its existing invoices for the same Fee,
+     * so every duplicate-guard scenario keeps its original meaning.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->fee = $this->makeAdditionalServiceFee();
+    }
+
     /**
      * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
@@ -42,7 +53,7 @@ class ChargeAndCollectTest extends FinanceOperationsTestCase
         $this->actingAs($this->accountant)
             ->get(route('dashboard.students.charge.create', $this->student))
             ->assertOk()
-            ->assertSee('Обучение')
+            ->assertSee('Продлёнка')
             ->assertSee('Начислить и принять оплату');
     }
 
@@ -199,21 +210,10 @@ class ChargeAndCollectTest extends FinanceOperationsTestCase
 
     public function test_open_invoice_for_a_different_service_does_not_block(): void
     {
-        $this->invoice(); // open invoice for $this->fee (tuition "Обучение")
+        $this->invoice(); // open invoice for $this->fee («Продлёнка»)
 
-        // A second, distinct tuition service with its own tariff for this grade.
-        $otherFee = Fee::create(['name_ru' => 'Продлёнка', 'category' => 'tuition', 'amount' => '1.00', 'is_active' => true]);
-        FeePrice::create([
-            'fee_id' => $otherFee->id,
-            'academic_year_id' => $this->year->id,
-            'grade_id' => $this->enrollment->grade_id,
-            'payment_period' => 'yearly',
-            'amount' => '800.00',
-            'currency' => 'EGP',
-            'start_date' => '2026-08-01',
-            'end_date' => '2027-06-30',
-            'is_active' => true,
-        ]);
+        // A second, distinct ordinary service with its own tariff.
+        $otherFee = $this->makeAdditionalServiceFee('Кружок', '800.00');
 
         $response = $this->actingAs($this->accountant)
             ->post(route('dashboard.students.charge.store', $this->student), $this->payload([

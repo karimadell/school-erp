@@ -146,7 +146,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
 
     public function test_generic_fee_new_charge_with_partial_payment_through_http(): void
     {
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '500.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '500.00', 'is_active' => true]);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
@@ -168,7 +168,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
     public function test_mixed_existing_and_new_service_in_one_collection(): void
     {
         $existingInvoice = $this->issueSimpleInvoice('4500.00');
-        $fee = Fee::create(['name_ru' => 'Поездка', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '500.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Продлёнка', 'category' => Fee::CATEGORY_OTHER, 'amount' => '500.00', 'is_active' => true]);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
@@ -195,7 +195,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
 
     public function test_new_service_zero_receive_now_rejected_by_http_workflow(): void
     {
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '500.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '500.00', 'is_active' => true]);
 
         $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
@@ -210,7 +210,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
 
     public function test_tampered_browser_price_is_ignored(): void
     {
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '500.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '500.00', 'is_active' => true]);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
@@ -306,7 +306,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
             'last_name_ru' => 'Сидоров', 'first_name_ru' => 'Иван', 'patronymic_ru' => null,
             'phone' => '+201002223344', 'class_id' => $this->enrollment->class_id, 'status' => 'registration_completed',
         ]);
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '100.00', 'is_active' => true]);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $newStudent), [
             'idempotency_token' => (string) Str::uuid(),
@@ -475,7 +475,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
     public function test_incomplete_mode_catalog_rejects_http_and_direct_annual_registration_without_partial_writes(): void
     {
         $returning = $this->returningStudentWithoutEnrollment('+201003334460');
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '100.00', 'is_active' => true]);
         EnrollmentMode::where('code', EnrollmentMode::FAMILY)->delete();
         $payload = [
             'student_id' => $returning->id,
@@ -553,7 +553,13 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         $this->assertSame(0, InvoicePayment::count());
     }
 
-    public function test_activity_remains_available_after_registration_and_its_invoice_history_is_readable(): void
+    /**
+     * Owner decision (PR 1, student service eligibility) — inverts the
+     * earlier b87aa1e behavior: an activity/excursion is no longer offered
+     * or accepted as a NEW service in Unified Collection, but an activity
+     * invoice that already exists stays a normal, payable obligation.
+     */
+    public function test_activity_is_not_sold_as_a_new_service_but_existing_activity_debt_stays_payable(): void
     {
         $activity = Fee::create([
             'name_ru' => 'Экскурсия в аквариум', 'type' => 'service',
@@ -564,9 +570,9 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
         $this->actingAs($this->accountant)
             ->get(route('dashboard.students.unified-collection.create', $this->student))
             ->assertOk()
-            ->assertSee('Экскурсия в аквариум');
+            ->assertDontSee('Экскурсия в аквариум');
 
-        $response = $this->actingAs($this->accountant)->post(
+        $this->actingAs($this->accountant)->post(
             route('dashboard.students.unified-collection.store', $this->student),
             [
                 'idempotency_token' => (string) Str::uuid(),
@@ -577,14 +583,44 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
                     'fee_id' => $activity->id, 'quantity' => 1, 'receive_now_amount' => '500.00',
                 ]],
             ],
+        )->assertSessionHasErrors('new_services');
+
+        $this->assertSame(0, FinanceCollection::count());
+        $this->assertSame(0, Invoice::count());
+        $this->assertSame(0, InvoicePayment::count());
+        $this->assertSame(0, CashTransaction::count());
+
+        // A historical activity invoice (issued before this policy, here
+        // through the unchanged engine directly) is still collectable.
+        $existing = app(InvoiceIssuanceService::class)->issue($this->student, [
+            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+            'due_date' => '2027-06-30', 'pricing_date' => '2026-09-01',
+            'items' => [['fee_id' => $activity->id, 'grade_group' => null, 'payment_period' => null, 'first_last_month' => false, 'size' => null, 'item' => null, 'option_type' => null, 'option_value' => null]],
+            'payment_type' => 'one_time',
+        ], $this->accountant);
+
+        $this->actingAs($this->accountant)
+            ->get(route('dashboard.students.unified-collection.create', $this->student))
+            ->assertOk()
+            // Now listed — as an existing obligation, not a sellable service.
+            ->assertSee('Экскурсия в аквариум');
+
+        $response = $this->actingAs($this->accountant)->post(
+            route('dashboard.students.unified-collection.store', $this->student),
+            [
+                'idempotency_token' => (string) Str::uuid(),
+                'academic_year_id' => $this->year->id,
+                'payment_method' => 'cash',
+                'cash_account_id' => $this->cash->id,
+                'existing_obligations' => [['invoice_id' => $existing->id, 'receive_now_amount' => '500.00']],
+            ],
         );
 
         $collection = FinanceCollection::query()->sole();
         $response->assertRedirect(route('dashboard.collections.receipt', $collection));
-        $item = $collection->linkedInvoices()->sole()->items()->with('fee')->sole();
-        $this->assertSame($activity->id, $item->fee_id);
+        $this->assertSame(Invoice::STATUS_PAID, $existing->fresh()->status);
+        $item = $existing->items()->with('fee')->sole();
         $this->assertSame('Экскурсия в аквариум', $item->fee->name_ru);
-        $this->assertSame('500.00', (string) $item->amount);
     }
 
     public function test_active_year_no_enrollment_unauthorized_actor_sees_neither_annual_registration_nor_new_service_ui(): void
@@ -643,7 +679,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
     public function test_returning_student_annual_registration_with_new_service_creates_exactly_one_enrollment(): void
     {
         $returning = $this->returningStudentWithoutEnrollment('+201003334458');
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '100.00', 'is_active' => true]);
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $returning), [
             'idempotency_token' => (string) Str::uuid(),
@@ -668,7 +704,7 @@ class UnifiedCollectionWorkspaceTest extends FinanceOperationsTestCase
     public function test_get_then_post_round_trip_for_returning_student_does_not_duplicate_the_student(): void
     {
         $returning = $this->returningStudentWithoutEnrollment('+201003334459');
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '100.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '100.00', 'is_active' => true]);
 
         $this->actingAs($this->accountant)
             ->get(route('dashboard.students.unified-collection.create', $returning))

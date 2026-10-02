@@ -45,9 +45,9 @@ class UnifiedCollectionReceiptTest extends FinanceOperationsTestCase
         return FinanceCollection::query()->latest('id')->firstOrFail();
     }
 
-    private function collectNewService(string $feeAmount, string $receiveNow, string $name = 'Экскурсия'): FinanceCollection
+    private function collectNewService(string $feeAmount, string $receiveNow, string $name = 'Кружок'): FinanceCollection
     {
-        $fee = Fee::create(['name_ru' => $name, 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => $feeAmount, 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => $name, 'category' => Fee::CATEGORY_OTHER, 'amount' => $feeAmount, 'is_active' => true]);
 
         $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
@@ -58,9 +58,9 @@ class UnifiedCollectionReceiptTest extends FinanceOperationsTestCase
         return FinanceCollection::query()->latest('id')->firstOrFail();
     }
 
-    private function collectMixed(Invoice $existingInvoice, string $existingAmount, string $feeAmount, string $receiveNow, string $name = 'Поездка'): FinanceCollection
+    private function collectMixed(Invoice $existingInvoice, string $existingAmount, string $feeAmount, string $receiveNow, string $name = 'Продлёнка'): FinanceCollection
     {
-        $fee = Fee::create(['name_ru' => $name, 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => $feeAmount, 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => $name, 'category' => Fee::CATEGORY_OTHER, 'amount' => $feeAmount, 'is_active' => true]);
 
         $this->actingAs($this->accountant)->post(route('dashboard.students.unified-collection.store', $this->student), [
             'idempotency_token' => (string) Str::uuid(),
@@ -186,12 +186,12 @@ class UnifiedCollectionReceiptTest extends FinanceOperationsTestCase
 
     public function test_new_service_only_receipt_is_correct(): void
     {
-        $collection = $this->collectNewService('500.00', '300.00', 'Экскурсия в музей');
+        $collection = $this->collectNewService('500.00', '300.00', 'Кружок рисования');
 
         $response = $this->actingAs($this->accountant)->get(route('dashboard.collections.receipt', $collection));
 
         $response->assertOk()
-            ->assertSee('Экскурсия в музей')
+            ->assertSee('Кружок рисования')
             ->assertSee('300.00');
 
         $newInvoice = $collection->linkedInvoices()->sole();

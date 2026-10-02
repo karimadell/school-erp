@@ -40,8 +40,10 @@
             </a>
         </div>
 
+        {{-- No 'activity' tile: activities/excursions are not sold through
+             ordinary student workflows (StudentServiceEligibilityPolicy). --}}
         @foreach ([
-            'tuition', 'transport', 'uniform', 'extra_classes', 'activity', 'other',
+            'tuition', 'transport', 'uniform', 'extra_classes', 'other',
         ] as $category)
             <div class="col-md-6 col-xl-4">
                 <a href="{{ $classicInvoiceUrl }}" class="text-decoration-none">

@@ -146,11 +146,14 @@ class CashSessionTest extends FinanceOperationsTestCase
         // cash_account_id submitted here, so the only way left to exercise
         // "no open session" is to close the one the shared fixture opened.
         $this->closeCashSession();
+        // Charge & Collect sells ordinary additional services only, so the
+        // charged service is an ordinary Fee, not the base tuition fixture.
+        $serviceFee = $this->makeAdditionalServiceFee();
 
         $this->actingAs($this->accountant)
             ->post(route('dashboard.students.charge.store', $this->student), [
                 'academic_year_id' => $this->year->id,
-                'fee_id' => $this->fee->id,
+                'fee_id' => $serviceFee->id,
                 'quantity' => 1,
                 'payment_period' => 'yearly',
                 'due_date' => '2027-01-01',

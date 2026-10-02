@@ -5,9 +5,11 @@ namespace App\Http\Requests;
 use App\Models\CashAccount;
 use App\Models\Fee;
 use App\Models\FeePrice;
+use App\Services\Finance\StudentServiceEligibilityPolicy;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\Validation\Validator;
 
 /**
@@ -170,6 +172,26 @@ class StoreChargeAndCollectRequest extends FormRequest
             }
 
             $fee = Fee::find($this->integer('fee_id'));
+
+            // Charge & Collect sells ordinary additional services only —
+            // the same catalog chargeCreate() lists. Enforced here so a
+            // crafted POST can never charge an activity, a test Fee, tuition
+            // or the annual registration fee through this path (Student
+            // Stolovaya inherits this request; Food stays eligible).
+            if ($fee !== null) {
+                try {
+                    app(StudentServiceEligibilityPolicy::class)->assertEligible(
+                        $fee, StudentServiceEligibilityPolicy::CONTEXT_ADDITIONAL_SERVICE, 'fee_id',
+                    );
+                } catch (ValidationException $exception) {
+                    foreach ($exception->errors()['fee_id'] ?? [] as $message) {
+                        $validator->errors()->add('fee_id', $message);
+                    }
+
+                    return;
+                }
+            }
+
             if ($fee?->category === Fee::CATEGORY_FOOD) {
                 $this->validateFoodDuration($validator);
             }

@@ -9,9 +9,11 @@ use App\Models\Fee;
 use App\Models\FeePrice;
 use App\Models\FinanceCollection;
 use App\Models\Invoice;
+use App\Services\Finance\FinanceCollectionService;
 use App\Support\AcademicYearLock;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 /**
  * P1 corrective: ServiceSelectionNormalizer::normalize()'s EnrollmentMode
@@ -79,11 +81,38 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
         ];
     }
 
+    /**
+     * Mode-scoped Tuition is year-setup-only at the HTTP boundary:
+     * StudentServiceEligibilityPolicy rejects Tuition as an enrolled
+     * student's ordinary new service (see
+     * StudentServiceEligibilityPolicyTest). The NULL-mode guarantee these
+     * Tuition cases lock in belongs to the unchanged FinanceCollectionService
+     * engine itself, so they exercise that engine directly with the exact
+     * same payload the HTTP layer used to forward.
+     */
+    private function collectDirectly(array $overrides): FinanceCollection
+    {
+        return app(FinanceCollectionService::class)->collect(array_merge([
+            'student_id' => $this->student->id,
+        ], $this->payload($overrides)), $this->accountant);
+    }
+
+    private function collectDirectlyExpectingErrors(array $overrides): string
+    {
+        try {
+            $this->collectDirectly($overrides);
+        } catch (ValidationException $exception) {
+            return collect($exception->errors())->flatten()->implode(' ');
+        }
+
+        $this->fail('Expected the collection to be rejected.');
+    }
+
     // 1. Generic non-mode service (no mode-scoped pricing exists at all for
     // this Fee) — must succeed, exact amount, no TypeError.
     public function test_null_mode_generic_service_succeeds(): void
     {
-        $fee = Fee::create(['name_ru' => 'Экскурсия', 'category' => Fee::CATEGORY_ACTIVITY, 'amount' => '500.00', 'is_active' => true]);
+        $fee = Fee::create(['name_ru' => 'Кружок', 'category' => Fee::CATEGORY_OTHER, 'amount' => '500.00', 'is_active' => true]);
 
         $response = $this->actingAs($this->accountant)->post(
             route('dashboard.students.unified-collection.store', $this->student),
@@ -151,13 +180,9 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
     // FeePrice, today's actual production shape.
     public function test_null_mode_generic_tuition_succeeds(): void
     {
-        $response = $this->actingAs($this->accountant)->post(
-            route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '1200.00', 'payment_period' => 'yearly']]])
-        );
+        $collection = $this->collectDirectly(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '1200.00', 'payment_period' => 'yearly']]]);
 
-        $collection = FinanceCollection::query()->sole();
-        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $this->assertSame($collection->id, FinanceCollection::query()->sole()->id);
         $this->assertSame('1200.00', (string) $collection->linkedInvoices()->sole()->items->sole()->amount);
     }
 
@@ -170,13 +195,7 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
 
         $before = $this->financialSnapshot();
 
-        $response = $this->actingAs($this->accountant)->post(
-            route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']]])
-        );
-
-        $response->assertSessionHasErrors();
-        $errors = collect(session('errors')->getBag('default')->getMessages())->flatten()->implode(' ');
+        $errors = $this->collectDirectlyExpectingErrors(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']]]);
         $this->assertStringContainsString('тариф зависит от формы обучения', $errors);
         $this->assertSame($before, $this->financialSnapshot());
     }
@@ -199,15 +218,10 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
 
         $before = $this->financialSnapshot();
 
-        $response = $this->actingAs($this->accountant)->post(
-            route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload([
-                'existing_obligations' => [['invoice_id' => $existingInvoice->id, 'receive_now_amount' => '400.00']],
-                'new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']],
-            ])
-        );
-
-        $response->assertSessionHasErrors();
+        $this->collectDirectlyExpectingErrors([
+            'existing_obligations' => [['invoice_id' => $existingInvoice->id, 'receive_now_amount' => '400.00']],
+            'new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']],
+        ]);
         $this->assertSame($before, $this->financialSnapshot());
         $existingInvoice->refresh();
         $this->assertSame('0.00', (string) $existingInvoice->paid_amount);
@@ -223,13 +237,7 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
         $this->modePrice('full_time', '40500.00');
         $this->modePrice('external', '25600.00');
 
-        $response = $this->actingAs($this->accountant)->post(
-            route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']]])
-        );
-
-        $collection = FinanceCollection::query()->sole();
-        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $collection = $this->collectDirectly(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']]]);
         $this->assertSame('40500.00', (string) $collection->linkedInvoices()->sole()->items->sole()->amount);
     }
 
@@ -240,13 +248,7 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
         $this->modePrice('full_time', '40500.00');
         $this->modePrice('external', '25600.00');
 
-        $response = $this->actingAs($this->accountant)->post(
-            route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '25600.00', 'payment_period' => 'yearly']]])
-        );
-
-        $collection = FinanceCollection::query()->sole();
-        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        $collection = $this->collectDirectly(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '25600.00', 'payment_period' => 'yearly']]]);
         $this->assertSame('25600.00', (string) $collection->linkedInvoices()->sole()->items->sole()->amount);
     }
 
@@ -262,16 +264,13 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
         $this->modePrice('full_time', '40500.00');
         $this->modePrice('external', '25600.00');
 
-        $response = $this->actingAs($this->accountant)->post(
-            route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload(['new_services' => [[
-                'fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '25600.00', 'payment_period' => 'yearly',
-                'enrollment_mode_id' => EnrollmentMode::where('code', 'full_time')->value('id'),
-            ]]])
-        );
-
-        $collection = FinanceCollection::query()->sole();
-        $response->assertRedirect(route('dashboard.collections.receipt', $collection));
+        // Engine-level now (see collectDirectly()): even without the HTTP
+        // request stripping it, a crafted mode never wins — issuance
+        // re-stamps enrollment_mode_id from the real Enrollment.
+        $collection = $this->collectDirectly(['new_services' => [[
+            'fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '25600.00', 'payment_period' => 'yearly',
+            'enrollment_mode_id' => EnrollmentMode::where('code', 'full_time')->value('id'),
+        ]]]);
         $this->assertSame('25600.00', (string) $collection->linkedInvoices()->sole()->items->sole()->amount);
         $this->assertSame($external->id, $this->enrollment->fresh()->enrollment_mode_id);
     }
@@ -297,13 +296,7 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
         // $this->enrollment (the TARGET year) still has enrollment_mode_id
         // = null (setUp()); the other year's real "external" mode must not
         // be used to resolve this charge.
-        $response = $this->actingAs($this->accountant)->post(
-            route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']]])
-        );
-
-        $response->assertSessionHasErrors();
-        $errors = collect(session('errors')->getBag('default')->getMessages())->flatten()->implode(' ');
+        $errors = $this->collectDirectlyExpectingErrors(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '40500.00', 'payment_period' => 'yearly']]]);
         $this->assertStringContainsString('тариф зависит от формы обучения', $errors);
         $this->assertSame($before, $this->financialSnapshot());
     }
@@ -319,7 +312,7 @@ class UnifiedCollectionNullModeNewServiceTest extends FinanceOperationsTestCase
 
         $response = $this->actingAs($this->accountant)->post(
             route('dashboard.students.unified-collection.store', $this->student),
-            $this->payload(['new_services' => [['fee_id' => $this->fee->id, 'quantity' => 1, 'receive_now_amount' => '1200.00']]])
+            $this->payload(['new_services' => [['fee_id' => $this->makeAdditionalServiceFee()->id, 'quantity' => 1, 'receive_now_amount' => '1200.00']]])
         );
 
         $response->assertSessionHasErrors();

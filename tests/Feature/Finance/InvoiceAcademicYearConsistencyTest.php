@@ -35,7 +35,10 @@ class InvoiceAcademicYearConsistencyTest extends TestCase
         $this->year = AcademicYear::create([
             'name' => '2026/2027', 'start_date' => '2026-08-01', 'end_date' => '2027-06-30', 'is_active' => true,
         ]);
-        $this->fee = Fee::create(['name_ru' => 'Обучение', 'amount' => 100, 'is_active' => true]);
+        // A Fee with no category is never eligible for a new sale
+        // (StudentServiceEligibilityPolicy), so this generic invoice-creation
+        // fixture carries an explicit ordinary category.
+        $this->fee = Fee::create(['name_ru' => 'Обучение', 'amount' => 100, 'category' => Fee::CATEGORY_OTHER, 'is_active' => true]);
         $this->account = CashAccount::create(['name' => 'Касса', 'type' => 'cash']);
     }
 

@@ -38,6 +38,20 @@ class InvoiceIssuanceParityTest extends MassBillingTestCase
         return $fee;
     }
 
+    /**
+     * An ordinary additional-service Fee, priced like registrationFee().
+     * Charge & Collect sells ordinary additional services only
+     * (StudentServiceEligibilityPolicy), so its invariants are exercised
+     * with this Fee rather than the annual registration fee.
+     */
+    private function ordinaryServiceFee(): Fee
+    {
+        $fee = Fee::create(['name_ru' => 'Продлёнка', 'category' => Fee::CATEGORY_OTHER, 'amount' => '1.00', 'is_active' => true]);
+        FeePrice::create(['fee_id' => $fee->id, 'academic_year_id' => $this->year->id, 'amount' => '500.00', 'currency' => 'EGP', 'start_date' => $this->year->start_date, 'end_date' => $this->year->end_date, 'payment_period' => 'yearly', 'is_active' => true]);
+
+        return $fee;
+    }
+
     public function test_classic_invoice_create_satisfies_the_shared_invariants_and_the_registration_guard(): void
     {
         $student = $this->enrolledStudent(suffix: 'Classic');
@@ -125,13 +139,13 @@ class InvoiceIssuanceParityTest extends MassBillingTestCase
         $this->assertSame(1, Invoice::count());
     }
 
-    public function test_charge_and_collect_satisfies_the_shared_invariants_and_the_registration_guard(): void
+    public function test_charge_and_collect_satisfies_the_shared_invariants_and_never_sells_registration(): void
     {
         $student = $this->enrolledStudent(suffix: 'Charge');
-        $registration = $this->registrationFee();
+        $service = $this->ordinaryServiceFee();
 
         $response = $this->actingAs($this->accountant)->post(route('dashboard.students.charge.store', $student), [
-            'academic_year_id' => $this->year->id, 'fee_id' => $registration->id, 'quantity' => 1,
+            'academic_year_id' => $this->year->id, 'fee_id' => $service->id, 'quantity' => 1,
             'due_date' => '2027-01-01', 'pricing_date' => '2026-09-01',
             'idempotency_key' => (string) Str::uuid(),
         ]);
@@ -142,15 +156,24 @@ class InvoiceIssuanceParityTest extends MassBillingTestCase
         $this->assertNormalIssuanceInvariants($invoice);
 
         $second = $this->actingAs($this->accountant)->post(route('dashboard.students.charge.store', $student), [
-            'academic_year_id' => $this->year->id, 'fee_id' => $registration->id, 'quantity' => 1,
+            'academic_year_id' => $this->year->id, 'fee_id' => $service->id, 'quantity' => 1,
             'due_date' => '2027-01-01', 'pricing_date' => '2026-09-01',
             'idempotency_key' => (string) Str::uuid(),
         ]);
-        // ChargeAndCollectService's own duplicate-open-invoice guard fires
-        // first here (same-service open invoice), which is a stricter,
-        // earlier check than InvoiceIssuanceService's registration guard —
-        // both ultimately prevent the same double-charge outcome.
+        // ChargeAndCollectService's own duplicate-open-invoice guard
+        // (same-service open invoice) prevents the double charge.
         $second->assertSessionHasErrors('fee_id');
+        $this->assertSame(1, Invoice::count());
+
+        // The annual registration fee is year setup only — Charge & Collect
+        // rejects it outright (StudentServiceEligibilityPolicy), before any
+        // write, so the registration once-per-year guard is never even
+        // reachable through this path.
+        $this->actingAs($this->accountant)->post(route('dashboard.students.charge.store', $student), [
+            'academic_year_id' => $this->year->id, 'fee_id' => $this->registrationFee()->id, 'quantity' => 1,
+            'due_date' => '2027-01-01', 'pricing_date' => '2026-09-01',
+            'idempotency_key' => (string) Str::uuid(),
+        ])->assertSessionHasErrors('fee_id');
         $this->assertSame(1, Invoice::count());
     }
 

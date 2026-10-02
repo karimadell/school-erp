@@ -4,7 +4,6 @@ namespace App\Services\Admissions;
 
 use App\Exceptions\StudentIdentityResolutionRequired;
 use App\Models\AcademicYear;
-use App\Models\CashAccount;
 use App\Models\Enrollment;
 use App\Models\Fee;
 use App\Models\Grade;
@@ -19,6 +18,7 @@ use App\Models\Student;
 use App\Models\StudentServiceSubscription;
 use App\Models\User;
 use App\Services\AcademicStructureService;
+use App\Services\Finance\CashDrawerResolver;
 use App\Services\Finance\InvoiceCalculationService;
 use App\Services\Finance\InvoiceIssuanceService;
 use App\Services\Finance\InvoicePaymentService;
@@ -53,6 +53,7 @@ class QuickStudentRegistrationService
         private StudentIdentityResolver $identity,
         private RegistrationEnrollmentModePolicy $modePolicy,
         private QuickRegistrationFeePolicy $feePolicy,
+        private CashDrawerResolver $drawers,
     ) {}
 
     /**
@@ -503,7 +504,7 @@ class QuickStudentRegistrationService
                 // before, and resolves the shared $cashAccountId/$reference
                 // once.
                 if (bccomp($paidNow, '0.00', 2) > 0) {
-                    $cashAccountId = CashAccount::resolvePaymentAccountId($data['payment_method'], $data['cash_account_id'] ?? null);
+                    $cashAccountId = $this->drawers->paymentAccountId($data['payment_method'], isset($data['cash_account_id']) ? (int) $data['cash_account_id'] : null, $actor);
                     $reference = "Быстрая регистрация {$invoice->invoice_number}";
                     $notes = $data['payment_note'] ?? null;
 

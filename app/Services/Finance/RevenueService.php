@@ -43,7 +43,7 @@ use Illuminate\Validation\ValidationException;
  */
 class RevenueService
 {
-    public function __construct(private CashSessionService $sessions) {}
+    public function __construct(private CashSessionService $sessions, private CashDrawerResolver $drawers) {}
 
     public function create(array $data, User $actor): RevenueEntry
     {
@@ -303,15 +303,13 @@ class RevenueService
             throw ValidationException::withMessages(['cash_account_id' => 'Выбранная касса/счёт неактивен(на).']);
         }
 
+        // PR 4 — strict own-session cash rule (CashDrawerResolver): cash
+        // revenue only enters an eligible drawer (active cash account, never
+        // owner cash/bank/instapay), and anything posted to a physical drawer
+        // goes through the open shift the ACTOR opened — never another user's.
         $sessionId = null;
-        if ($account->isCashDrawer()) {
-            $session = $this->sessions->activeFor($account, lock: true);
-            if (! $session) {
-                throw ValidationException::withMessages([
-                    'cash_account_id' => 'Для проведения по этой кассе нужна открытая кассовая смена.',
-                ]);
-            }
-            $sessionId = $session->id;
+        if ($entry->payment_method === CashTransaction::METHOD_CASH || $account->isCashDrawer()) {
+            $sessionId = $this->drawers->sessionForReceipt($account, $actor)->id;
         }
 
         $actorId = $actor?->id ?: $entry->created_by;

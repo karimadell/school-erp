@@ -126,12 +126,17 @@ class RevenueEntryControllerTest extends FinanceOperationsTestCase
 
         $poster = $this->user('reception');
         $poster->givePermissionTo(['manage revenues', 'post revenues']);
+        // PR 4: cash is posted only through the poster's own open session,
+        // so the poster takes over the drawer with their own shift.
+        $this->closeCashSession();
+        $posterSession = $this->openCashSession($this->cash, $poster);
         $this->actingAs($poster)
             ->post(route('dashboard.finance.income.revenue.post', $entry))
             ->assertRedirect();
 
         $this->assertTrue($entry->fresh()->isPosted());
         $this->assertSame(1, CashTransaction::query()->where('revenue_entry_id', $entry->id)->count());
+        $this->assertSame($posterSession->id, CashTransaction::query()->where('revenue_entry_id', $entry->id)->value('cash_session_id'));
     }
 
     // 9. POSTED -> REVERSED via the dashboard action, with a required reason.

@@ -91,22 +91,54 @@ class QuickRegistrationAtomicPaymentRegressionTest extends QuickRegistrationUxTe
 
     // ----- 3. cash always resolves to the canonical operating account -----
 
-    public function test_cash_payment_resolves_the_canonical_operating_account_regardless_of_submitted_id(): void
+    // PR 4 — a submitted drawer the actor has no open session on is rejected
+    // (never silently overridden) with zero writes; with none submitted (the
+    // form disables the select for cash) the actor's own drawer is used.
+    public function test_cash_payment_uses_the_actors_own_drawer_and_rejects_a_drawer_without_their_session(): void
     {
         $structure = $this->structure();
         $fee = $this->fee();
         $operating = CashAccount::operating();
-        app(CashSessionService::class)->open($operating, $this->accountant);
+        $session = app(CashSessionService::class)->open($operating, $this->accountant);
         $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
 
         $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
             'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1000.00']],
             'payment_method' => 'cash',
             'cash_account_id' => $decoy->id,
+        ]))->assertSessionHasErrors('payment_method');
+        $this->assertSame(0, InvoicePayment::count());
+        $this->assertSame(0, CashTransaction::count());
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1000.00']],
+            'payment_method' => 'cash',
         ]))->assertSessionHasNoErrors()->assertRedirect();
 
         $this->assertSame($operating->id, InvoicePayment::sole()->cash_account_id);
         $this->assertSame($operating->id, CashTransaction::sole()->cash_account_id);
+        $this->assertSame($session->id, CashTransaction::sole()->cash_session_id);
+    }
+
+    // PR 4 — another cashier's open shift on the drawer is never used: the
+    // whole registration (student, invoice, payment) rolls back.
+    public function test_cash_registration_never_uses_another_users_open_session(): void
+    {
+        $structure = $this->structure();
+        $fee = $this->fee();
+        $cashier = \App\Models\User::factory()->create(['is_active' => true]);
+        $cashier->assignRole('cashier');
+        app(CashSessionService::class)->open(CashAccount::operating(), $cashier);
+
+        $this->actingAs($this->accountant)->post(route('dashboard.quick-registration.store'), $this->payload($structure, $fee, [
+            'services' => [['fee_id' => $fee->id, 'quantity' => 1, 'paid_now' => '1000.00']],
+            'payment_method' => 'cash',
+        ]))->assertSessionHasErrors(['payment_method' => \App\Services\Finance\CashDrawerResolver::NO_OWN_SESSION]);
+
+        $this->assertSame(0, Student::count());
+        $this->assertSame(0, Invoice::count());
+        $this->assertSame(0, InvoicePayment::count());
+        $this->assertSame(0, CashTransaction::count());
     }
 
     // ----- 4. amount > 0 can never post against "Без оплаты" -----

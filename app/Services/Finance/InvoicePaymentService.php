@@ -22,8 +22,10 @@ use Illuminate\Validation\ValidationException;
 
 class InvoicePaymentService
 {
-    public function __construct(private CashSessionService $sessions, private PaymentAllocationAnalyzer $analyzer)
-    {
+    public function __construct(
+        private PaymentAllocationAnalyzer $analyzer,
+        private CashDrawerResolver $drawers,
+    ) {
     }
 
     /**
@@ -225,19 +227,16 @@ class InvoicePaymentService
 
             QrTrace::log('payment:cash_account_lock_acquired');
 
-            // Phase 3 — strict cash-session rule: physical cash cannot enter a
-            // drawer without an open shift. Non-cash methods (bank/card/transfer)
-            // do not touch the physical drawer and keep their existing behaviour.
+            // Phase 3 + PR 4 — strict own-session cash rule: physical cash
+            // only enters an eligible drawer (active cash account, never owner
+            // cash/bank/instapay) through the open shift the ACTOR opened —
+            // never another user's session (CashDrawerResolver). Non-cash
+            // methods (bank/card/transfer/instapay) do not touch the physical
+            // drawer and keep their existing behaviour.
             $cashSessionId = null;
-            if ($paymentMethod === CashTransaction::METHOD_CASH && $account->isCashDrawer()) {
+            if ($paymentMethod === CashTransaction::METHOD_CASH) {
                 QrTrace::log('payment:before_cash_session_lock');
-                $session = $this->sessions->activeFor($account, lock: true);
-                if (! $session) {
-                    throw ValidationException::withMessages([
-                        'payment_method' => 'Для приёма наличных нужна открытая кассовая смена.',
-                    ]);
-                }
-                $cashSessionId = $session->id;
+                $cashSessionId = $this->drawers->sessionForReceipt($account, $actor, 'payment_method')->id;
                 QrTrace::log('payment:cash_session_lock_acquired');
             }
 

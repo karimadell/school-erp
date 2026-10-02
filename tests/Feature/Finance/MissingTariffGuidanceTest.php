@@ -98,6 +98,10 @@ class MissingTariffGuidanceTest extends FinanceOperationsTestCase
     {
         $cashier = User::factory()->create(['is_active' => true]);
         $cashier->assignRole('cashier');
+        // PR 4: cash is only received through the actor's own open session,
+        // so the cashier takes over the drawer with their own shift.
+        $this->closeCashSession();
+        $this->openCashSession($this->cash, $cashier);
 
         $response = $this->actingAs($cashier)->post(
             route('dashboard.students.unified-collection.store', $this->student),

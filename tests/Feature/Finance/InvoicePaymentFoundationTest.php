@@ -26,6 +26,9 @@ class InvoicePaymentFoundationTest extends TestCase
     private Invoice $invoice;
     private CashAccount $account;
 
+    // PR 4: cash only enters a drawer through the session the actor opened.
+    private \App\Models\User $cashier;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -36,10 +39,12 @@ class InvoicePaymentFoundationTest extends TestCase
             'paid_amount' => '0.00', 'remaining_amount' => '1000.00', 'status' => Invoice::STATUS_UNPAID,
         ]);
         $this->account = CashAccount::create(['name' => 'Касса', 'type' => 'cash']);
-        // Phase 3: a cash collection requires an open drawer session.
+        // Phase 3: a cash collection requires an open drawer session, and
+        // (PR 4) the paying actor must be the one who opened it.
+        $this->cashier = \App\Models\User::factory()->create(['is_active' => true]);
         \App\Models\CashSession::create([
             'cash_account_id' => $this->account->id,
-            'opened_by' => \App\Models\User::factory()->create(['is_active' => true])->id,
+            'opened_by' => $this->cashier->id,
             'opened_at' => now(),
             'opening_expected' => '0.00',
             'opening_expected_source' => \App\Models\CashSession::SOURCE_ACCOUNT_BALANCE,
@@ -52,6 +57,7 @@ class InvoicePaymentFoundationTest extends TestCase
         return $this->service->record(
             invoiceId: $this->invoice->id, cashAccountId: $this->account->id,
             amount: $amount, paymentMethod: 'cash', idempotencyKey: $key ?? (string) Str::uuid(),
+            actor: $this->cashier,
         );
     }
 
@@ -112,7 +118,7 @@ class InvoicePaymentFoundationTest extends TestCase
         }
 
         try {
-            $this->service->record($this->invoice->id, 999999, '1.00', 'cash', (string) Str::uuid());
+            $this->service->record($this->invoice->id, 999999, '1.00', 'cash', (string) Str::uuid(), $this->cashier);
             $this->fail('Отсутствующая касса должна быть отклонена.');
         } catch (ValidationException) {
             $this->assertDatabaseCount('cash_transactions', 0);
@@ -129,14 +135,14 @@ class InvoicePaymentFoundationTest extends TestCase
 
         foreach ([[999999, $this->account->id, 'cash'], [$this->invoice->id, $this->account->id, 'unknown']] as [$invoiceId, $accountId, $method]) {
             try {
-                $this->service->record($invoiceId, $accountId, '1.00', $method, (string) Str::uuid());
+                $this->service->record($invoiceId, $accountId, '1.00', $method, (string) Str::uuid(), $this->cashier);
                 $this->fail('Некорректные реквизиты платежа должны быть отклонены.');
             } catch (ValidationException) {
                 $this->assertDatabaseCount('invoice_payments', 0);
             }
         }
 
-        $this->service->record($this->invoice->id, $this->account->id, '1000.00', 'cash', (string) Str::uuid());
+        $this->service->record($this->invoice->id, $this->account->id, '1000.00', 'cash', (string) Str::uuid(), $this->cashier);
         $this->expectException(ValidationException::class);
         $this->pay('1.00');
     }

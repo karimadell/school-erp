@@ -135,17 +135,23 @@ class StudentPaymentFinalCorrectiveTest extends MassBillingTestCase
     // ------------------------------------------------------------------
 
     // 1 & 2. Cash Account select is enabled/populated for cash payments.
+    // PR 4 — only the actor's OWN eligible drawers (an open session they
+    // opened) are offered for cash; any other drawer is not.
     public function test_payment_form_lists_eligible_cash_drawer_accounts_for_manual_selection(): void
     {
         [$invoice] = $this->issueTuitionOnlyInvoice('CashFormList');
-        $drawer = $this->drawer('Вторая касса');
+        $ownDrawer = $this->drawer('Вторая касса');
+        app(CashSessionService::class)->open($ownDrawer, $this->accountant);
+        $otherDrawer = $this->drawer('Третья касса');
 
         $response = $this->actingAs($this->accountant)->get(route('dashboard.invoices.payments.create', $invoice));
 
         $response->assertOk();
-        $response->assertSee('data-cash-drawer="1"', false);
-        $response->assertSee($drawer->name);
-        $response->assertSee(CashAccount::operating()->name);
+        $response->assertSee('<option value="'.$ownDrawer->id.'" data-cash-drawer="1">', false);
+        $response->assertSee('<option value="'.$otherDrawer->id.'" data-cash-drawer="0">', false);
+        // No session opened on the operating drawer in this test, so it is
+        // not one of the actor's drawers either.
+        $response->assertSee('<option value="'.CashAccount::operating()->id.'" data-cash-drawer="0">', false);
     }
 
     // 3 & 4. cash_account_id is required for Cash; missing account is rejected server-side.

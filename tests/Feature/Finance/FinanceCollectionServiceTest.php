@@ -615,72 +615,68 @@ class FinanceCollectionServiceTest extends FinanceOperationsTestCase
 
     // ----- §1. Canonical cash-account resolution (corrective pass) -----
 
-    public function test_cash_payment_cannot_be_redirected_to_a_non_canonical_account(): void
+    // PR 4 — strict own-session cash rule (CashDrawerResolver). These replace
+    // the Phase 4 "cash always goes to the canonical operating account"
+    // tests: a cash receipt now goes into one of the ACTOR'S OWN eligible
+    // drawers (active cash account with an open session they opened), and a
+    // submitted drawer outside that set is rejected rather than overridden.
+    public function test_cash_payment_uses_the_actors_own_selected_drawer(): void
     {
-        $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
-        app(CashSessionService::class)->open($decoy, $this->accountant);
+        $ownDrawer = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
+        $session = app(CashSessionService::class)->open($ownDrawer, $this->accountant);
         $invoice = $this->issueSimpleInvoice('1000.00');
 
         $collection = $this->service()->collect([
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
-            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+            'payment_method' => 'cash', 'cash_account_id' => $ownDrawer->id,
             'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
         ], $this->accountant);
 
         $payment = $collection->invoicePayments->sole();
-        $this->assertSame($this->cash->id, $payment->cash_account_id);
-        $this->assertNotSame($decoy->id, $payment->cash_account_id);
+        $this->assertSame($ownDrawer->id, $collection->cash_account_id);
+        $this->assertSame($ownDrawer->id, $payment->cash_account_id);
+        $this->assertSame($session->id, $payment->cashTransaction->cash_session_id);
     }
 
-    public function test_collection_cash_account_id_equals_the_canonical_resolved_account(): void
+    public function test_cash_payment_to_a_drawer_without_the_actors_session_is_rejected_with_zero_writes(): void
     {
         $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
         $invoice = $this->issueSimpleInvoice('1000.00');
+        $before = [FinanceCollection::count(), InvoicePayment::count(), CashTransaction::count()];
 
-        $collection = $this->service()->collect([
-            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
-            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
-            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
-        ], $this->accountant);
+        try {
+            $this->service()->collect([
+                'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
+                'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+                'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
+            ], $this->accountant);
+            $this->fail('A drawer without the actor\'s own open session must be rejected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('payment_method', $exception->errors());
+        }
 
-        $this->assertSame($this->cash->id, $collection->cash_account_id);
+        $this->assertSame($before, [FinanceCollection::count(), InvoicePayment::count(), CashTransaction::count()]);
     }
 
     public function test_all_linked_payments_use_the_same_resolved_cash_account(): void
     {
-        $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
         $existingInvoice = $this->issueSimpleInvoice('1000.00');
         $fee = $this->booksFee('200.00');
 
+        // No drawer submitted: the actor's single own drawer is auto-selected.
         $collection = $this->service()->collect([
             'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
-            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
+            'payment_method' => 'cash',
             'existing_obligations' => [['invoice_id' => $existingInvoice->id, 'receive_now_amount' => '100.00']],
             'new_services' => [['fee_id' => $fee->id, 'quantity' => 1, 'receive_now_amount' => '200.00']],
         ], $this->accountant);
 
+        $this->assertSame($this->cash->id, $collection->cash_account_id);
         $this->assertCount(2, $collection->invoicePayments);
         foreach ($collection->invoicePayments as $payment) {
             $this->assertSame($this->cash->id, $payment->cash_account_id);
+            $this->assertSame($this->cashSession->id, $payment->cashTransaction->cash_session_id);
         }
-    }
-
-    public function test_resulting_cash_transaction_uses_the_canonical_account(): void
-    {
-        $decoy = CashAccount::create(['name' => 'Другая касса', 'type' => 'cash', 'is_active' => true]);
-        app(CashSessionService::class)->open($decoy, $this->accountant);
-        $invoice = $this->issueSimpleInvoice('1000.00');
-
-        $collection = $this->service()->collect([
-            'student_id' => $this->student->id, 'academic_year_id' => $this->year->id,
-            'payment_method' => 'cash', 'cash_account_id' => $decoy->id,
-            'existing_obligations' => [['invoice_id' => $invoice->id, 'receive_now_amount' => '400.00']],
-        ], $this->accountant);
-
-        $payment = $collection->invoicePayments->sole();
-        $transaction = $payment->cashTransaction;
-        $this->assertNotNull($transaction);
-        $this->assertSame($this->cash->id, $transaction->cash_account_id);
     }
 
     public function test_a_closed_cash_session_on_the_canonical_account_still_fails_through_the_existing_engine(): void

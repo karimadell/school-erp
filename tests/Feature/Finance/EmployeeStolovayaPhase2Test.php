@@ -13,7 +13,7 @@ use App\Models\RevenueEntry;
 use App\Models\StaffFoodPurchase;
 use App\Models\TeacherSalary;
 use App\Models\User;
-use App\Services\Finance\CashSessionService;
+use App\Services\Finance\CashDrawerResolver;
 use App\Services\Finance\RevenueService;
 use Database\Seeders\RevenueCategorySeeder;
 use Illuminate\Support\Str;
@@ -97,11 +97,33 @@ class EmployeeStolovayaPhase2Test extends FinanceOperationsTestCase
 
         $this->actingAs($cashier)->get(route('dashboard.employee-stolovaya.create'))->assertOk();
 
+        // PR 4: cash only enters a drawer through the session the actor
+        // opened, so the cashier takes over the drawer with their own shift.
+        $this->closeCashSession();
+        $this->openCashSession($this->cash, $cashier);
+
         $employee = $this->employee();
         $response = $this->purchase($cashier, ['employee_user_id' => $employee->id]);
         $response->assertRedirect();
         $response->assertSessionHasNoErrors();
         $this->assertSame(1, StaffFoodPurchase::count());
+    }
+
+    // PR 4 — a purchase never posts through another user's open shift, and
+    // the actor's own shift is the one the CashTransaction is bound to.
+    public function test_purchase_posts_only_through_the_actors_own_cash_session(): void
+    {
+        $cashier = User::factory()->create(['is_active' => true]);
+        $cashier->assignRole('cashier');
+
+        $before = [StaffFoodPurchase::count(), RevenueEntry::count(), CashTransaction::count()];
+        $this->purchase($cashier)->assertSessionHasErrors('cash_account_id');
+        $this->assertSame($before, [StaffFoodPurchase::count(), RevenueEntry::count(), CashTransaction::count()]);
+
+        $this->purchase($this->accountant)->assertSessionHasNoErrors();
+        $transaction = StaffFoodPurchase::sole()->revenueEntry->cashTransaction;
+        $this->assertSame($this->cashSession->id, (int) $transaction->cash_session_id);
+        $this->assertSame(RevenueCategory::CODE_SCHOOL_FOOD, StaffFoodPurchase::sole()->revenueEntry->category->code);
     }
 
     // 3. Cashier does NOT gain generic manage revenues/post revenues.
@@ -424,12 +446,13 @@ class EmployeeStolovayaPhase2Test extends FinanceOperationsTestCase
     // same simulated ledger failure RevenueAtomicCreationTest already uses.
     public function test_forced_failure_leaves_no_orphan_accounting_records(): void
     {
-        $this->app->bind(CashSessionService::class, function () {
-            return new class extends CashSessionService
+        // PR 4: postToLedger() binds its session through
+        // CashDrawerResolver::sessionForReceipt(), so that is where the
+        // unexpected failure is injected.
+        $this->app->bind(CashDrawerResolver::class, function () {
+            return new class extends CashDrawerResolver
             {
-                public function __construct() {}
-
-                public function activeFor(\App\Models\CashAccount $account, bool $lock = false): ?\App\Models\CashSession
+                public function sessionForReceipt(\App\Models\CashAccount $account, ?User $actor, string $field = 'cash_account_id'): \App\Models\CashSession
                 {
                     throw new RuntimeException('Simulated unexpected ledger-posting failure.');
                 }
@@ -442,7 +465,7 @@ class EmployeeStolovayaPhase2Test extends FinanceOperationsTestCase
         // test (unlike a direct service call). Either way, no partial
         // write may survive.
         $response = $this->purchase($this->accountant);
-        $this->app->bind(CashSessionService::class, fn () => new CashSessionService());
+        $this->app->bind(CashDrawerResolver::class, fn () => new CashDrawerResolver());
 
         $response->assertStatus(500);
         $this->assertSame(0, RevenueEntry::count(), 'No RevenueEntry was left behind.');

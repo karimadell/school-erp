@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 /**
@@ -50,22 +51,36 @@ class IncomeEntryController extends Controller
         return redirect()->route('dashboard.finance.income.revenue.create', ['type' => 'buffet']);
     }
 
-    // Прочий приход — same canonical Revenue flow, but the user picks
-    // their own category (cafeteria/fine/other) instead of it being locked.
+    // Прочий приход — same canonical Revenue flow, but the user picks their
+    // own residual category (fine/other, …) instead of it being locked; the
+    // controlled and legacy categories are excluded there (RevenueEntryController).
     public function other(): RedirectResponse
     {
         return redirect()->route('dashboard.finance.income.revenue.create');
     }
 
-    // Столовая (Student, Phase 1) — daily meal charges are Student Food
-    // accounting (Invoice/Payment/CashTransaction via ChargeAndCollectService),
-    // never RevenueEntry, so this does NOT redirect into the Revenue flow
-    // like buffet()/donation()/other() above. It reuses the exact same
-    // student search screen the "Оплата ученика"/"Услуга" cards already
-    // use — no new search UI — whose rows carry a "Столовая" action into
-    // StolovayaController::create() once a student is chosen.
-    public function stolovaya(): RedirectResponse
+    // Столовая — one Приход card for two wholly separate engines: Student
+    // meals are Student Food accounting (Invoice/Payment/CashTransaction via
+    // the student search → StolovayaController), Employee meals are
+    // StaffFoodPurchase/RevenueEntry(school_food) via EmployeeStolovayaController.
+    // This only chooses where to navigate, per the permission each
+    // destination itself enforces ('manage invoices' / 'manage employee
+    // stolovaya'): a chooser when both apply, straight to the only usable
+    // side otherwise, 403 when neither does.
+    public function stolovaya(Request $request): View|RedirectResponse
     {
-        return redirect()->route('dashboard.finance.income.students');
+        $user = $request->user();
+        $canStudent = $user->can('manage invoices');
+        $canEmployee = $user->can('manage employee stolovaya');
+
+        abort_unless($canStudent || $canEmployee, 403);
+
+        if ($canStudent && $canEmployee) {
+            return view('dashboard.finance.income.stolovaya');
+        }
+
+        return $canStudent
+            ? redirect()->route('dashboard.finance.income.students')
+            : redirect()->route('dashboard.employee-stolovaya.create');
     }
 }

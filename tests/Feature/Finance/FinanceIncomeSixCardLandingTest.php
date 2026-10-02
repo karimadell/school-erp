@@ -269,6 +269,123 @@ class FinanceIncomeSixCardLandingTest extends FinanceOperationsTestCase
         $this->assertSame(RevenueCategory::CODE_CAFETERIA, $cafeteria->fresh()->code);
     }
 
+    // ----- D2. Generic post() of an existing draft --------------------------
+
+    private function existingDraft(RevenueCategory $category, string $amount = '75.00'): RevenueEntry
+    {
+        // Simulates a draft stored before the generic-create exclusion: a raw
+        // insert, exactly the shape RevenueService::persist() writes for a draft.
+        $id = DB::table('revenue_entries')->insertGetId([
+            'revenue_category_id' => $category->id, 'amount' => $amount, 'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id, 'payment_method' => 'cash', 'status' => RevenueEntry::STATUS_DRAFT,
+            'created_by' => $this->accountant->id, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        return RevenueEntry::findOrFail($id);
+    }
+
+    /** @return array<string, mixed> */
+    private function postSnapshot(): array
+    {
+        return [
+            'entries' => RevenueEntry::count(),
+            'cash_transactions' => CashTransaction::count(),
+            'balance' => (string) $this->cash->fresh()->balance,
+            'posting_audits' => DB::table('audit_logs')->where('action', 'revenue_posted')->count(),
+        ];
+    }
+
+    public function test_existing_cafeteria_and_school_food_drafts_cannot_be_posted_through_the_generic_action(): void
+    {
+        $cases = [
+            RevenueCategory::CODE_CAFETERIA => ['Кафетерий', 'Категория «Кафетерий» устарела и недоступна для новых записей — используйте «Буфет» или подходящую категорию.'],
+            RevenueCategory::CODE_SCHOOL_FOOD => ['Школьное питание', 'Категория «Школьное питание» управляется отдельно — оформите питание сотрудника через «Столовая».'],
+        ];
+
+        foreach ($cases as $code => [$name, $message]) {
+            $draft = $this->existingDraft($this->category($code, $name));
+            $before = $this->postSnapshot();
+
+            $this->actingAs($this->accountant)
+                ->post(route('dashboard.finance.income.revenue.post', $draft))
+                ->assertSessionHasErrors(['revenue_category_id' => $message]);
+
+            $this->assertSame($before, $this->postSnapshot(), $code);
+            $fresh = $draft->fresh();
+            $this->assertSame(RevenueEntry::STATUS_DRAFT, $fresh->status, $code);
+            $this->assertNull($fresh->posted_at, $code);
+            $this->assertNull($fresh->posted_by, $code);
+            $this->assertSame(0, CashTransaction::where('revenue_entry_id', $draft->id)->count(), $code);
+        }
+    }
+
+    public function test_buffet_and_donation_drafts_from_their_dedicated_forms_still_post(): void
+    {
+        foreach (['buffet' => RevenueCategory::CODE_BUFFET, 'donation' => RevenueCategory::CODE_DONATION] as $type => $code) {
+            $category = $this->category($code, ucfirst($type));
+            $this->actingAs($this->accountant)
+                ->post(route('dashboard.finance.income.revenue.store'), $this->genericPayload($category, ['type' => $type, 'status' => RevenueEntry::STATUS_DRAFT]))
+                ->assertSessionHasNoErrors();
+            $draft = RevenueEntry::where('revenue_category_id', $category->id)->sole();
+            $this->assertSame(RevenueEntry::STATUS_DRAFT, $draft->status);
+
+            $this->actingAs($this->accountant)
+                ->post(route('dashboard.finance.income.revenue.post', $draft))
+                ->assertSessionHasNoErrors();
+
+            $this->assertSame(RevenueEntry::STATUS_POSTED, $draft->fresh()->status, $type);
+            $this->assertSame(1, CashTransaction::where('revenue_entry_id', $draft->id)->count(), $type);
+        }
+    }
+
+    public function test_an_allowed_generic_draft_still_posts_with_exactly_one_financial_effect(): void
+    {
+        $draft = $this->existingDraft($this->category(RevenueCategory::CODE_OTHER, 'Прочее'), '120.00');
+        $before = $this->postSnapshot();
+
+        $this->actingAs($this->accountant)
+            ->post(route('dashboard.finance.income.revenue.post', $draft))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(RevenueEntry::STATUS_POSTED, $draft->fresh()->status);
+        $this->assertSame($before['entries'], RevenueEntry::count());
+        $this->assertSame($before['cash_transactions'] + 1, CashTransaction::count());
+        $this->assertSame(bcadd($before['balance'], '120.00', 2), bcadd((string) $this->cash->fresh()->balance, '0', 2));
+        $this->assertSame($before['posting_audits'] + 1, DB::table('audit_logs')->where('action', 'revenue_posted')->count());
+    }
+
+    public function test_post_authorization_still_runs_first_regardless_of_category(): void
+    {
+        $noPost = $this->receptionWith('manage revenues');
+        $this->assertFalse($noPost->can('post revenues'));
+
+        foreach ([RevenueCategory::CODE_CAFETERIA => 'Кафетерий', RevenueCategory::CODE_OTHER => 'Прочее'] as $code => $name) {
+            $draft = $this->existingDraft($this->category($code, $name));
+            $before = $this->postSnapshot();
+
+            $this->actingAs($noPost)->post(route('dashboard.finance.income.revenue.post', $draft))->assertForbidden();
+
+            $this->assertSame($before, $this->postSnapshot(), $code);
+            $this->assertSame(RevenueEntry::STATUS_DRAFT, $draft->fresh()->status, $code);
+        }
+    }
+
+    public function test_existing_posted_cafeteria_entry_and_cafeteria_draft_remain_readable(): void
+    {
+        $cafeteria = $this->category(RevenueCategory::CODE_CAFETERIA, 'Кафетерий');
+        $posted = app(\App\Services\Finance\RevenueService::class)->createTrusted([
+            'revenue_category_id' => $cafeteria->id, 'amount' => '60.00', 'revenue_date' => today()->toDateString(),
+            'cash_account_id' => $this->cash->id, 'payment_method' => 'cash',
+        ], $this->accountant);
+        $draft = $this->existingDraft($cafeteria);
+
+        $this->actingAs($this->accountant)->get(route('dashboard.finance.income.revenue.show', $posted))->assertOk()->assertSee('Кафетерий');
+        $this->actingAs($this->accountant)->get(route('dashboard.finance.income.revenue.receipt', $posted))->assertOk();
+        $this->actingAs($this->accountant)->get(route('dashboard.finance.income.revenue.show', $draft))->assertOk()->assertSee('Кафетерий');
+        $this->assertSame(RevenueEntry::STATUS_POSTED, $posted->fresh()->status);
+        $this->assertSame(RevenueEntry::STATUS_DRAFT, $draft->fresh()->status);
+    }
+
     // ----- E. Payment / registration routing -------------------------------
 
     public function test_student_payment_card_enters_payment_context_with_unified_collection_primary(): void
